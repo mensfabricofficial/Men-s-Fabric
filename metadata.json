@@ -1,0 +1,6 @@
+{
+  "name": "MEN'S FABRIC - Premium Clothing Brand",
+  "description": "Exclusive men's clothing and fashion store in Bangladesh featuring premium fabrics, shirts, panjabi, and contemporary menswear with Cash on Delivery and nationwide shipping.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

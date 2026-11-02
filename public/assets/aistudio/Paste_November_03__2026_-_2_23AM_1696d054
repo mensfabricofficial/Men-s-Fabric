@@ -1,0 +1,1089 @@
+You are now working on an EXISTING production-oriented clothing e-commerce application that has already been built.
+DO NOT rebuild the application from scratch.
+DO NOT replace the existing UI unnecessarily.
+DO NOT remove existing features.
+DO NOT create demo data.
+DO NOT create fake products, orders, customers, reviews, revenue or analytics.
+Your job in this phase is to perform a complete SECURITY, PERFORMANCE, DATA-INTEGRITY and PRODUCTION HARDENING AUDIT and then fix all issues you find.
+The application is a clothing e-commerce website with:
+Customer website
+Admin panel at /admin
+React + TypeScript frontend
+Node.js/server-side functionality where applicable
+Firebase Authentication
+Firestore
+Firebase Storage
+Product variants
+Size/color inventory
+Cart
+Checkout
+Orders
+Coupons
+Delivery charges
+Customer accounts
+Reviews
+Wishlist
+Admin product/order/customer management
+The application must remain fully functional after all changes.
+==================================================
+FIRST: AUDIT THE ENTIRE EXISTING PROJECT
+==================================================
+Before making changes, inspect the complete project.
+Analyze:
+Frontend architecture
+Backend/server-side code
+Firebase initialization
+Authentication
+Admin authorization
+Firestore access
+Firestore queries
+Firestore writes
+Storage uploads
+Storage downloads
+Product logic
+Cart logic
+Checkout logic
+Order creation
+Price calculation
+Coupon calculation
+Delivery calculation
+Inventory management
+Admin operations
+Routing
+Environment variables
+API calls
+Dependencies
+Performance
+Error handling
+Security vulnerabilities
+Do not assume that existing code is secure.
+Find actual vulnerabilities and fix them.
+==================================================
+2. DO NOT BREAK EXISTING FUNCTIONALITY
+Before modifying an important component or data flow:
+Understand how it currently works.
+Preserve:
+Existing routes
+Existing UI
+Existing brand colors
+Existing logo
+Existing product structure
+Existing admin functionality
+Existing customer functionality
+Existing Firebase integration
+Only change code when necessary for:
+Security
+Performance
+Reliability
+Maintainability
+Data integrity
+Production readiness
+Do not redesign the website unless a security/performance issue requires it.
+==================================================
+3. NO DEMO DATA
+ABSOLUTE RULE:
+Do not create any demo data during this security-hardening process.
+Never create:
+Fake products
+Fake customers
+Fake orders
+Fake reviews
+Fake sales
+Fake revenue
+Fake analytics
+Fake coupons
+Fake banners
+If test data is needed during local testing, use temporary local/test data only and remove it before finalizing.
+Never insert test data into the production Firestore database.
+==================================================
+4. FIREBASE CONFIGURATION SECURITY
+Inspect Firebase configuration.
+Ensure:
+Firebase Web SDK configuration is handled appropriately
+No Firebase Admin service-account private key is exposed in frontend code
+No private credentials are committed to the repository
+No secrets are hard-coded unnecessarily
+Environment variables are used where appropriate
+Check:
+.env
+.env.local
+.env.production
+source files
+configuration files
+build files
+Make sure sensitive files are excluded using .gitignore.
+==================================================
+5. FIREBASE AUTHENTICATION SECURITY
+Audit Firebase Authentication.
+Ensure:
+Passwords are never stored in Firestore
+Authentication is handled through Firebase Auth
+Logout works correctly
+Auth state is handled reliably
+Expired sessions are handled
+Unauthorized users cannot access protected pages
+Customer authentication cannot be used to access admin functionality
+Do not trust:
+localStorage
+sessionStorage
+frontend state
+cookies controlled by the client
+as proof of admin privileges.
+==================================================
+6. ADMIN SECURITY
+This is one of the highest-priority requirements.
+The admin panel is:
+/admin
+The authorized administrator information is:
+ADMIN UID:
+[YOUR ADMIN UID]
+If an existing ADMIN UID is already configured in the project, preserve it.
+The admin system must verify the authenticated Firebase user securely.
+A normal customer must NEVER be able to become an administrator by modifying:
+Browser localStorage
+React state
+JavaScript variables
+URL parameters
+Request payload
+Firestore documents
+User profile fields
+Do not use:
+isAdmin: true
+from a client-controlled user document as the sole authorization mechanism.
+Prefer Firebase Custom Claims for administrator authorization where practical.
+If Custom Claims are used, design the system correctly so that claims are verified server-side/security-rule-side.
+==================================================
+7. ADMIN ROUTE PROTECTION
+Protect all admin routes.
+Examples:
+/admin
+/admin/products
+/admin/categories
+/admin/orders
+/admin/customers
+/admin/reviews
+/admin/coupons
+/admin/settings
+/admin/banners
+/admin/pages
+A user who is not authorized must not be able to access admin data.
+Do not rely only on:
+React route guards
+hidden navigation
+UI checks
+Firestore Security Rules and server-side authorization must also prevent unauthorized access.
+==================================================
+8. FIRESTORE SECURITY RULES
+Create or completely audit Firestore Security Rules.
+The rules must follow the principle:
+DEFAULT DENY.
+Do not create broad rules such as:
+allow read, write: if true;
+Do not use unrestricted access.
+The rules must protect every collection.
+Review all existing collections, including if present:
+users
+products
+categories
+orders
+reviews
+coupons
+banners
+settings
+deliveryZones
+wishlists
+carts
+pages
+sizeCharts
+auditLogs
+and any other collection found in the project.
+==================================================
+9. PUBLIC DATA
+Public customers should only be able to read data that is intentionally public.
+Examples may include:
+Active products
+Active categories
+Public banners
+Public pages
+Approved reviews
+Do not expose:
+Cost price
+Internal notes
+Supplier information
+Admin notes
+Private customer information
+Internal audit logs
+Sensitive configuration
+Private analytics
+==================================================
+10. USER DATA SECURITY
+A customer should only be able to access their own private data.
+Examples:
+users/{uid}
+customers/{uid}
+wishlists/{uid}
+carts/{uid}
+orders/{orderId}
+If an order contains customer UID:
+The customer can only read their own order.
+Customer A must never be able to read Customer B's order.
+Customer A must never be able to modify Customer B's profile.
+Customer A must never be able to modify Customer B's wishlist/cart/private information.
+==================================================
+11. ORDER SECURITY
+This is extremely important.
+Never trust the client for:
+Product price
+Sale price
+Discount
+Coupon discount
+Delivery charge
+Final total
+Stock
+Product availability
+A malicious customer can modify browser requests.
+Therefore:
+The server-side/order-processing layer must validate order information against trusted Firestore data.
+When an order is created:
+Verify authenticated customer.
+Verify products exist.
+Verify products are active.
+Verify selected variants exist.
+Verify selected size exists.
+Verify selected color exists.
+Verify requested quantity is valid.
+Retrieve trusted product prices.
+Calculate item totals.
+Validate coupon.
+Calculate delivery charge.
+Calculate final total.
+Validate inventory.
+Create order.
+Deduct inventory safely.
+Never trust a total supplied by the browser.
+==================================================
+12. PRICE MANIPULATION PROTECTION
+Test scenarios such as:
+Customer changes:
+price = 1
+or:
+discount = 999999
+or:
+deliveryCharge = 0
+or:
+total = 10
+The backend must ignore manipulated client values.
+Calculate trusted values from server-side/database information.
+==================================================
+13. COUPON SECURITY
+Coupon validation must be secure.
+Verify:
+Coupon exists
+Coupon is active
+Coupon has not expired
+Minimum order requirement
+Maximum discount
+Usage limit
+Per-customer usage
+Applicable products/categories if supported
+Do not trust:
+couponDiscount
+sent from frontend.
+Calculate the discount securely.
+Prevent:
+Negative totals
+Unlimited discount
+Coupon reuse beyond allowed limits
+Invalid coupon manipulation
+==================================================
+14. DELIVERY CHARGE SECURITY
+Delivery charge must be calculated from trusted configuration.
+Do not trust:
+deliveryCharge
+provided by the browser.
+Validate the selected delivery zone.
+Calculate the correct charge server-side or through trusted logic.
+==================================================
+15. INVENTORY SECURITY
+Protect inventory from manipulation.
+Prevent:
+Negative stock
+Unauthorized stock modification
+Overselling
+Invalid variant stock
+Client-side stock manipulation
+Use Firestore transactions or secure server-side logic for stock deduction where appropriate.
+If multiple customers purchase the same last item simultaneously, prevent inconsistent inventory.
+==================================================
+16. ORDER STATUS SECURITY
+Customers must NOT be able to change:
+Pending
+Confirmed
+Processing
+Packed
+Shipped
+Delivered
+Cancelled
+Returned
+Refunded
+to arbitrary statuses.
+Only authorized admin/server-side processes should be allowed to change protected order fields.
+Customers may only perform actions explicitly designed for customers.
+==================================================
+17. FIRESTORE FIELD-LEVEL SECURITY
+Where possible, prevent users from modifying protected fields.
+For example, a customer must not be able to change:
+order.customerId
+order.total
+order.subtotal
+order.discount
+order.deliveryCharge
+order.paymentStatus
+order.orderStatus
+order.adminNotes
+unless explicitly allowed by secure business logic.
+Similarly, customers must not modify:
+product.price
+product.salePrice
+product.stock
+product.costPrice
+product.isAdmin
+product.featured
+etc.
+==================================================
+18. ADMIN-ONLY DATA
+Protect admin-only information.
+Examples:
+Cost price
+Supplier data
+Internal notes
+Audit logs
+Revenue analytics
+Customer management
+Inventory management
+Coupon management
+Delivery configuration
+Site configuration
+Only authorized administrators should access these.
+==================================================
+19. FIREBASE STORAGE SECURITY RULES
+Audit Firebase Storage Rules.
+Do not allow unrestricted uploads.
+Prevent anonymous users from uploading arbitrary files.
+Admin product image uploads should require admin authorization.
+Validate:
+User authentication
+Admin authorization
+File size
+File type where possible
+Appropriate upload paths
+Prevent users from overwriting other users' files.
+Customer profile images, if supported, must only be accessible according to the intended privacy model.
+Do not allow arbitrary executable file uploads.
+==================================================
+20. STORAGE PATH STRUCTURE
+Use organized storage paths.
+Example:
+products/{productId}/...
+categories/{categoryId}/...
+banners/{bannerId}/...
+users/{uid}/...
+Do not put every image into one uncontrolled folder.
+Make rules compatible with these paths.
+==================================================
+21. IMAGE SECURITY
+Validate uploaded images.
+Prefer:
+JPEG
+PNG
+WebP
+AVIF
+where supported.
+Reject obviously dangerous file types.
+Set reasonable file-size limits.
+Do not allow unlimited uploads.
+==================================================
+22. FIRESTORE READ OPTIMIZATION
+Audit every Firestore query.
+Identify:
+Unnecessary reads
+Duplicate reads
+Repeated listeners
+Full collection reads
+Missing pagination
+Queries triggered unnecessarily
+Queries triggered on every render
+Queries that could be cached
+Admin queries loaded on customer pages
+Optimize them.
+Never download an entire product collection when only a small number of products are needed.
+==================================================
+23. REAL-TIME LISTENER AUDIT
+Review all:
+onSnapshot()
+listeners.
+Only use real-time listeners where they provide real value.
+Do not keep unnecessary listeners active.
+Always unsubscribe listeners when components unmount.
+Prevent:
+Memory leaks
+Duplicate listeners
+Repeated reads
+==================================================
+24. FIRESTORE PAGINATION
+Use pagination for large collections.
+Especially:
+Products
+Orders
+Customers
+Reviews
+Audit logs
+Do not load thousands of documents into the browser.
+Use:
+limit()
+startAfter()
+or an equivalent efficient pagination approach.
+==================================================
+25. FIRESTORE INDEXES
+Analyze all queries.
+Create the required Firestore indexes.
+Do not create unnecessary indexes.
+Document required indexes.
+==================================================
+26. FIRESTORE DATA MODEL AUDIT
+Review the current database architecture.
+Look for:
+Excessive duplication
+Large documents
+Unbounded arrays
+Unnecessary nested data
+Inefficient subcollections
+Poor query structure
+Make improvements only when necessary.
+Do not break existing production data.
+If migration is necessary:
+Create a safe migration strategy.
+Never silently delete existing data.
+==================================================
+27. PERFORMANCE AUDIT
+Audit frontend performance.
+Check:
+JavaScript bundle size
+CSS size
+Image size
+Fonts
+Third-party packages
+Render performance
+Network requests
+Firebase reads
+Firebase listeners
+Fix obvious performance problems.
+==================================================
+28. CODE SPLITTING
+Admin functionality should not unnecessarily load on the customer homepage.
+Use route-level lazy loading where appropriate.
+Examples:
+Customer routes
+Admin routes
+Admin code should be loaded only when necessary.
+==================================================
+29. IMAGE PERFORMANCE
+Optimize product images.
+Implement:
+Lazy loading
+Responsive sizing
+Width/height attributes where appropriate
+WebP/AVIF where supported
+Proper compression
+Thumbnail images
+Appropriate image dimensions
+Do not load original high-resolution images when a smaller version is sufficient.
+==================================================
+30. PRODUCT IMAGE LOADING
+On product listing pages:
+Use optimized thumbnail images.
+On product detail pages:
+Load larger images only when necessary.
+Use lazy loading for images below the fold.
+The first visible content should load quickly.
+==================================================
+31. BUNDLE OPTIMIZATION
+Inspect dependencies.
+Remove unnecessary packages if safe.
+Avoid importing entire large libraries when only small functions are required.
+Use tree-shaking-friendly imports.
+Do not add large libraries for simple functionality.
+==================================================
+32. CACHING
+Implement sensible caching where appropriate.
+Potentially cache:
+Static configuration
+Categories
+Product metadata
+Public pages
+Do not cache private customer information in an unsafe way.
+Do not allow one customer's private data to appear for another customer.
+==================================================
+33. FIREBASE QUERY CACHING
+Where appropriate, prevent repeated identical Firestore requests.
+Use:
+React state
+Query caching
+Appropriate client-side caching
+But do not allow stale sensitive information to create security problems.
+==================================================
+34. AUTH STATE PERFORMANCE
+Ensure Firebase Auth state is initialized once.
+Avoid initializing Firebase multiple times.
+Avoid repeated auth listeners.
+==================================================
+35. FIREBASE INITIALIZATION
+Ensure Firebase is initialized centrally.
+There should not be multiple independent Firebase initialization implementations throughout the project.
+Use a single reusable Firebase configuration module.
+==================================================
+36. ERROR HANDLING
+Improve error handling.
+Do not expose:
+Firestore internal errors
+Security rule details
+Stack traces
+Sensitive configuration
+API credentials
+to normal customers.
+Show user-friendly errors.
+Log useful diagnostic information only where safe.
+==================================================
+37. ADMIN ERROR HANDLING
+Admin should receive useful errors such as:
+"Permission denied."
+"Product update failed."
+"Image upload failed."
+"Order status update failed."
+But do not expose secret system information.
+==================================================
+38. INPUT VALIDATION
+Audit every form.
+Validate:
+Product name
+Price
+Sale price
+Stock
+SKU
+Coupon
+Phone
+Email
+Address
+Delivery charge
+Category
+Review
+Search input
+Prevent malformed input.
+Prevent negative prices.
+Prevent invalid stock values.
+Prevent invalid discount values.
+==================================================
+39. XSS PROTECTION
+Audit all places where HTML or rich text is rendered.
+Do not render arbitrary HTML from customers without sanitization.
+Especially review:
+Product descriptions
+Page content
+Reviews
+Admin-entered content
+Customer names
+If HTML rendering is required, sanitize it.
+==================================================
+40. URL SECURITY
+Validate dynamic URLs where appropriate.
+Prevent dangerous external links from being inserted into:
+Product buttons
+Banners
+Admin content
+Social links
+==================================================
+41. CSRF / REQUEST SECURITY
+Review server-side endpoints and state-changing requests.
+Ensure authenticated requests cannot be abused by unauthorized users.
+Use appropriate Firebase authentication context.
+Do not create unnecessary public endpoints.
+==================================================
+42. RATE LIMITING / ABUSE PROTECTION
+Identify operations that could be abused.
+Examples:
+Login
+Registration
+Review creation
+Coupon validation
+Order creation
+Image uploads
+Search
+Contact forms
+Where Firebase or server-side architecture supports it, implement appropriate abuse protection.
+Do not introduce expensive infrastructure unless necessary.
+==================================================
+43. BOT / SPAM PROTECTION
+Review public forms.
+Prevent simple automated abuse where practical.
+Do not add paid services unless explicitly configured.
+==================================================
+44. ADMIN ACTION AUDITING
+Ensure important admin actions can be audited.
+Audit events may include:
+Product creation
+Product modification
+Product deletion/archive
+Inventory modification
+Order status change
+Coupon changes
+Delivery changes
+Settings changes
+Customer blocking
+Store:
+Admin UID
+Action
+Target
+Timestamp
+Relevant metadata where safe
+Customers must never access audit logs.
+==================================================
+45. CUSTOMER PRIVACY
+Audit customer data exposure.
+Do not expose unnecessarily:
+Phone numbers
+Email addresses
+Full addresses
+Private orders
+Internal notes
+Public reviews should only display intentionally public information.
+==================================================
+46. SEARCH SECURITY
+Search must not expose private fields.
+Customer search should only query public product information.
+Admin search may access admin-authorized information.
+Prevent users from using search endpoints to enumerate private customer data.
+==================================================
+47. ACCOUNT SECURITY
+Review:
+Login
+Logout
+Registration
+Password reset
+Account deletion if supported
+Profile editing
+Ensure customer cannot modify protected identity fields in unsafe ways.
+==================================================
+48. ADMIN SESSION SECURITY
+Admin sessions must be authenticated through Firebase Auth.
+Do not create custom fake admin sessions.
+Do not store admin password manually.
+Do not store admin authorization only in localStorage.
+==================================================
+49. PRODUCTION ENVIRONMENT
+Check:
+Production environment variables
+Development environment variables
+Build configuration
+Source maps
+Debug mode
+Console logging
+Error messages
+Remove unnecessary debug output from production.
+Never expose secrets in client bundles.
+==================================================
+50. DEPENDENCY SECURITY
+Inspect package.json and installed dependencies.
+Identify:
+Unused packages
+Outdated packages
+Known security risks if detectable
+Do not blindly upgrade major versions that could break the project.
+Only make safe upgrades.
+==================================================
+51. FIREBASE RULE TESTING
+Create a security test plan.
+Test at minimum:
+Anonymous user:
+Can read intended public products
+Cannot read private customers
+Cannot read orders
+Cannot write protected data
+Cannot access admin data
+Normal customer:
+Can read public products
+Can manage own account
+Can access own orders
+Cannot access another user's order
+Cannot modify product price
+Cannot modify stock
+Cannot become admin
+Cannot access admin collections
+Admin:
+Can perform authorized admin operations
+Can manage products
+Can manage inventory
+Can manage orders
+Can manage customers
+Can manage settings
+==================================================
+52. FIRESTORE RULE QUALITY
+Firestore rules must:
+Follow least privilege
+Default deny
+Validate authentication
+Validate ownership
+Validate admin role
+Validate immutable fields
+Prevent privilege escalation
+Prevent unauthorized writes
+Avoid duplicated rules where possible.
+Keep rules readable and maintainable.
+Add comments explaining important security decisions.
+==================================================
+53. STORAGE RULE TESTING
+Test:
+Anonymous upload → DENIED
+Normal customer uploading admin product image → DENIED
+Unauthorized file access → DENIED where applicable
+Authorized admin product image upload → ALLOWED
+Admin delete own managed product image → ALLOWED
+Customer modifying another user's protected file → DENIED
+==================================================
+54. DATA INTEGRITY
+Review all important database writes.
+Use:
+Firestore transactions
+Batched writes
+Server timestamps
+Validation
+where appropriate.
+Especially for:
+Inventory
+Orders
+Coupon usage
+Payment status
+Order status
+==================================================
+55. ORDER CREATION ATOMICITY
+If possible, make order creation and stock deduction safe against partial failure.
+Avoid situations where:
+Order is created but stock is not deducted.
+OR:
+Stock is deducted but order is not created.
+Use appropriate transactional/server-side architecture.
+==================================================
+56. DUPLICATE ORDER PROTECTION
+Protect against accidental duplicate order creation.
+If the customer clicks "Place Order" multiple times:
+Do not unnecessarily create multiple identical orders.
+Use an appropriate idempotency strategy where practical.
+==================================================
+57. PAYMENT ARCHITECTURE
+Current payment method:
+Cash on Delivery
+Ensure payment status cannot be arbitrarily changed by customers.
+Prepare the architecture so future payment gateways can be integrated securely.
+Do not mark an online payment as successful based solely on frontend input.
+==================================================
+58. ADMIN DASHBOARD PERFORMANCE
+Do not load every order/customer/product simply to calculate dashboard numbers.
+Use efficient queries or maintained aggregate data where appropriate.
+Do not create fake statistics.
+If real data is insufficient:
+show:
+"Not enough data yet."
+==================================================
+59. MOBILE PERFORMANCE
+Optimize specifically for mobile users.
+Check:
+Initial page load
+Image loading
+JavaScript execution
+Layout shifts
+Touch interactions
+Slow network behavior
+Avoid unnecessary large assets.
+==================================================
+60. LOADING EXPERIENCE
+Use:
+Skeleton loaders
+Progressive image loading
+Suspense/lazy loading where appropriate
+Clear loading indicators
+Avoid:
+White blank screens
+Frozen buttons
+Duplicate submissions
+==================================================
+61. ERROR RECOVERY
+If a Firestore request fails:
+Provide a retry mechanism where appropriate.
+If an image fails:
+Show a safe fallback.
+If authentication fails:
+Allow the user to retry.
+If checkout fails:
+Do not leave the customer believing an order was created when it was not.
+==================================================
+62. FIRESTORE COST OPTIMIZATION
+Audit for unnecessary Firestore reads/writes because Firebase usage may incur costs.
+Look for:
+Repeated reads
+Unnecessary listeners
+Full collection reads
+Queries on every render
+Duplicate data fetching
+Excessive dashboard reads
+Optimize without breaking functionality.
+==================================================
+63. STORAGE COST OPTIMIZATION
+Prevent unnecessarily large uploads.
+Use image compression.
+Avoid storing duplicate images.
+Clean up unused images when safe.
+Never automatically delete images that may still be referenced by existing products.
+==================================================
+64. SEO PERFORMANCE
+Ensure security/performance changes do not break:
+SEO
+Product URLs
+Canonical URLs
+Metadata
+Structured data
+==================================================
+65. ACCESSIBILITY AFTER OPTIMIZATION
+Do not sacrifice accessibility for performance.
+Verify:
+Keyboard navigation
+Focus states
+Accessible labels
+Contrast
+Image alt text
+Form labels
+==================================================
+66. SECURITY HEADERS
+Where supported by the deployment platform, configure appropriate security headers.
+Consider:
+Content Security Policy
+X-Content-Type-Options
+Referrer-Policy
+Permissions-Policy
+Frame protections
+Do not add a CSP that breaks the application.
+Test it after implementation.
+==================================================
+67. CLICKJACKING PROTECTION
+Prevent unauthorized embedding of sensitive pages where supported.
+Admin pages should not be unnecessarily embeddable.
+==================================================
+68. HTTPS
+Ensure production deployment uses HTTPS.
+Do not implement insecure HTTP-only production configuration.
+==================================================
+69. PRODUCTION LOGGING
+Review console logs.
+Remove sensitive logs.
+Never log:
+Passwords
+Tokens
+Firebase private credentials
+Private customer data
+Full payment information
+==================================================
+70. SECRET SCANNING
+Search the entire project for possible exposed secrets.
+Check for:
+API secrets
+Private keys
+Service account JSON
+Access tokens
+Passwords
+Private credentials
+If found:
+Remove them from frontend code.
+Do not print discovered secrets in the final response.
+==================================================
+71. SOURCE CONTROL SAFETY
+Ensure .gitignore contains appropriate entries for:
+.env
+.env.*
+!.env.example
+and other sensitive files as appropriate.
+Do not commit secrets.
+==================================================
+72. FIRESTORE RULES DOCUMENTATION
+Create/update documentation explaining:
+Authentication model
+Admin authorization
+Customer authorization
+Public data
+Private data
+Admin-only data
+Order security
+Inventory security
+Coupon security
+Storage security
+==================================================
+73. FIRESTORE INDEX DOCUMENTATION
+If indexes are required:
+Document them clearly.
+If firebase.json or firestore.indexes.json exists, update it appropriately.
+Do not delete existing required indexes.
+==================================================
+74. FIREBASE STORAGE RULE DOCUMENTATION
+Document:
+Storage paths
+Who can upload
+Who can read
+Who can delete
+File type limits
+File size limits
+Admin authorization
+==================================================
+75. PERFORMANCE VERIFICATION
+After optimization, test:
+Homepage
+Shop
+Category
+Product details
+Cart
+Checkout
+Account
+Admin dashboard
+Admin products
+Admin orders
+Verify that performance improvements did not break functionality.
+==================================================
+76. SECURITY VERIFICATION
+Perform practical security checks.
+Try to simulate:
+Anonymous user accessing /admin
+Normal customer accessing /admin
+Customer attempting to modify another customer's order
+Customer attempting to modify product price
+Customer attempting to modify stock
+Customer attempting to grant admin access
+Customer attempting to write to admin-only collections
+Customer attempting to upload admin files
+Customer manipulating checkout total
+Customer manipulating coupon discount
+Customer manipulating delivery charge
+Customer submitting invalid product IDs
+Customer submitting invalid quantities
+Customer creating duplicate orders
+Customer trying to create negative-value orders
+All unauthorized operations must fail securely.
+==================================================
+77. DO NOT BREAK REAL DATA
+If the existing Firebase project contains real data:
+DO NOT delete it.
+DO NOT reset the database.
+DO NOT overwrite products.
+DO NOT delete orders.
+DO NOT delete customers.
+DO NOT delete reviews.
+DO NOT recreate the database.
+Make changes safely.
+If migration is required, explain the migration before performing destructive changes.
+==================================================
+78. BACKWARD COMPATIBILITY
+Preserve existing:
+URLs
+Product IDs
+Order IDs
+Customer IDs
+Firebase document IDs
+Storage paths
+unless there is a compelling security reason.
+==================================================
+79. FINAL BUILD CHECK
+After all changes:
+Run a production build.
+Fix:
+TypeScript errors
+Build errors
+Import errors
+Routing errors
+Firebase errors
+Runtime errors
+Do not finish with known compilation errors.
+==================================================
+80. FINAL SECURITY REPORT
+After completing the hardening, provide a concise report containing:
+A. Security issues found
+B. Security issues fixed
+C. Firestore Rules added/changed
+D. Storage Rules added/changed
+E. Admin authorization changes
+F. Order security changes
+G. Inventory security changes
+H. Coupon security changes
+I. Performance improvements
+J. Firestore read optimizations
+K. Image optimizations
+L. Bundle optimizations
+M. Environment/security changes
+N. Any remaining risks
+O. Any manual Firebase Console steps I must perform
+==================================================
+81. IMPORTANT FIRESTORE RULE REQUIREMENT
+Do not simply generate generic Firestore rules.
+Inspect the ACTUAL collections and ACTUAL application code first.
+Then create rules that correspond to the application's real data model and operations.
+Every important read/write operation in the application must have an intentional authorization decision.
+If a feature requires a Firestore write that current rules do not safely support:
+modify the application architecture as necessary rather than weakening the rules.
+NEVER solve a permission problem by making Firestore public.
+==================================================
+82. IMPORTANT ADMIN SECURITY REQUIREMENT
+The admin UID provided in the project is:
+HvhASQq3i8M7cFdrHRTC7f6hbuH3
+Use the actual configured admin authorization mechanism.
+If the project already uses Firebase Custom Claims, preserve and improve it.
+If it currently relies on a client-controlled admin flag, replace that insecure mechanism with a secure authorization mechanism.
+Do not expose the admin UID unnecessarily in the customer-facing UI.
+==================================================
+83. FINAL PRODUCTION REQUIREMENT
+The final application must be:
+Secure by default.
+Least-privilege.
+Fast.
+Scalable.
+Cost-conscious.
+Production-oriented.
+Mobile-friendly.
+Maintainable.
+The customer website must continue to function normally.
+The admin panel must continue to function normally.
+No demo data must be introduced.
+No existing real data must be deleted.
+==================================================
+84. DO NOT STOP AT ANALYSIS
+Do not only tell me what is wrong.
+Actually modify the project and implement the required fixes.
+Do not return only recommendations.
+Make the security rules.
+Make the performance improvements.
+Make the code changes.
+Fix the vulnerabilities.
+Run the build/tests where available.
+Then provide the final security and performance report.
+==================================================
+85. FINAL PRIORITY
+Priority order:
+Protect customer data
+Protect admin access
+Protect orders
+Protect prices
+Protect inventory
+Protect coupons
+Protect Firebase
+Protect Storage
+Reduce unnecessary Firebase reads/writes
+Improve page loading
+Optimize images
+Optimize JavaScript
+Preserve existing functionality
+Preserve existing real data
+Maintain the existing visual design
+Start by auditing the actual project, then implement the fixes.

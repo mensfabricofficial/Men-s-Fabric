@@ -14,9 +14,12 @@ import {
   Share2,
   AlertCircle
 } from 'lucide-react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Product, Review } from '../types';
 import { productService } from '../services/productService';
-import { settingsService } from '../services/settingsService';
+import { settingsService, getLocalDeliveryZones } from '../services/settingsService';
+import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import { useAuth } from '../context/AuthContext';
@@ -44,6 +47,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   
+  // Dynamic Size Guides
+  const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
+  const [activeGuideCatId, setActiveGuideCatId] = useState<string>('panjabi');
+  
   // Accordion states
   const [activeTab, setActiveTab] = useState<'desc' | 'specs' | 'delivery' | 'reviews'>('desc');
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
@@ -54,12 +61,18 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [reviewAuthor, setReviewAuthor] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState(false);
+  const [reviewError, setReviewError] = useState('');
 
   useEffect(() => {
+    let isMounted = true;
+    let unsubLive: (() => void) | null = null;
     setLoading(true);
-    productService
-      .getProductById(productIdOrSlug)
-      .then(async (prod) => {
+
+    const initProduct = async () => {
+      try {
+        const prod = await productService.getProductById(productIdOrSlug);
+        if (!isMounted) return;
+
         if (prod) {
           setProduct(prod);
           const initialImg = prod.thumbnail || prod.images?.[0] || '/logo.jpg';
@@ -73,23 +86,73 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             setSelectedColor(prod.colors[0].name);
           }
 
-          // Fetch related products
-          if (prod.category) {
-            const rel = await productService.getProducts({
-              category: prod.category,
-              limitCount: 4,
-            });
-            setRelatedProducts(rel.products.filter((p) => p.id !== prod.id));
+          // Unblock the UI immediately!
+          setLoading(false);
+
+          // Real-time synchronization for stock & price updates
+          if (prod.id) {
+            unsubLive = onSnapshot(doc(db, 'products', prod.id), (snap) => {
+              if (snap.exists() && isMounted) {
+                const updated = { id: snap.id, ...snap.data() } as Product;
+                setProduct((prev) => ({ ...(prev || prod), ...updated }));
+              }
+            }, (err) => console.warn('Product live sync notice:', err));
           }
 
-          // Fetch reviews
-          const revs = await settingsService.getProductReviews(prod.id);
-          setReviews(revs);
+          // Fetch related products in background
+          if (prod.category) {
+            productService.getProducts({
+              category: prod.category,
+              limitCount: 4,
+            }).then((rel) => {
+              if (isMounted) {
+                setRelatedProducts((rel.products || []).filter((p) => p.id !== prod.id));
+              }
+            }).catch((relErr) => {
+              console.warn('Could not load related garments:', relErr);
+            });
+          }
+
+          // Fetch reviews in background
+          settingsService.getProductReviews(prod.id).then((revs) => {
+            if (isMounted) {
+              setReviews(revs || []);
+            }
+          }).catch((revErr) => {
+            console.warn('Could not load reviews:', revErr);
+          });
+
+          // Fetch dynamic size guides in background
+          sizeGuideService.getSizeGuides().then((guides) => {
+            if (isMounted && guides.length > 0) {
+              setSizeGuides(guides);
+              const text = `${prod.category || ''} ${prod.name || ''}`.toLowerCase();
+              if (text.includes('panjabi')) setActiveGuideCatId('panjabi');
+              else if (text.includes('shirt') && !text.includes('t-shirt') && !text.includes('tshirt')) setActiveGuideCatId('shirts');
+              else if (text.includes('polo') || text.includes('t-shirt') || text.includes('tshirt')) setActiveGuideCatId('tshirts');
+              else if (text.includes('pant') || text.includes('trouser') || text.includes('chino')) setActiveGuideCatId('pants');
+              else setActiveGuideCatId(guides[0].id);
+            }
+          }).catch(() => {});
+        } else {
+          setProduct(null);
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      } catch (err) {
+        console.error('Failed to load product details:', err);
+        if (isMounted) {
+          setProduct(null);
+          setLoading(false);
+        }
+      }
+    };
+
+    initProduct();
+
+    return () => {
+      isMounted = false;
+      if (unsubLive) unsubLive();
+    };
   }, [productIdOrSlug]);
 
   if (loading) {
@@ -168,6 +231,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     if (!reviewComment.trim()) return;
 
     setReviewSubmitting(true);
+    setReviewError('');
     try {
       await settingsService.submitReview({
         productId: product.id,
@@ -182,7 +246,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       setReviewComment('');
       setReviewAuthor('');
     } catch {
-      alert('Could not submit review at this moment.');
+      setReviewError('Could not submit review at this moment. Please try again.');
     } finally {
       setReviewSubmitting(false);
     }
@@ -224,7 +288,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
           )}
 
           {/* Main Display Image */}
-          <div className="relative flex-1 aspect-[3/4] bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200">
+          <div className="relative flex-1 aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200">
             <img
               src={selectedImage || product.thumbnail || '/logo.jpg'}
               alt={product.name}
@@ -233,12 +297,12 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             {/* Badges */}
             <div className="absolute top-4 left-4 flex flex-col gap-1.5 z-10">
               {isSale && (
-                <span className="bg-black text-white text-[11px] font-bold px-2.5 py-1 rounded tracking-widest uppercase">
-                  Save {discountPercent}%
+                <span className="bg-red-600 text-white text-[11px] font-extrabold px-2.5 py-1 rounded tracking-wider uppercase shadow-xs">
+                  -{discountPercent}%
                 </span>
               )}
               {product.fabric && (
-                <span className="bg-white/90 backdrop-blur-xs text-black border border-neutral-300 text-[10px] font-semibold px-2 py-0.5 rounded tracking-wider">
+                <span className="bg-white/95 backdrop-blur-xs text-black border border-neutral-300 text-[10px] font-semibold px-2 py-0.5 rounded tracking-wider">
                   {product.fabric}
                 </span>
               )}
@@ -259,15 +323,20 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               {product.name}
             </h1>
 
-            {/* Price section */}
-            <div className="flex items-baseline gap-3 pt-1">
+            {/* Price section with Red Discount Badge beside prices */}
+            <div className="flex items-center flex-wrap gap-3 pt-1">
               <span className="text-2xl sm:text-3xl font-bold text-neutral-900">
                 ৳{currentPrice.toLocaleString('en-BD')}
               </span>
               {isSale && (
-                <span className="text-base text-neutral-400 line-through">
-                  ৳{product.price.toLocaleString('en-BD')}
-                </span>
+                <>
+                  <span className="text-base text-neutral-400 line-through font-normal">
+                    ৳{product.price.toLocaleString('en-BD')}
+                  </span>
+                  <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
+                    -{discountPercent}% OFF
+                  </span>
+                </>
               )}
               <span className="text-[11px] text-neutral-500 font-medium">VAT Included</span>
             </div>
@@ -397,7 +466,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 disabled={isOutOfStock}
                 className="w-full py-3.5 bg-neutral-900 text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-black transition-colors shadow-sm disabled:bg-neutral-300 disabled:cursor-not-allowed cursor-pointer"
               >
-                Buy Now (Cash on Delivery)
+                Instant Checkout
               </button>
             </div>
 
@@ -405,11 +474,20 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             <div className="border-t border-neutral-200 pt-5 space-y-2.5 text-xs text-neutral-600">
               <div className="flex items-center gap-2.5">
                 <Truck className="w-4 h-4 text-black shrink-0" />
-                <span>Delivery: <b>৳70 Inside Dhaka</b> (1-2 days), <b>৳130 Outside Dhaka</b> (2-4 days)</span>
+                {(() => {
+                  const zones = getLocalDeliveryZones();
+                  const dh = zones.find((z) => z.id === 'dhaka');
+                  const out = zones.find((z) => z.id === 'outside-dhaka');
+                  return (
+                    <span>
+                      Delivery: <b>৳{dh?.charge ?? 70} Inside Dhaka</b> ({dh?.estimatedDays || '1-2 days'}), <b>৳{out?.charge ?? 130} Outside Dhaka</b> ({out?.estimatedDays || '2-4 days'})
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-2.5">
                 <ShieldCheck className="w-4 h-4 text-black shrink-0" />
-                <span>Pay via <b>Cash on Delivery</b> after physical parcel inspection</span>
+                <span>100% Original Premium Quality Guaranteed</span>
               </div>
               <div className="flex items-center gap-2.5">
                 <RotateCcw className="w-4 h-4 text-black shrink-0" />
@@ -509,6 +587,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   </div>
                 ) : (
                   <form onSubmit={handleReviewSubmit} className="space-y-3">
+                    {reviewError && (
+                      <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
+                        {reviewError}
+                      </div>
+                    )}
                     <div>
                       <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
                       <div className="flex gap-1">
@@ -572,40 +655,85 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       )}
 
       {/* Size Guide Modal */}
-      {sizeGuideOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">MEN'S FABRIC — Size Chart (Inches)</h3>
-              <button onClick={() => setSizeGuideOpen(false)} className="text-neutral-500 hover:text-black">✕</button>
+      {sizeGuideOpen && (() => {
+        const currentGuide = sizeGuides.find((g) => g.id === activeGuideCatId) || sizeGuides[0];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 text-xs animate-fade-in">
+              <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-neutral-900">
+                    MEN'S FABRIC — Size Chart
+                  </h3>
+                  <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest">
+                    Precision Fit ({currentGuide?.unit || 'Inches'})
+                  </span>
+                </div>
+                <button onClick={() => setSizeGuideOpen(false)} className="text-neutral-400 hover:text-black p-1">
+                  ✕
+                </button>
+              </div>
+
+              {/* Category Pills */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 border-b border-neutral-100">
+                {sizeGuides.map((guide) => (
+                  <button
+                    key={guide.id}
+                    type="button"
+                    onClick={() => setActiveGuideCatId(guide.id)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
+                      activeGuideCatId === guide.id
+                        ? 'bg-black text-white shadow-xs'
+                        : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                    }`}
+                  >
+                    {guide.name.split(' ')[0]}
+                  </button>
+                ))}
+              </div>
+
+              {currentGuide && (
+                <div className="border border-neutral-200 rounded-xl overflow-hidden overflow-x-auto">
+                  <table className="w-full text-xs text-left border-collapse min-w-[320px]">
+                    <thead>
+                      <tr className="bg-neutral-100/70 border-b border-neutral-200 text-neutral-700 font-bold uppercase text-[10px]">
+                        {currentGuide.columns.map((col) => (
+                          <th key={col.key} className="p-2.5">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 font-medium">
+                      {currentGuide.rows.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-neutral-50">
+                          {currentGuide.columns.map((col) => (
+                            <td key={col.key} className={`p-2.5 ${col.key === 'size' ? 'font-bold text-neutral-900' : 'text-neutral-700'}`}>
+                              {row[col.key] || '-'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <p className="text-[11px] text-neutral-500">
+                {currentGuide?.tip || 'Measurements are standardized for regular tailored comfort fit. If between sizes, we recommend sizing up.'}
+              </p>
+
+              <button
+                type="button"
+                onClick={() => setSizeGuideOpen(false)}
+                className="w-full py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Close Guide
+              </button>
             </div>
-            <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr className="bg-neutral-100 border-b border-neutral-200 text-neutral-600 font-bold uppercase">
-                  <th className="p-2">Size</th>
-                  <th className="p-2">Chest</th>
-                  <th className="p-2">Length</th>
-                  <th className="p-2">Sleeve</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                <tr><td className="p-2 font-bold">S</td><td className="p-2">38"</td><td className="p-2">28"</td><td className="p-2">24"</td></tr>
-                <tr><td className="p-2 font-bold">M</td><td className="p-2">40"</td><td className="p-2">29"</td><td className="p-2">24.5"</td></tr>
-                <tr><td className="p-2 font-bold">L</td><td className="p-2">42"</td><td className="p-2">30"</td><td className="p-2">25"</td></tr>
-                <tr><td className="p-2 font-bold">XL</td><td className="p-2">44"</td><td className="p-2">31"</td><td className="p-2">25.5"</td></tr>
-                <tr><td className="p-2 font-bold">XXL</td><td className="p-2">46"</td><td className="p-2">32"</td><td className="p-2">26"</td></tr>
-              </tbody>
-            </table>
-            <p className="text-[11px] text-neutral-500">Measurements are standardized for regular tailored comfort fit. If between sizes, we recommend sizing up.</p>
-            <button
-              onClick={() => setSizeGuideOpen(false)}
-              className="w-full py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded"
-            >
-              Close Guide
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
   );

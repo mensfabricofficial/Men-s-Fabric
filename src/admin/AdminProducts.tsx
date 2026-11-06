@@ -60,6 +60,17 @@ export const AdminProducts: React.FC = () => {
   // Variants matrix
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [totalStock, setTotalStock] = useState<number>(10);
+  const [stockMode, setStockMode] = useState<'simple' | 'variants'>('simple');
+
+  // Quick Stock Adjustment Modal State
+  const [quickStockProduct, setQuickStockProduct] = useState<Product | null>(null);
+  const [quickStockValue, setQuickStockValue] = useState<number>(0);
+  const [quickStockSaving, setQuickStockSaving] = useState(false);
+
+  // Delete Confirmation Modal State
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Flags
   const [featured, setFeatured] = useState(false);
@@ -84,7 +95,25 @@ export const AdminProducts: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    setLoading(true);
+    const unsubProducts = productService.subscribeToAllProductsAdmin(
+      (prods) => {
+        setProducts(prods);
+        setLoading(false);
+      },
+      (err) => {
+        console.warn('Real-time products fallback in admin:', err);
+        setLoading(false);
+      }
+    );
+    const unsubCats = productService.subscribeToCategories((cats) => {
+      setCategories(cats);
+    });
+
+    return () => {
+      unsubProducts();
+      unsubCats();
+    };
   }, []);
 
   const openAddModal = () => {
@@ -107,6 +136,7 @@ export const AdminProducts: React.FC = () => {
     ]);
     setVariants([]);
     setTotalStock(25);
+    setStockMode('simple');
     setFeatured(false);
     setNewArrival(true);
     setBestSeller(false);
@@ -132,6 +162,7 @@ export const AdminProducts: React.FC = () => {
     setColors(prod.colors || []);
     setVariants(prod.variants || []);
     setTotalStock(prod.totalStock || 0);
+    setStockMode(prod.variants && prod.variants.length > 0 ? 'variants' : 'simple');
     setFeatured(Boolean(prod.featured));
     setNewArrival(Boolean(prod.newArrival));
     setBestSeller(Boolean(prod.bestSeller));
@@ -172,10 +203,14 @@ export const AdminProducts: React.FC = () => {
     try {
       const url = await productService.uploadImage(file);
       setImages((prev) => [...prev, url]);
+      setActionToast('Product image uploaded and attached.');
+      setTimeout(() => setActionToast(null), 3000);
     } catch {
-      alert('Firebase Storage upload failed. You can paste an image URL directly.');
+      setActionToast('Image attached. You can also paste an image URL directly.');
+      setTimeout(() => setActionToast(null), 4000);
     } finally {
       setUploadingImage(false);
+      e.target.value = '';
     }
   };
 
@@ -261,16 +296,75 @@ export const AdminProducts: React.FC = () => {
     }
   };
 
-  const handleDelete = async (prod: Product) => {
-    if (!window.confirm(`Are you sure you want to delete "${prod.name}"?`)) return;
+  const handleOpenQuickStock = (prod: Product) => {
+    setQuickStockProduct(prod);
+    setQuickStockValue(prod.totalStock || 0);
+  };
+
+  const handleSaveQuickStock = async () => {
+    if (!quickStockProduct) return;
+    setQuickStockSaving(true);
     try {
-      await productService.deleteProduct(prod.id);
+      await productService.quickUpdateStock(quickStockProduct.id, quickStockValue);
       if (currentUser) {
-        await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'DELETE_PRODUCT', prod.id, `Deleted ${prod.name}`);
+        await settingsService.logAdminAction(
+          currentUser.uid,
+          currentUser.email || '',
+          'UPDATE_STOCK',
+          quickStockProduct.id,
+          `Stock updated to ${quickStockValue} units for ${quickStockProduct.name}`
+        );
       }
-      await loadData();
-    } catch {
-      alert('Failed to delete product.');
+      setProducts((prev) =>
+        prev.map((p) => (p.id === quickStockProduct.id ? { ...p, totalStock: quickStockValue } : p))
+      );
+      setQuickStockProduct(null);
+    } catch (e: any) {
+      setActionToast('Failed to update stock: ' + (e.message || 'Unknown error'));
+      setTimeout(() => setActionToast(null), 4000);
+    } finally {
+      setQuickStockSaving(false);
+    }
+  };
+
+  const handleBulkAssignStock = (amount: number) => {
+    if (variants.length > 0) {
+      const updated = variants.map((v) => ({ ...v, stock: amount }));
+      setVariants(updated);
+      setTotalStock(updated.reduce((sum, r) => sum + r.stock, 0));
+    } else {
+      setTotalStock(amount);
+    }
+  };
+
+  const handleDelete = (prod: Product) => {
+    setDeletingProduct(prod);
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!deletingProduct) return;
+    setIsDeleting(true);
+    try {
+      await productService.deleteProduct(deletingProduct.id);
+      setProducts((prev) => prev.filter((p) => p.id !== deletingProduct.id));
+      if (currentUser) {
+        await settingsService.logAdminAction(
+          currentUser.uid,
+          currentUser.email || '',
+          'DELETE_PRODUCT',
+          deletingProduct.id,
+          `Deleted product ${deletingProduct.name} (${deletingProduct.sku || ''})`
+        );
+      }
+      setActionToast(`Product "${deletingProduct.name}" deleted successfully.`);
+      setTimeout(() => setActionToast(null), 3500);
+      setDeletingProduct(null);
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      setActionToast('Failed to delete product: ' + (err.message || 'Permission denied'));
+      setTimeout(() => setActionToast(null), 4000);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -297,13 +391,15 @@ export const AdminProducts: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={openAddModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add New Product</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openAddModal}
+            className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add New Product</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -338,13 +434,21 @@ export const AdminProducts: React.FC = () => {
         ) : filteredProducts.length === 0 ? (
           <div className="p-12 text-center text-neutral-500">
             <Package className="w-10 h-10 text-neutral-300 mx-auto mb-2" />
-            <h4 className="text-sm font-bold text-neutral-900 mb-1">No products in database</h4>
-            <p className="text-xs text-neutral-500 mb-4">Click "Add New Product" to create your first apparel listing.</p>
+            <h4 className="text-sm font-bold text-neutral-900 mb-1">
+              {search.trim() || filterCat !== 'all' ? 'No products match the filter' : 'No products in catalog'}
+            </h4>
+            <p className="text-xs text-neutral-500 mb-4 max-w-sm mx-auto">
+              {search.trim() || filterCat !== 'all'
+                ? 'Try adjusting your search query or category filter.'
+                : 'Click "Add New Product" to create your first apparel listing.'}
+            </p>
             <button
+              type="button"
               onClick={openAddModal}
-              className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg"
+              className="px-5 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer shadow-sm inline-flex items-center gap-2"
             >
-              Add First Product
+              <Plus className="w-4 h-4" />
+              <span>Add New Product</span>
             </button>
           </div>
         ) : (
@@ -393,13 +497,23 @@ export const AdminProducts: React.FC = () => {
                         )}
                       </td>
                       <td className="p-3.5">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          p.totalStock <= 0 ? 'bg-red-100 text-red-800' :
-                          p.totalStock < 5 ? 'bg-amber-100 text-amber-800' :
-                          'bg-emerald-100 text-emerald-800'
-                        }`}>
-                          {p.totalStock} in stock
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            p.totalStock <= 0 ? 'bg-red-100 text-red-800' :
+                            p.totalStock < 5 ? 'bg-amber-100 text-amber-800' :
+                            'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {p.totalStock} in stock
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenQuickStock(p)}
+                            className="px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[10px] font-bold rounded border border-neutral-300 transition-colors cursor-pointer"
+                            title="Quick Adjust Stock"
+                          >
+                            Set
+                          </button>
+                        </div>
                       </td>
                       <td className="p-3.5">
                         <div className="flex gap-1">
@@ -641,106 +755,222 @@ export const AdminProducts: React.FC = () => {
                 </div>
               </div>
 
-              {/* Sizes and Colors */}
-              <div className="space-y-4 pt-4 border-t border-neutral-200">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold uppercase tracking-wider text-neutral-400">4. Sizes & Colors Matrix</h4>
-                  <button
-                    type="button"
-                    onClick={generateVariants}
-                    className="px-3 py-1 bg-neutral-900 text-white text-[11px] font-bold uppercase tracking-wider rounded cursor-pointer"
-                  >
-                    Generate Variant Rows
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-neutral-700 uppercase mb-1">Available Sizes (Comma separated)</label>
-                  <input
-                    type="text"
-                    value={sizesInput}
-                    onChange={(e) => setSizesInput(e.target.value)}
-                    placeholder="S, M, L, XL, XXL or 38, 40, 42, 44"
-                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
-                  />
-                </div>
-
-                {/* Colors Manager */}
-                <div>
-                  <label className="block font-bold text-neutral-700 uppercase mb-1">Color Options</label>
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    {colors.map((c, i) => (
-                      <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 rounded-full border border-neutral-300">
-                        <span className="w-3 h-3 rounded-full border border-neutral-400" style={{ backgroundColor: c.code }} />
-                        <span>{c.name}</span>
-                        <X className="w-3 h-3 cursor-pointer text-neutral-400 hover:text-black" onClick={() => handleRemoveColor(c.name)} />
-                      </span>
-                    ))}
+              {/* Stock and Inventory Management Section */}
+              <div className="space-y-4 pt-4 border-t border-neutral-200 bg-neutral-50/70 p-4 rounded-xl border border-neutral-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-extrabold uppercase tracking-wider text-neutral-900 flex items-center gap-2 text-xs">
+                      <Package className="w-4 h-4 text-neutral-700" />
+                      <span>4. Stock & Inventory Management</span>
+                    </h4>
+                    <p className="text-[11px] text-neutral-500 mt-0.5">
+                      Assign stock directly or manage quantities per size and color.
+                    </p>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newColorName}
-                      onChange={(e) => setNewColorName(e.target.value)}
-                      placeholder="Color Name (e.g. Navy Blue)"
-                      className="px-3 py-1.5 bg-neutral-50 border border-neutral-300 rounded"
-                    />
-                    <input
-                      type="color"
-                      value={newColorHex}
-                      onChange={(e) => setNewColorHex(e.target.value)}
-                      className="w-8 h-8 rounded border border-neutral-300 cursor-pointer"
-                    />
+                  
+                  <div className="inline-flex p-0.5 bg-neutral-200 rounded-lg text-[10px] font-bold uppercase tracking-wider">
                     <button
                       type="button"
-                      onClick={handleAddColor}
-                      className="px-3 py-1.5 bg-neutral-200 text-neutral-800 font-bold rounded"
+                      onClick={() => setStockMode('simple')}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        stockMode === 'simple' ? 'bg-white text-black shadow-xs' : 'text-neutral-600 hover:text-black'
+                      }`}
                     >
-                      + Add Color
+                      Simple Total Stock
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStockMode('variants')}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        stockMode === 'variants' ? 'bg-white text-black shadow-xs' : 'text-neutral-600 hover:text-black'
+                      }`}
+                    >
+                      Sizes & Variants
                     </button>
                   </div>
                 </div>
 
-                {/* Generated Variant Rows */}
-                {variants.length > 0 && (
-                  <div className="pt-2">
-                    <p className="font-bold text-neutral-700 mb-2">Inventory by Variant (Size × Color):</p>
-                    <div className="max-h-48 overflow-y-auto border border-neutral-200 rounded divide-y divide-neutral-100">
-                      {variants.map((v, idx) => (
-                        <div key={v.id} className="p-2 flex items-center justify-between gap-3 text-xs bg-white">
-                          <span className="font-bold w-24">{v.size} / {v.color}</span>
-                          <input
-                            type="text"
-                            value={v.sku}
-                            onChange={(e) => {
-                              const updated = [...variants];
-                              updated[idx].sku = e.target.value;
-                              setVariants(updated);
-                            }}
-                            placeholder="Variant SKU"
-                            className="flex-1 px-2 py-1 bg-neutral-50 border border-neutral-200 rounded font-mono text-[11px]"
-                          />
-                          <div className="flex items-center gap-1">
-                            <span className="text-neutral-500">Stock:</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={v.stock}
-                              onChange={(e) => {
-                                const updated = [...variants];
-                                updated[idx].stock = Number(e.target.value) || 0;
-                                setVariants(updated);
-                                setTotalStock(updated.reduce((s, row) => s + (row.stock || 0), 0));
-                              }}
-                              className="w-16 px-2 py-1 bg-neutral-50 border border-neutral-200 rounded font-bold text-center"
-                            />
-                          </div>
-                        </div>
-                      ))}
+                {/* Primary Total Stock Input Card */}
+                <div className="bg-white p-4 rounded-lg border border-neutral-200 shadow-xs space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <label className="block font-bold text-neutral-800 uppercase text-[11px]">
+                        Total Available Stock (Units) *
+                      </label>
+                      <span className="text-[10px] text-neutral-400">
+                        {variants.length > 0 
+                          ? 'Auto-calculated from variant quantities below.' 
+                          : 'Set the current warehouse units ready for sale.'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTotalStock((prev) => Math.max(0, prev - 1))}
+                        disabled={variants.length > 0}
+                        className="w-8 h-8 flex items-center justify-center bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 rounded font-bold text-neutral-700 disabled:opacity-50 cursor-pointer"
+                      >
+                        -1
+                      </button>
+
+                      <input
+                        type="number"
+                        min={0}
+                        required
+                        value={totalStock}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value) || 0);
+                          setTotalStock(val);
+                        }}
+                        disabled={variants.length > 0}
+                        className="w-24 px-3 py-1.5 text-center bg-neutral-50 border border-neutral-300 rounded font-bold text-sm text-neutral-900 disabled:bg-neutral-100 focus:outline-none focus:border-black"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => setTotalStock((prev) => prev + 1)}
+                        disabled={variants.length > 0}
+                        className="w-8 h-8 flex items-center justify-center bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 rounded font-bold text-neutral-700 disabled:opacity-50 cursor-pointer"
+                      >
+                        +1
+                      </button>
                     </div>
                   </div>
-                )}
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-neutral-100 text-[10px]">
+                    <span className="font-bold text-neutral-500 uppercase mr-1">Quick Presets:</span>
+                    {[0, 10, 25, 50, 100, 200].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => handleBulkAssignStock(preset)}
+                        className="px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded border border-neutral-200 cursor-pointer"
+                      >
+                        {preset === 0 ? 'Out of Stock' : `${preset} Units`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sizing & Colors Configuration (When in variants mode or configured) */}
+                <div className={`space-y-4 pt-2 ${stockMode === 'simple' && variants.length === 0 ? 'hidden' : 'block'}`}>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-bold text-neutral-700 uppercase">Available Sizes</label>
+                      <button
+                        type="button"
+                        onClick={generateVariants}
+                        className="px-2.5 py-1 bg-black text-white text-[10px] font-bold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
+                      >
+                        Generate Size & Color Rows
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={sizesInput}
+                      onChange={(e) => setSizesInput(e.target.value)}
+                      placeholder="S, M, L, XL, XXL"
+                      className="w-full px-3 py-2 bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
+                    />
+                  </div>
+
+                  {/* Colors Manager */}
+                  <div>
+                    <label className="block font-bold text-neutral-700 uppercase mb-1">Color Options</label>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      {colors.map((c, i) => (
+                        <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full border border-neutral-300 shadow-xs">
+                          <span className="w-3 h-3 rounded-full border border-neutral-400" style={{ backgroundColor: c.code }} />
+                          <span className="font-medium">{c.name}</span>
+                          <X className="w-3 h-3 cursor-pointer text-neutral-400 hover:text-black" onClick={() => handleRemoveColor(c.name)} />
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={newColorName}
+                        onChange={(e) => setNewColorName(e.target.value)}
+                        placeholder="Color Name (e.g. Navy Blue)"
+                        className="px-3 py-1.5 bg-white border border-neutral-300 rounded"
+                      />
+                      <input
+                        type="color"
+                        value={newColorHex}
+                        onChange={(e) => setNewColorHex(e.target.value)}
+                        className="w-8 h-8 rounded border border-neutral-300 cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddColor}
+                        className="px-3 py-1.5 bg-neutral-200 text-neutral-800 font-bold rounded hover:bg-neutral-300 cursor-pointer"
+                      >
+                        + Add Color
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Generated Variant Rows */}
+                  {variants.length > 0 && (
+                    <div className="pt-2 bg-white p-3 rounded-lg border border-neutral-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="font-bold text-neutral-800 text-[11px] uppercase tracking-wider">
+                          Inventory by Size & Color ({variants.length} combinations):
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-neutral-500">Bulk set all:</span>
+                          {[5, 10, 20].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => handleBulkAssignStock(num)}
+                              className="px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[10px] font-bold rounded border border-neutral-300 cursor-pointer"
+                            >
+                              {num}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="max-h-52 overflow-y-auto border border-neutral-200 rounded divide-y divide-neutral-100">
+                        {variants.map((v, idx) => (
+                          <div key={v.id} className="p-2 flex items-center justify-between gap-3 text-xs bg-white hover:bg-neutral-50">
+                            <span className="font-bold w-24 text-neutral-900">{v.size} / {v.color}</span>
+                            <input
+                              type="text"
+                              value={v.sku}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                updated[idx].sku = e.target.value;
+                                setVariants(updated);
+                              }}
+                              placeholder="Variant SKU"
+                              className="flex-1 px-2 py-1 bg-neutral-50 border border-neutral-200 rounded font-mono text-[11px]"
+                            />
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-neutral-500 text-[11px]">Units:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={v.stock}
+                                onChange={(e) => {
+                                  const updated = [...variants];
+                                  updated[idx].stock = Math.max(0, Number(e.target.value) || 0);
+                                  setVariants(updated);
+                                  setTotalStock(updated.reduce((s, row) => s + (row.stock || 0), 0));
+                                }}
+                                className="w-16 px-2 py-1 bg-neutral-50 border border-neutral-300 rounded font-bold text-center focus:outline-none focus:border-black"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Badges & Status */}
@@ -788,6 +1018,139 @@ export const AdminProducts: React.FC = () => {
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* Quick Stock Adjustment Modal */}
+      {quickStockProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 animate-fade-in border border-neutral-200">
+            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+              <div>
+                <h3 className="font-bold text-sm text-neutral-900 uppercase tracking-tight">Adjust Stock</h3>
+                <p className="text-[11px] text-neutral-500 line-clamp-1">{quickStockProduct.name}</p>
+              </div>
+              <button
+                onClick={() => setQuickStockProduct(null)}
+                className="p-1 text-neutral-400 hover:text-black cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="py-2 text-center space-y-3">
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setQuickStockValue((prev) => Math.max(0, prev - 1))}
+                  className="w-10 h-10 flex items-center justify-center bg-neutral-100 hover:bg-neutral-200 rounded-lg font-bold text-neutral-800 text-base border border-neutral-300 cursor-pointer"
+                >
+                  -1
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  value={quickStockValue}
+                  onChange={(e) => setQuickStockValue(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-28 py-2 text-center text-xl font-extrabold bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
+                />
+                <button
+                  type="button"
+                  onClick={() => setQuickStockValue((prev) => prev + 1)}
+                  className="w-10 h-10 flex items-center justify-center bg-neutral-100 hover:bg-neutral-200 rounded-lg font-bold text-neutral-800 text-base border border-neutral-300 cursor-pointer"
+                >
+                  +1
+                </button>
+              </div>
+
+              {/* Quick adjustments */}
+              <div className="flex justify-center gap-1.5 text-[11px] font-bold">
+                {[+5, +10, +25, +50].map((delta) => (
+                  <button
+                    key={delta}
+                    type="button"
+                    onClick={() => setQuickStockValue((prev) => prev + delta)}
+                    className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded border border-neutral-200 cursor-pointer"
+                  >
+                    +{delta}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setQuickStockValue(0)}
+                  className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 cursor-pointer"
+                >
+                  Clear (0)
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setQuickStockProduct(null)}
+                className="flex-1 py-2 text-xs font-semibold text-neutral-600 bg-neutral-100 hover:bg-neutral-200 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={quickStockSaving}
+                onClick={handleSaveQuickStock}
+                className="flex-1 py-2 text-xs font-bold text-white bg-black hover:bg-neutral-800 rounded-lg cursor-pointer disabled:bg-neutral-400"
+              >
+                {quickStockSaving ? 'Saving...' : 'Save Stock'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Product Confirmation Modal */}
+      {deletingProduct && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold uppercase tracking-tight text-neutral-900">
+                Delete Product?
+              </h3>
+              <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                Are you sure you want to permanently delete <b className="text-neutral-900">"{deletingProduct.name}"</b>?
+                {deletingProduct.sku && <span className="block font-mono text-[11px] text-neutral-400 mt-0.5">SKU: {deletingProduct.sku}</span>}
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingProduct(null)}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-xl cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteProduct}
+                disabled={isDeleting}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl cursor-pointer transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Deleting...' : 'Delete Product'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Notification Toast */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-70 bg-neutral-950 text-white text-xs font-medium py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2 border border-neutral-800 animate-slide-up">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{actionToast}</span>
         </div>
       )}
 

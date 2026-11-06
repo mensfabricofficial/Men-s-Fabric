@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Truck, ShieldCheck, RotateCcw, Phone, Mail, MapPin, MessageCircle, HelpCircle, Ruler } from 'lucide-react';
+import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 
 interface StaticPageProps {
   type: 'about' | 'contact' | 'faq' | 'size-guide' | 'shipping' | 'return' | 'privacy' | 'terms';
@@ -7,6 +8,19 @@ interface StaticPageProps {
 }
 
 export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
+  const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
+  const [activeGuideTab, setActiveGuideTab] = useState<string>('panjabi');
+
+  useEffect(() => {
+    if (type === 'size-guide') {
+      sizeGuideService.getSizeGuides().then((res) => {
+        if (res && res.length > 0) {
+          setSizeGuides(res);
+          setActiveGuideTab(res[0].id);
+        }
+      });
+    }
+  }, [type]);
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-20">
       
@@ -146,42 +160,66 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
             <p className="text-xs text-neutral-500 mt-2">All measurements are in inches. Regular Tailored Fit.</p>
           </div>
 
-          <div className="space-y-8">
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Shirts (Casual & Formal)</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse border border-neutral-200">
-                  <thead className="bg-neutral-100 text-neutral-700 font-bold uppercase">
-                    <tr><th className="p-3 border">Size</th><th className="p-3 border">Chest</th><th className="p-3 border">Length</th><th className="p-3 border">Sleeve</th><th className="p-3 border">Collar</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-200">
-                    <tr><td className="p-3 border font-bold">S (38)</td><td className="p-3 border">38"</td><td className="p-3 border">28.5"</td><td className="p-3 border">24"</td><td className="p-3 border">14.5"</td></tr>
-                    <tr><td className="p-3 border font-bold">M (40)</td><td className="p-3 border">40"</td><td className="p-3 border">29.5"</td><td className="p-3 border">24.5"</td><td className="p-3 border">15"</td></tr>
-                    <tr><td className="p-3 border font-bold">L (42)</td><td className="p-3 border">42"</td><td className="p-3 border">30.5"</td><td className="p-3 border">25"</td><td className="p-3 border">15.5"</td></tr>
-                    <tr><td className="p-3 border font-bold">XL (44)</td><td className="p-3 border">44"</td><td className="p-3 border">31.5"</td><td className="p-3 border">25.5"</td><td className="p-3 border">16"</td></tr>
-                    <tr><td className="p-3 border font-bold">XXL (46)</td><td className="p-3 border">46"</td><td className="p-3 border">32"</td><td className="p-3 border">26"</td><td className="p-3 border">16.5"</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Panjabi (Traditional)</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse border border-neutral-200">
-                  <thead className="bg-neutral-100 text-neutral-700 font-bold uppercase">
-                    <tr><th className="p-3 border">Size</th><th className="p-3 border">Chest</th><th className="p-3 border">Length</th><th className="p-3 border">Sleeve</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-200">
-                    <tr><td className="p-3 border font-bold">38 (S)</td><td className="p-3 border">40"</td><td className="p-3 border">38"</td><td className="p-3 border">24"</td></tr>
-                    <tr><td className="p-3 border font-bold">40 (M)</td><td className="p-3 border">42"</td><td className="p-3 border">40"</td><td className="p-3 border">24.5"</td></tr>
-                    <tr><td className="p-3 border font-bold">42 (L)</td><td className="p-3 border">44"</td><td className="p-3 border">42"</td><td className="p-3 border">25"</td></tr>
-                    <tr><td className="p-3 border font-bold">44 (XL)</td><td className="p-3 border">46"</td><td className="p-3 border">44"</td><td className="p-3 border">25.5"</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {/* Category Tabs */}
+          <div className="flex justify-center gap-2 overflow-x-auto pb-2 border-b border-neutral-200">
+            {sizeGuides.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveGuideTab(cat.id)}
+                className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
+                  activeGuideTab === cat.id
+                    ? 'bg-black text-white shadow-xs'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                }`}
+              >
+                {cat.name}
+              </button>
+            ))}
           </div>
+
+          {/* Active Category Display */}
+          {(() => {
+            const current = sizeGuides.find((c) => c.id === activeGuideTab) || sizeGuides[0];
+            if (!current) return null;
+            return (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900">
+                    {current.name} ({current.unit})
+                  </h3>
+                  {current.tip && (
+                    <span className="text-[11px] text-neutral-500 italic">{current.tip}</span>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto border border-neutral-200 rounded-xl">
+                  <table className="w-full text-xs text-left border-collapse">
+                    <thead className="bg-neutral-100 text-neutral-700 font-bold uppercase">
+                      <tr>
+                        {current.columns.map((col) => (
+                          <th key={col.key} className="p-3 border-b border-neutral-200">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200 font-medium">
+                      {current.rows.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-neutral-50">
+                          {current.columns.map((col) => (
+                            <td key={col.key} className={`p-3 ${col.key === 'size' ? 'font-bold text-neutral-900' : 'text-neutral-700'}`}>
+                              {row[col.key] || '-'}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

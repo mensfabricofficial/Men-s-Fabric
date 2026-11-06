@@ -14,6 +14,9 @@ try {
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  // Cap max retry time to prevent hanging 120s on unconfigured or offline buckets
+  storage.maxUploadRetryTime = 5000;
+  storage.maxOperationRetryTime = 5000;
 } catch (error) {
   console.error("Firebase initialization failed:", error);
   // Re-throw or provide fallback so app can inform the user gracefully
@@ -21,6 +24,8 @@ try {
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  storage.maxUploadRetryTime = 5000;
+  storage.maxOperationRetryTime = 5000;
 }
 
 export { app, auth, db, storage };

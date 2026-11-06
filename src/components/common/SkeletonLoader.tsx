@@ -3,7 +3,7 @@ import React from 'react';
 export const ProductCardSkeleton: React.FC = () => {
   return (
     <div className="flex flex-col bg-white border border-neutral-100 rounded-lg overflow-hidden animate-pulse">
-      <div className="w-full aspect-[3/4] bg-neutral-200" />
+      <div className="w-full aspect-square bg-neutral-200" />
       <div className="p-4 space-y-3">
         <div className="h-3 w-1/3 bg-neutral-200 rounded" />
         <div className="h-4 w-4/5 bg-neutral-200 rounded" />

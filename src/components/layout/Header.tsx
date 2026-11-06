@@ -19,6 +19,8 @@ import { Category } from '../../types';
 import { productService } from '../../services/productService';
 import { settingsService } from '../../services/settingsService';
 
+import { BrandLogo } from '../common/BrandLogo';
+
 interface HeaderProps {
   currentRoute: string;
   onNavigate: (route: string) => void;
@@ -58,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
   const navLinks = [
     { label: 'Home', href: '/' },
-    { label: 'Shop All', href: '/shop' },
+    { label: 'All Products', href: '/shop' },
     { label: 'New Arrivals', href: '/shop?filter=new' },
     { label: 'Best Sellers', href: '/shop?filter=best' },
     { label: 'Track Order', href: '/track-order' },
@@ -89,18 +91,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             </button>
           </div>
 
-          {/* Official Logo */}
+          {/* Official Brand Logo - Black logo on white background */}
           <div 
             onClick={() => onNavigate('/')}
-            className="flex items-center cursor-pointer select-none"
+            className="flex items-center cursor-pointer select-none py-1"
           >
-            <div className="h-10 sm:h-12 flex items-center bg-black px-2 py-1 rounded">
-              <img
-                src="/logo.jpg"
-                alt="MEN'S FABRIC"
-                className="h-8 sm:h-10 object-contain"
-              />
-            </div>
+            <BrandLogo variant="dark" className="h-8 sm:h-10" />
           </div>
 
           {/* Desktop Navigation */}
@@ -183,13 +179,9 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
                 <button
                   onClick={() => onNavigate('/account')}
                   className="flex items-center gap-1 p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                  aria-label="My Account"
                 >
                   <UserIcon className="w-5 h-5" />
-                  {isAdmin && (
-                    <span className="hidden sm:inline-block bg-black text-white text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ml-1">
-                      Admin
-                    </span>
-                  )}
                 </button>
                 <div className="absolute right-0 top-full hidden group-hover:block w-48 bg-white border border-neutral-200 rounded-lg shadow-xl py-2 z-50">
                   <div className="px-4 py-2 border-b border-neutral-100">
@@ -291,7 +283,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             <div>
               {/* Drawer header with logo */}
               <div className="p-4 border-b border-neutral-200 flex items-center justify-between bg-black">
-                <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-8 object-contain" />
+                <BrandLogo variant="light" className="h-8" />
                 <button
                   onClick={() => setMobileMenuOpen(false)}
                   className="p-1 text-white hover:text-neutral-300 cursor-pointer"

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Package, ArrowRight, Truck, Phone, MapPin } from 'lucide-react';
+import { CheckCircle, Package, ArrowRight, Truck, Phone, MapPin, FileText, Printer } from 'lucide-react';
 import { Order } from '../types';
 import { orderService } from '../services/orderService';
+import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 
 interface OrderConfirmationPageProps {
   currentRoute: string;
@@ -14,6 +15,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
 }) => {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showInvoice, setShowInvoice] = useState(false);
 
   const url = new URL(window.location.origin + currentRoute);
   const orderId = url.searchParams.get('id');
@@ -56,12 +58,38 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           </div>
           <div className="sm:text-right">
             <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Payment Method</span>
-            <p className="text-xs font-semibold text-neutral-800">Cash on Delivery (COD)</p>
+            <p className="text-xs font-bold text-neutral-900 uppercase">
+              {order ? (order.paymentMethod === 'cod' ? 'Cash on Delivery (COD)' : `${order.paymentMethod.toUpperCase()} Online Payment`) : 'Cash on Delivery (COD)'}
+            </p>
+            {order?.paymentDetails?.transactionId && (
+              <p className="text-[11px] text-neutral-600 font-mono mt-0.5">
+                TrxID: <span className="font-bold text-black">{order.paymentDetails.transactionId}</span>
+              </p>
+            )}
           </div>
         </div>
 
         {order && (
           <>
+            {/* Advance payment banner for COD or Online payment */}
+            {order.paymentDetails?.transactionId && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900 flex items-center justify-between">
+                <div>
+                  <p className="font-bold">
+                    {order.paymentMethod === 'cod' 
+                      ? `Advance Delivery Charge Paid (৳${order.deliveryCharge}) via ${order.paymentDetails?.advanceGateway?.toUpperCase() || 'MFS'}`
+                      : `Online Payment Submitted via ${order.paymentMethod.toUpperCase()}`}
+                  </p>
+                  <p className="text-[11px] text-emerald-700">
+                    Sender: <span className="font-mono">{order.paymentDetails?.senderNumber || order.customerPhone}</span> • TrxID: <span className="font-mono font-bold">{order.paymentDetails?.transactionId}</span>
+                  </p>
+                </div>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded">
+                  {order.paymentStatus === 'paid' ? 'Verified' : 'Verification In Progress'}
+                </span>
+              </div>
+            )}
+
             {/* Items summary */}
             <div className="space-y-3">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-900 block">
@@ -113,18 +141,37 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 </div>
                 {order.discount > 0 && (
                   <div className="flex justify-between sm:justify-end gap-4 text-emerald-700">
-                    <span>Discount:</span>
+                    <span>Coupon Discount:</span>
                     <span className="font-medium">-৳{order.discount.toLocaleString('en-BD')}</span>
                   </div>
                 )}
+                {order.onlineDiscount && order.onlineDiscount > 0 ? (
+                  <div className="flex justify-between sm:justify-end gap-4 text-emerald-700 font-semibold">
+                    <span>Online Prepayment Discount:</span>
+                    <span>-৳{order.onlineDiscount.toLocaleString('en-BD')}</span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between sm:justify-end gap-4">
                   <span>Delivery ({order.deliveryZone}):</span>
                   <span className="font-medium text-neutral-900">৳{order.deliveryCharge.toLocaleString('en-BD')}</span>
                 </div>
-                <div className="flex justify-between sm:justify-end gap-4 text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-200">
-                  <span>Total Due:</span>
-                  <span>৳{order.total.toLocaleString('en-BD')}</span>
-                </div>
+                {order.paymentMethod === 'cod' ? (
+                  <>
+                    <div className="flex justify-between sm:justify-end gap-4 text-emerald-700 font-semibold">
+                      <span>Advance Delivery Fee:</span>
+                      <span>-৳{order.deliveryCharge.toLocaleString('en-BD')}</span>
+                    </div>
+                    <div className="flex justify-between sm:justify-end gap-4 text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-200">
+                      <span>Due on Delivery (Cash to Courier):</span>
+                      <span className="text-black font-extrabold">৳{(order.dueOnDelivery ?? Math.max(0, order.subtotal - order.discount)).toLocaleString('en-BD')}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between sm:justify-end gap-4 text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-200">
+                    <span>Total Paid in Full:</span>
+                    <span>৳{order.total.toLocaleString('en-BD')}</span>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -132,12 +179,26 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
 
         <div className="bg-neutral-100 p-3.5 rounded-lg flex items-center gap-2.5 text-xs text-neutral-700">
           <Truck className="w-4 h-4 text-neutral-800 shrink-0" />
-          <span>Our delivery partner will contact your phone number prior to parcel delivery. Please keep cash ready.</span>
+          <span>
+            {order?.paymentMethod === 'cod'
+              ? 'Our delivery courier partner will contact your phone number prior to parcel delivery. Please keep cash ready.'
+              : 'Thank you for your online payment. Your package will be dispatched with priority express tracking.'}
+          </span>
         </div>
       </div>
 
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+        {order && (
+          <button
+            type="button"
+            onClick={() => setShowInvoice(true)}
+            className="w-full sm:w-auto px-7 py-3 bg-neutral-900 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+          >
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <span>View & Print A4 Invoice</span>
+          </button>
+        )}
         <button
           onClick={() => onNavigate(`/track-order?number=${order?.orderNumber || orderNumber || ''}&phone=${order?.customerPhone || ''}`)}
           className="w-full sm:w-auto px-7 py-3 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
@@ -151,6 +212,15 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           Continue Shopping
         </button>
       </div>
+
+      {/* A4 Printable Invoice Modal */}
+      {order && (
+        <A4InvoiceModal
+          order={order}
+          isOpen={showInvoice}
+          onClose={() => setShowInvoice(false)}
+        />
+      )}
 
     </div>
   );

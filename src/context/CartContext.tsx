@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Coupon, DeliveryZone } from '../types';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { getLocalDeliveryZones } from '../services/settingsService';
 
 interface CartContextType {
   items: CartItem[];
@@ -51,29 +52,82 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(DEFAULT_ZONES);
-  const [selectedZone, setSelectedZone] = useState<DeliveryZone | null>(DEFAULT_ZONES[0]);
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(() => getLocalDeliveryZones());
+  const [selectedZone, setSelectedZone] = useState<DeliveryZone | null>(() => {
+    const initial = getLocalDeliveryZones();
+    return initial[0] || null;
+  });
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
 
-  // Load custom delivery zones from Firestore if available
+  // Real-time synchronization of delivery zones from local event and Firestore
   useEffect(() => {
-    const fetchZones = async () => {
-      try {
-        const q = query(collection(db, 'deliveryZones'), where('active', '==', true));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: DeliveryZone[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as DeliveryZone));
-          setDeliveryZones(list);
-          if (!selectedZone || !list.some((z) => z.id === selectedZone.id)) {
-            setSelectedZone(list[0]);
-          }
-        }
-      } catch (e) {
-        // Fallback to default zones
-      }
+    // 1. Initial load from persistent local store
+    const initialZones = getLocalDeliveryZones();
+    setDeliveryZones(initialZones);
+    setSelectedZone((prev) => {
+      if (!prev) return initialZones[0] || null;
+      const match = initialZones.find((z) => z.id === prev.id);
+      return match || initialZones[0] || null;
+    });
+
+    // 2. Immediate local event listener (0ms responsiveness when admin updates fee)
+    const handleLocalZones = (e: any) => {
+      const updatedList = (e.detail as DeliveryZone[]) || getLocalDeliveryZones();
+      setDeliveryZones(updatedList);
+      setSelectedZone((prev) => {
+        if (!prev) return updatedList[0] || null;
+        const match = updatedList.find((z) => z.id === prev.id);
+        return match || updatedList[0] || null;
+      });
     };
-    fetchZones();
+    window.addEventListener('mf_delivery_zones_updated', handleLocalZones);
+
+    // 3. Remote Firestore realtime listener
+    let unsubscribe: (() => void) | null = null;
+    try {
+      const q = query(collection(db, 'deliveryZones'), where('active', '==', true));
+      unsubscribe = onSnapshot(
+        q,
+        (snap) => {
+          if (!snap.empty) {
+            const remoteList: DeliveryZone[] = [];
+            snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as DeliveryZone));
+            const currentLocal = getLocalDeliveryZones();
+            const mergedMap = new Map<string, DeliveryZone>();
+            remoteList.forEach((rz) => mergedMap.set(rz.id, rz));
+            currentLocal.forEach((lz) => {
+              const rz = mergedMap.get(lz.id);
+              if (!rz) {
+                mergedMap.set(lz.id, lz);
+              } else {
+                const lTime = typeof (lz as any).updatedAt === 'number' ? (lz as any).updatedAt : 0;
+                const rTime = (rz as any).updatedAt?.toMillis ? (rz as any).updatedAt.toMillis() : (typeof (rz as any).updatedAt === 'number' ? (rz as any).updatedAt : 0);
+                if (lTime >= rTime || !rTime) {
+                  mergedMap.set(lz.id, { ...rz, ...lz });
+                }
+              }
+            });
+            const mergedList = Array.from(mergedMap.values());
+            setDeliveryZones(mergedList);
+            setSelectedZone((prev) => {
+              if (!prev) return mergedList[0] || null;
+              const match = mergedList.find((z) => z.id === prev.id);
+              return match || mergedList[0] || null;
+            });
+          }
+        },
+        (error) => {
+          console.warn('Realtime delivery zones subscription fallback:', error);
+        }
+      );
+    } catch (e) {
+      console.warn('Error setting up delivery zone listener:', e);
+    }
+
+    return () => {
+      window.removeEventListener('mf_delivery_zones_updated', handleLocalZones);
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   // Save cart to local storage

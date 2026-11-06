@@ -9,7 +9,7 @@ interface AdminLoginProps {
 
 export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
   const { currentUser, isAdmin, signIn, logOut } = useAuth();
-  const [email, setEmail] = useState(ADMIN_CONFIG.ADMIN_EMAIL);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -105,7 +105,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="me@admin.com"
+              placeholder="Enter your registered admin email"
               className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-medium"
             />
           </div>
@@ -133,7 +133,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
         </form>
 
         <div className="text-center pt-2 border-t border-neutral-100 text-[11px] text-neutral-400">
-          🔒 Secure Firebase identity verification. Primary Administrator UID: {ADMIN_CONFIG.PRIMARY_ADMIN_UID.slice(0, 8)}...
+          🔒 Encrypted administrator session authentication.
         </div>
 
       </div>

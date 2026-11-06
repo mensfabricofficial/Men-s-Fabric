@@ -24,7 +24,7 @@ export interface Product {
   category: string;
   categoryName?: string;
   subcategory?: string;
-  brand: string;
+  brand?: string;
   gender: 'men' | 'women' | 'unisex' | 'kids';
   fabric: string;
   images: string[];
@@ -34,18 +34,20 @@ export interface Product {
   costPrice?: number; // Admin only
   sizes: string[];
   colors: ProductColor[];
-  variants: ProductVariant[];
+  variants?: ProductVariant[];
   totalStock: number;
   weight?: string;
-  tags: string[];
+  tags?: string[];
   featured: boolean;
   newArrival: boolean;
   bestSeller: boolean;
   active: boolean;
   seoTitle?: string;
   seoDescription?: string;
-  createdAt: any;
-  updatedAt: any;
+  views?: number;
+  salesCount?: number;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Category {
@@ -118,12 +120,28 @@ export interface OrderItem {
   unitPrice: number;
   totalPrice: number;
   sku?: string;
+  productCode?: string;
 }
 
 export interface OrderTimeline {
   status: OrderStatus;
   timestamp: string;
   note?: string;
+}
+
+export type PaymentMethod = 'cod' | 'bkash' | 'nagad' | 'rocket';
+
+export interface PaymentDetails {
+  method: PaymentMethod;
+  senderNumber?: string;
+  transactionId?: string;
+  proofUrl?: string;
+  onlineDiscountApplied?: number;
+  paidAt?: string;
+  advanceDeliveryPaid?: boolean;
+  advanceGateway?: 'bkash' | 'nagad' | 'rocket';
+  advanceAmount?: number;
+  dueOnDelivery?: number;
 }
 
 export interface Order {
@@ -137,11 +155,17 @@ export interface Order {
   items: OrderItem[];
   subtotal: number;
   discount: number;
+  onlineDiscount?: number;
   couponCode?: string;
   deliveryCharge: number;
   deliveryZone: string;
   total: number;
-  paymentMethod: 'cod' | 'bkash' | 'nagad' | 'card';
+  paymentMethod: PaymentMethod;
+  paymentDetails?: PaymentDetails;
+  advanceDeliveryPaid?: boolean;
+  advanceGateway?: 'bkash' | 'nagad' | 'rocket';
+  advanceAmount?: number;
+  dueOnDelivery?: number;
   paymentStatus: PaymentStatus;
   orderStatus: OrderStatus;
   timeline: OrderTimeline[];
@@ -185,6 +209,24 @@ export interface Review {
   createdAt: any;
 }
 
+export interface MfsGatewayConfig {
+  enabled: boolean;
+  accountType: 'Personal (Send Money)' | 'Merchant (Payment)' | 'Agent (Cash In)';
+  number: string;
+  instructions?: string;
+  qrCodeUrl?: string;
+}
+
+export interface PaymentSettings {
+  codEnabled: boolean;
+  onlineDiscountType: 'percentage' | 'fixed';
+  onlineDiscountValue: number; // e.g. 5% or ৳50
+  onlineDiscountActive: boolean;
+  bkash: MfsGatewayConfig;
+  nagad: MfsGatewayConfig;
+  rocket: MfsGatewayConfig;
+}
+
 export interface SiteSettings {
   storeName: string;
   storeDescription: string;
@@ -199,6 +241,7 @@ export interface SiteSettings {
   announcementText?: string;
   announcementActive: boolean;
   freeDeliveryThreshold?: number;
+  paymentSettings?: PaymentSettings;
 }
 
 export interface CustomerProfile {
@@ -208,6 +251,8 @@ export interface CustomerProfile {
   phone?: string;
   address?: string;
   city?: string;
+  district?: string;
+  division?: string;
   postalCode?: string;
   createdAt: any;
   disabled?: boolean;

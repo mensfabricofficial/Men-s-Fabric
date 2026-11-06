@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Package, CheckCircle2, Clock, Truck, ShieldAlert, ArrowRight } from 'lucide-react';
+import { Search, Package, CheckCircle2, Clock, Truck, ShieldAlert, ArrowRight, FileText } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { orderService } from '../services/orderService';
+import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 
 interface TrackOrderPageProps {
   currentRoute: string;
@@ -24,29 +25,34 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState('');
+  const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
 
   useEffect(() => {
     const url = new URL(window.location.origin + currentRoute);
-    const num = url.searchParams.get('number');
+    const num = url.searchParams.get('number') || url.searchParams.get('order') || url.searchParams.get('orderId') || url.searchParams.get('id');
     const ph = url.searchParams.get('phone');
-    if (num && ph) {
-      setOrderNumber(num);
-      setPhone(ph);
-      performTrack(num, ph);
+    if (num || ph) {
+      if (num) setOrderNumber(num);
+      if (ph) setPhone(ph);
+      performTrack(num || '', ph || '');
     }
   }, [currentRoute]);
 
   const performTrack = async (num: string, ph: string) => {
+    const targetNum = (num || '').trim();
+    const targetPh = (ph || '').trim();
+    if (!targetNum && !targetPh) return;
+
     setLoading(true);
     setError('');
     setSearched(true);
     try {
-      const res = await orderService.trackOrder(num, ph);
+      const res = await orderService.trackOrder(targetNum, targetPh);
       if (res) {
         setOrder(res);
       } else {
         setOrder(null);
-        setError('No order found matching the provided order number and phone number.');
+        setError('No order found matching the provided Order ID or Phone Number. Please verify and try again.');
       }
     } catch {
       setError('Unable to track order at this moment. Please check credentials.');
@@ -57,8 +63,8 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!orderNumber.trim() || !phone.trim()) {
-      setError('Please provide both Order Number and Mobile Number.');
+    if (!orderNumber.trim() && !phone.trim()) {
+      setError('Please provide either your Order ID / Number or Mobile Phone Number to track.');
       return;
     }
     performTrack(orderNumber, phone);
@@ -86,7 +92,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           Track Your Order
         </h1>
         <p className="text-xs sm:text-sm text-neutral-500 mt-2">
-          Enter your Order Number (e.g. MF-102948) and the mobile phone number used during checkout.
+          Enter your Order Number (e.g. MF-102948) or the mobile phone number used during checkout.
         </p>
       </div>
 
@@ -96,16 +102,16 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                Order Number
+                Order Number / ID
               </label>
               <input
                 type="text"
-                required
                 value={orderNumber}
                 onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
-                placeholder="e.g. MF-102948"
+                placeholder="e.g. MF-102948 or 102948"
                 className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-mono uppercase"
               />
+              <span className="text-[10px] text-neutral-400 mt-1 block">Search with or without # or MF- prefix</span>
             </div>
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
@@ -113,12 +119,12 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
               </label>
               <input
                 type="tel"
-                required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="01XXXXXXXXX"
                 className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-mono"
               />
+              <span className="text-[10px] text-neutral-400 mt-1 block">Optional if Order Number is provided</span>
             </div>
           </div>
 
@@ -147,14 +153,24 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-neutral-200 gap-4">
             <div>
               <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Order ID</span>
-              <h3 className="text-xl font-extrabold text-neutral-900 font-mono">{order.orderNumber}</h3>
-              <p className="text-xs text-neutral-500 mt-0.5">
+              <div className="flex items-center gap-3 mt-0.5">
+                <h3 className="text-xl font-extrabold text-neutral-900 font-mono">{order.orderNumber}</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsInvoiceOpen(true)}
+                  className="px-2.5 py-1 bg-white border border-neutral-300 hover:border-black text-neutral-800 text-[11px] font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5 text-neutral-600" />
+                  <span>A4 Invoice</span>
+                </button>
+              </div>
+              <p className="text-xs text-neutral-500 mt-1">
                 Recipient: <b className="text-neutral-800">{order.customerName}</b> ({order.shippingAddress.district})
               </p>
             </div>
             <div className="sm:text-right">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Current Status</span>
-              <div className="mt-0.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Order & Payment Status</span>
+              <div className="mt-1 flex flex-wrap sm:justify-end gap-1.5">
                 <span className={`inline-block px-3 py-1 rounded text-xs font-bold uppercase tracking-wider ${
                   order.orderStatus === 'delivered'
                     ? 'bg-emerald-100 text-emerald-800'
@@ -164,7 +180,17 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                 }`}>
                   {order.orderStatus}
                 </span>
+                <span className={`inline-block px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider ${
+                  order.paymentStatus === 'paid'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-neutral-200 text-neutral-800'
+                }`}>
+                  Payment: {order.paymentStatus === 'paid' ? 'Paid / Verified' : 'Payment Verification Pending'}
+                </span>
               </div>
+              <p className="text-[11px] text-neutral-500 mt-1 uppercase font-semibold">
+                Via {order.paymentMethod} {order.paymentDetails?.transactionId ? `(TrxID: ${order.paymentDetails.transactionId})` : ''}
+              </p>
             </div>
           </div>
 
@@ -256,6 +282,15 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           </div>
 
         </div>
+      )}
+
+      {/* A4 Invoice Modal */}
+      {order && (
+        <A4InvoiceModal
+          order={order}
+          isOpen={isInvoiceOpen}
+          onClose={() => setIsInvoiceOpen(false)}
+        />
       )}
 
     </div>

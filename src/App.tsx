@@ -6,6 +6,7 @@ import { WishlistProvider } from './context/WishlistContext';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { CartDrawer } from './components/cart/CartDrawer';
+import { MobileBottomNav } from './components/layout/MobileBottomNav';
 
 import { HomePage } from './pages/HomePage';
 import { ShopPage } from './pages/ShopPage';
@@ -17,9 +18,10 @@ import { AccountPage } from './pages/AccountPage';
 import { WishlistPage } from './pages/WishlistPage';
 import { StaticPage } from './pages/StaticPages';
 
-// Admin views
+// Admin views & Device Access Security
 import { AdminLayout, AdminTab } from './admin/AdminLayout';
 import { AdminLogin } from './admin/AdminLogin';
+import { AdminDeviceGate } from './admin/AdminDeviceGate';
 import { AdminDashboard } from './admin/AdminDashboard';
 import { AdminProducts } from './admin/AdminProducts';
 import { AdminCategories } from './admin/AdminCategories';
@@ -30,6 +32,7 @@ import { AdminBanners } from './admin/AdminBanners';
 import { AdminCustomers } from './admin/AdminCustomers';
 import { AdminReviews } from './admin/AdminReviews';
 import { AdminSettings } from './admin/AdminSettings';
+import { AdminAdmins } from './admin/AdminAdmins';
 import { AdminAudit } from './admin/AdminAudit';
 
 const AppContent: React.FC = () => {
@@ -68,23 +71,26 @@ const AppContent: React.FC = () => {
     }
 
     return (
-      <AdminLayout
-        currentTab={adminTab}
-        onSelectTab={setAdminTab}
-        onNavigateHome={() => navigate('/')}
-      >
-        {adminTab === 'dashboard' && <AdminDashboard onNavigateTab={setAdminTab} />}
-        {adminTab === 'products' && <AdminProducts />}
-        {adminTab === 'categories' && <AdminCategories />}
-        {adminTab === 'orders' && <AdminOrders />}
-        {adminTab === 'coupons' && <AdminCoupons />}
-        {adminTab === 'delivery' && <AdminDelivery />}
-        {adminTab === 'banners' && <AdminBanners />}
-        {adminTab === 'customers' && <AdminCustomers />}
-        {adminTab === 'reviews' && <AdminReviews />}
-        {adminTab === 'settings' && <AdminSettings />}
-        {adminTab === 'audit' && <AdminAudit />}
-      </AdminLayout>
+      <AdminDeviceGate onNavigateHome={() => navigate('/')}>
+        <AdminLayout
+          currentTab={adminTab}
+          onSelectTab={setAdminTab}
+          onNavigateHome={() => navigate('/')}
+        >
+          {adminTab === 'dashboard' && <AdminDashboard onNavigateTab={setAdminTab} />}
+          {adminTab === 'products' && <AdminProducts />}
+          {adminTab === 'categories' && <AdminCategories />}
+          {adminTab === 'orders' && <AdminOrders />}
+          {adminTab === 'coupons' && <AdminCoupons />}
+          {adminTab === 'delivery' && <AdminDelivery />}
+          {adminTab === 'banners' && <AdminBanners />}
+          {adminTab === 'customers' && <AdminCustomers />}
+          {adminTab === 'reviews' && <AdminReviews />}
+          {adminTab === 'settings' && <AdminSettings />}
+          {adminTab === 'admins' && <AdminAdmins />}
+          {adminTab === 'audit' && <AdminAudit />}
+        </AdminLayout>
+      </AdminDeviceGate>
     );
   }
 
@@ -99,8 +105,9 @@ const AppContent: React.FC = () => {
     const catSlug = pathname.replace('/category/', '');
     PageComponent = <ShopPage currentRoute={currentRoute} onNavigate={navigate} initialCategory={catSlug} />;
   } else if (pathname.startsWith('/product/')) {
-    const prodIdOrSlug = pathname.replace('/product/', '');
-    PageComponent = <ProductDetailsPage productIdOrSlug={prodIdOrSlug} onNavigate={navigate} />;
+    const rawParam = pathname.replace(/^\/product\/?/, '').replace(/\/+$/, '');
+    const prodIdOrSlug = decodeURIComponent(rawParam).trim();
+    PageComponent = <ProductDetailsPage key={prodIdOrSlug} productIdOrSlug={prodIdOrSlug} onNavigate={navigate} />;
   } else if (pathname === '/checkout' || pathname === '/cart') {
     PageComponent = <CheckoutPage onNavigate={navigate} />;
   } else if (pathname === '/order-confirmation') {
@@ -161,10 +168,11 @@ const AppContent: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-white text-neutral-900 selection:bg-black selection:text-white">
       <Header currentRoute={currentRoute} onNavigate={navigate} />
       <CartDrawer onNavigate={navigate} />
-      <main className="flex-1">
+      <main className="flex-1 pb-20 md:pb-0">
         {PageComponent}
       </main>
       <Footer onNavigate={navigate} />
+      <MobileBottomNav currentRoute={currentRoute} onNavigate={navigate} />
     </div>
   );
 };

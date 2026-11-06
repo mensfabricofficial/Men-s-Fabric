@@ -12,33 +12,34 @@ interface HomePageProps {
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const [banners, setBanners] = useState<Banner[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
   const [newArrivals, setNewArrivals] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
 
   useEffect(() => {
-    // Fetch banners
-    settingsService.getBanners(true).then(setBanners);
+    setLoadingProducts(true);
 
-    // Fetch categories
-    productService.getCategories().then((cats) => {
+    // Real-time products subscription
+    const unsubProducts = productService.subscribeToActiveProducts((products) => {
+      setNewArrivals(products.filter((p) => p.newArrival).slice(0, 8));
+      setLoadingProducts(false);
+    });
+
+    // Real-time categories subscription
+    const unsubCategories = productService.subscribeToCategories((cats) => {
       setCategories(cats.filter((c) => c.active));
     });
 
-    // Fetch products
-    setLoadingProducts(true);
-    Promise.all([
-      productService.getProducts({ featured: true, limitCount: 4 }),
-      productService.getProducts({ newArrival: true, limitCount: 8 }),
-    ])
-      .then(([featuredRes, newRes]) => {
-        setFeaturedProducts(featuredRes.products);
-        setNewArrivals(newRes.products);
-      })
-      .finally(() => {
-        setLoadingProducts(false);
-      });
+    // Real-time banners subscription
+    const unsubBanners = settingsService.subscribeToBanners((bList) => {
+      setBanners(bList.filter((b) => b.active));
+    });
+
+    return () => {
+      unsubProducts();
+      unsubCategories();
+      unsubBanners();
+    };
   }, []);
 
   const activeBanner = banners.length > 0 ? banners[0] : null;
@@ -98,17 +99,17 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               <p className="text-base sm:text-xl text-neutral-400 font-light max-w-xl leading-relaxed">
                 Elevate your presence with meticulously engineered menswear. Experience breathable pure cottons, regal panjabis, and sharp silhouettes tailored for distinction.
               </p>
-              <div className="flex flex-wrap items-center gap-4 pt-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 pt-4">
                 <button
                   onClick={() => onNavigate('/shop')}
-                  className="inline-flex items-center gap-2 px-8 py-3.5 bg-white text-black text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-200 transition-colors shadow-lg cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white text-black text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-200 transition-colors shadow-lg cursor-pointer"
                 >
                   <span>Shop Collection</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => onNavigate('/shop?filter=new')}
-                  className="inline-flex items-center gap-2 px-7 py-3.5 bg-transparent border border-neutral-700 text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-900 transition-colors cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-transparent border border-neutral-700 text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-900 transition-colors cursor-pointer"
                 >
                   <span>New Arrivals</span>
                 </button>
@@ -224,60 +225,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 Inspect your package right at your doorstep before final payment. We pride ourselves on transparent, dependable Cash on Delivery across the nation.
               </p>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Featured Collection Section */}
-      {featuredProducts.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-end justify-between mb-8">
-            <div>
-              <p className="text-xs uppercase tracking-widest font-semibold text-neutral-400">Handpicked Essentials</p>
-              <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-neutral-900 mt-1">Featured Items</h2>
-            </div>
-            <button
-              onClick={() => onNavigate('/shop')}
-              className="text-xs font-bold uppercase tracking-wider text-black hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <span>Explore All</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <ProductGrid
-            products={featuredProducts}
-            loading={loadingProducts}
-            onNavigate={onNavigate}
-          />
-        </section>
-      )}
-
-      {/* Newsletter / VIP Club */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-black text-white rounded-2xl p-8 sm:p-14 text-center relative overflow-hidden border border-neutral-800 shadow-2xl">
-          <div className="max-w-xl mx-auto space-y-4">
-            <span className="text-[11px] font-bold uppercase tracking-widest text-neutral-400">Join MEN'S FABRIC Club</span>
-            <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
-              Exclusive Drops & Private Sales
-            </h2>
-            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed">
-              Subscribe to receive early access to limited seasonal releases, fabric previews, and special member promotions.
-            </p>
-            <form onSubmit={(e) => { e.preventDefault(); alert('Thank you for subscribing to MEN\'S FABRIC!'); }} className="flex flex-col sm:flex-row gap-2.5 pt-4">
-              <input
-                type="email"
-                required
-                placeholder="Enter your email address"
-                className="flex-1 px-4 py-3 bg-neutral-900 border border-neutral-700 text-white rounded-lg text-xs focus:outline-none focus:border-white"
-              />
-              <button
-                type="submit"
-                className="px-8 py-3 bg-white text-black text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer"
-              >
-                Subscribe
-              </button>
-            </form>
           </div>
         </div>
       </section>

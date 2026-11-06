@@ -15,6 +15,8 @@ import {
 import { SiteSettings } from '../../types';
 import { settingsService, defaultSettings } from '../../services/settingsService';
 
+import { BrandLogo } from '../common/BrandLogo';
+
 interface FooterProps {
   onNavigate: (route: string) => void;
 }
@@ -79,12 +81,8 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           
           {/* Brand Info & Official Logo */}
           <div className="lg:col-span-2 space-y-4">
-            <div className="inline-block bg-black p-2 rounded border border-neutral-800">
-              <img
-                src="/logo.jpg"
-                alt="MEN'S FABRIC"
-                className="h-10 object-contain"
-              />
+            <div className="inline-block py-1">
+              <BrandLogo variant="light" className="h-10" />
             </div>
             <p className="text-xs text-neutral-400 leading-relaxed max-w-sm">
               {settings.storeDescription || "MEN'S FABRIC is a distinguished contemporary menswear brand in Bangladesh. We curate premium textiles, artisanal craftsmanship, and tailored fits."}
@@ -248,11 +246,6 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <li>
                 <button onClick={() => onNavigate('/terms')} className="hover:text-white transition-colors cursor-pointer">
                   Terms & Conditions
-                </button>
-              </li>
-              <li>
-                <button onClick={() => onNavigate('/admin')} className="text-neutral-500 hover:text-white transition-colors cursor-pointer text-[11px]">
-                  Staff & Admin Portal
                 </button>
               </li>
             </ul>

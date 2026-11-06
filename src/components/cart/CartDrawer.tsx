@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, Tag, CheckCircle2 } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
 import { EmptyState } from '../common/EmptyState';
 import { settingsService } from '../../services/settingsService';
 
@@ -26,6 +27,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
     selectedZone,
     setSelectedZone,
   } = useCart();
+  const { currentUser } = useAuth();
 
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState('');
@@ -92,25 +94,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
             </button>
           </div>
 
-          {/* Free shipping progress */}
-          <div className="bg-neutral-50 px-5 py-2.5 border-b border-neutral-200 text-xs">
-            {remainingForFreeShipping > 0 ? (
-              <p className="text-neutral-600 mb-1.5">
-                Add <span className="font-bold text-black">৳{remainingForFreeShipping.toLocaleString('en-BD')}</span> more to qualify for <span className="font-semibold text-black">Free Shipping</span>!
-              </p>
-            ) : (
-              <p className="text-emerald-700 font-semibold mb-1.5 flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" /> You unlocked Free Shipping!
-              </p>
-            )}
-            <div className="w-full bg-neutral-200 h-1.5 rounded-full overflow-hidden">
-              <div
-                className="bg-black h-full transition-all duration-500"
-                style={{ width: `${progressToFreeShipping}%` }}
-              />
-            </div>
-          </div>
-
           {/* Cart Items List */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 divide-y divide-neutral-100">
             {items.length === 0 ? (
@@ -132,7 +115,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                     <img
                       src={item.productImage || '/logo.jpg'}
                       alt={item.productName}
-                      className="w-18 h-24 object-cover object-center rounded bg-neutral-100 shrink-0 border border-neutral-200"
+                      onClick={() => {
+                        setIsCartDrawerOpen(false);
+                        onNavigate(`/product/${item.productId}`);
+                      }}
+                      className="w-18 h-24 object-cover object-center rounded bg-neutral-100 shrink-0 border border-neutral-200 cursor-pointer hover:opacity-90 transition-opacity"
                     />
                     <div className="flex-1 flex flex-col justify-between">
                       <div>
@@ -140,7 +127,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                           <h4 
                             onClick={() => {
                               setIsCartDrawerOpen(false);
-                              onNavigate(`/product/${item.productSlug || item.productId}`);
+                              onNavigate(`/product/${item.productId}`);
                             }}
                             className="text-xs sm:text-sm font-semibold text-neutral-900 hover:underline cursor-pointer line-clamp-1"
                           >
@@ -200,32 +187,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
           {/* Cart Footer */}
           {items.length > 0 && (
             <div className="border-t border-neutral-200 p-4 sm:p-5 bg-neutral-50/50 space-y-3">
-              {/* Delivery Zone Selector */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-500 mb-1">
-                  Delivery Destination
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {deliveryZones.map((z) => (
-                    <button
-                      key={z.id}
-                      type="button"
-                      onClick={() => setSelectedZone(z)}
-                      className={`p-2 text-left text-xs rounded border transition-colors cursor-pointer ${
-                        selectedZone?.id === z.id
-                          ? 'border-black bg-black text-white'
-                          : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-400'
-                      }`}
-                    >
-                      <p className="font-semibold truncate">{z.name}</p>
-                      <p className={`text-[10px] ${selectedZone?.id === z.id ? 'text-neutral-300' : 'text-neutral-500'}`}>
-                        ৳{z.charge} • {z.estimatedDays}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {/* Coupon input */}
               <div>
                 {appliedCoupon ? (
@@ -275,24 +236,36 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                   </div>
                 )}
                 <div className="flex justify-between text-neutral-600">
-                  <span>Delivery Fee</span>
-                  <span>৳{deliveryCharge.toLocaleString('en-BD')}</span>
+                  <span>Shipping</span>
+                  <span className="text-neutral-500 font-medium">Calculated at checkout</span>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-neutral-900 pt-1.5 border-t border-neutral-200">
-                  <span>Estimated Total</span>
-                  <span>৳{grandTotal.toLocaleString('en-BD')}</span>
+                  <span>Estimated Subtotal</span>
+                  <span>৳{Math.max(0, subtotal - discount).toLocaleString('en-BD')}</span>
                 </div>
               </div>
+
+              {/* Notice if user is not logged in */}
+              {!currentUser && (
+                <div className="p-2.5 bg-neutral-100 rounded-lg text-neutral-600 text-[11px] flex items-center gap-2">
+                  <span className="font-semibold text-neutral-900">Note:</span>
+                  <span>You will be prompted to sign in or register to confirm your order.</span>
+                </div>
+              )}
 
               {/* Checkout Action */}
               <button
                 onClick={() => {
                   setIsCartDrawerOpen(false);
-                  onNavigate('/checkout');
+                  if (!currentUser) {
+                    onNavigate('/account?redirect=checkout');
+                  } else {
+                    onNavigate('/checkout');
+                  }
                 }}
                 className="w-full py-3 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center justify-center gap-2 shadow-lg cursor-pointer"
               >
-                <span>Proceed to Checkout</span>
+                <span>{currentUser ? 'Proceed to Checkout' : 'Sign In to Order'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

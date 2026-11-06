@@ -53,5 +53,12 @@ service firebase.storage {
       allow write: if isAuthenticated() && request.auth.uid == userId && isImage() && isUnderMaxSize();
       allow delete: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
     }
+
+    // Payment Proofs: Any customer can upload payment screenshot/receipt (under 5MB)
+    match /payment_proofs/{fileName} {
+      allow read: if true;
+      allow write: if isImage() && request.resource.size < 5 * 1024 * 1024;
+      allow delete: if isAdmin();
+    }
   }
 }

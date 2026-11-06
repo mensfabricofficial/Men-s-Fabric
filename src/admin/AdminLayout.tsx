@@ -30,6 +30,7 @@ export type AdminTab =
   | 'delivery'
   | 'banners'
   | 'settings'
+  | 'admins'
   | 'audit';
 
 interface AdminLayoutProps {
@@ -59,6 +60,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'delivery', label: 'Delivery Zones', icon: <Truck className="w-4 h-4" /> },
     { id: 'banners', label: 'Banners', icon: <ImageIcon className="w-4 h-4" /> },
     { id: 'settings', label: 'Store Settings', icon: <Settings className="w-4 h-4" /> },
+    { id: 'admins', label: 'Admins & Staff', icon: <ShieldCheck className="w-4 h-4" /> },
     { id: 'audit', label: 'Audit Logs', icon: <History className="w-4 h-4" /> },
   ];
 
@@ -80,6 +82,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           Admin
         </span>
       </div>
+
+      {/* Mobile Backdrop Overlay */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+        />
+      )}
 
       {/* Admin Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-black text-white flex flex-col justify-between transition-transform duration-300 lg:translate-x-0 lg:static lg:h-screen shrink-0 ${

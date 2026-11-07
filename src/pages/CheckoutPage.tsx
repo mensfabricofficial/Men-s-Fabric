@@ -481,29 +481,49 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 <span>Shipping Zone</span>
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {deliveryZones.map((zone) => (
-                  <label
-                    key={zone.id}
-                    className={`flex items-start gap-3 p-4 border rounded-xl cursor-pointer transition-all ${
-                      selectedZone?.id === zone.id
-                        ? 'border-black bg-neutral-50 ring-1 ring-black'
-                        : 'border-neutral-200 bg-white hover:border-neutral-400'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="deliveryZone"
-                      checked={selectedZone?.id === zone.id}
-                      onChange={() => setSelectedZone(zone)}
-                      className="mt-0.5 accent-black"
-                    />
-                    <div className="text-xs">
-                      <p className="font-bold text-neutral-900">{zone.name}</p>
-                      <p className="text-neutral-500 text-[11px] mt-0.5">{zone.estimatedDays}</p>
-                      <p className="font-bold text-neutral-900 mt-1">৳{zone.charge}</p>
-                    </div>
-                  </label>
-                ))}
+                {[...deliveryZones]
+                  .sort((a, b) => {
+                    const aInside = a.id === 'dhaka' || a.name.toLowerCase().includes('inside');
+                    const bInside = b.id === 'dhaka' || b.name.toLowerCase().includes('inside');
+                    if (aInside && !bInside) return -1;
+                    if (!aInside && bInside) return 1;
+                    const aOutside = a.id === 'outside-dhaka' || a.name.toLowerCase().includes('outside');
+                    const bOutside = b.id === 'outside-dhaka' || b.name.toLowerCase().includes('outside');
+                    if (aOutside && !bOutside) return -1;
+                    if (!aOutside && bOutside) return 1;
+                    return 0;
+                  })
+                  .map((zone) => {
+                    const isInside = zone.id === 'dhaka' || zone.name.toLowerCase().includes('inside');
+                    return (
+                      <label
+                        key={zone.id}
+                        className={`flex items-start gap-3 p-4 border rounded-xl cursor-pointer transition-all ${
+                          selectedZone?.id === zone.id
+                            ? 'border-black bg-neutral-50 ring-1 ring-black'
+                            : 'border-neutral-200 bg-white hover:border-neutral-400'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="deliveryZone"
+                          checked={selectedZone?.id === zone.id}
+                          onChange={() => setSelectedZone(zone)}
+                          className="mt-0.5 accent-black cursor-pointer"
+                        />
+                        <div className="text-xs flex-1">
+                          <div className="flex items-center justify-between">
+                            <p className="font-bold text-neutral-900">{zone.name}</p>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-600 bg-neutral-100 px-2 py-0.5 rounded">
+                              {isInside ? 'Inside Dhaka' : 'Outside Dhaka'}
+                            </span>
+                          </div>
+                          <p className="text-neutral-500 text-[11px] mt-0.5">{zone.estimatedDays}</p>
+                          <p className="font-bold text-neutral-900 mt-1">৳{zone.charge}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
               </div>
             </div>
 

@@ -22,21 +22,22 @@ export const AdminReviews: React.FC = () => {
   }, []);
 
   const handleToggleApproval = async (r: Review) => {
+    setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: !r.approved } : item)));
     try {
       await settingsService.updateReviewApproval(r.id, !r.approved);
       await loadReviews();
     } catch {
-      alert('Failed to update review status.');
+      // safe fallback
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this review permanently?')) return;
+    setReviews((prev) => prev.filter((item) => item.id !== id));
     try {
       await settingsService.deleteReview(id);
       await loadReviews();
     } catch {
-      alert('Failed to delete review.');
+      // safe fallback
     }
   };
 

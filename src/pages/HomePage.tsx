@@ -121,7 +121,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
       {/* Featured Categories */}
       {categories.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
           <div className="flex items-end justify-between mb-8">
             <div>
               <p className="text-xs uppercase tracking-widest font-semibold text-neutral-400">Curated Collections</p>
@@ -168,7 +168,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       )}
 
       {/* New Arrivals Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
         <div className="flex items-end justify-between mb-8">
           <div>
             <p className="text-xs uppercase tracking-widest font-semibold text-neutral-400">Fresh from the atelier</p>
@@ -194,7 +194,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
       {/* Brand Craftsmanship Spotlight */}
       <section className="bg-neutral-50 border-y border-neutral-200 py-16 sm:py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 sm:gap-12 text-center md:text-left">
             <div className="space-y-3">
               <div className="w-12 h-12 rounded-lg bg-black text-white flex items-center justify-center mx-auto md:mx-0 shadow-sm">

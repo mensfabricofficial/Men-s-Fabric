@@ -3,6 +3,7 @@ import {
   doc,
   getDocs,
   getDoc,
+  setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
@@ -484,15 +485,16 @@ export const productService = {
     const updated = [newProduct, ...current];
     this.saveLocalProducts(updated);
 
-    // Attempt remote Firestore persistence
+    // Attempt remote Firestore persistence with explicit ID matching local
     try {
       const payload = sanitizeForFirestore({
         ...data,
+        id: newId,
         totalStock,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      await addDoc(collection(db, 'products'), payload);
+      await setDoc(doc(db, 'products', newId), payload, { merge: true });
     } catch (e) {
       console.warn('Remote product save notice (saved to local catalog):', e);
     }
@@ -522,14 +524,14 @@ export const productService = {
     });
     this.saveLocalProducts(updated);
 
-    // Attempt remote Firestore persistence
+    // Attempt remote Firestore persistence with setDoc merge (never throws No document to update)
     try {
       const payload = sanitizeForFirestore({
         ...data,
         ...(totalStock !== undefined ? { totalStock } : {}),
         updatedAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, 'products', id), payload);
+      await setDoc(doc(db, 'products', id), payload, { merge: true });
     } catch (e) {
       console.warn('Remote product update notice (saved to local catalog):', e);
     }
@@ -546,10 +548,14 @@ export const productService = {
 
     // Attempt remote Firestore persistence
     try {
-      await updateDoc(doc(db, 'products', id), {
-        totalStock: safeStock,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'products', id),
+        {
+          totalStock: safeStock,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
     } catch (e) {
       console.warn('Remote stock update notice (saved to local catalog):', e);
     }
@@ -557,12 +563,13 @@ export const productService = {
 
   // Delete product (Admin)
   async deleteProduct(id: string) {
-    // Delete from local catalog immediately
+    // 1. Delete from local memory cache & catalog immediately
+    cachedProductsMap.delete(id);
     const current = this.getLocalProducts();
     const updated = current.filter((p) => p.id !== id);
     this.saveLocalProducts(updated);
 
-    // Attempt remote Firestore persistence
+    // 2. Attempt remote Firestore persistence without throwing to caller
     try {
       await deleteDoc(doc(db, 'products', id));
     } catch (e) {
@@ -594,10 +601,16 @@ export const productService = {
     this.saveLocalCategories([...current, newCat]);
 
     try {
-      await addDoc(collection(db, 'categories'), {
-        ...cat,
-        createdAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'categories', newId),
+        {
+          ...cat,
+          id: newId,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
     } catch (e) {
       console.warn('Remote category save notice:', e);
     }
@@ -610,10 +623,14 @@ export const productService = {
     this.saveLocalCategories(updated);
 
     try {
-      await updateDoc(doc(db, 'categories', id), {
-        ...cat,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'categories', id),
+        {
+          ...cat,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
     } catch (e) {
       console.warn('Remote category update notice:', e);
     }

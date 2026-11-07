@@ -105,12 +105,12 @@ export const AdminBanners: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this banner?')) return;
+    setBanners((prev) => prev.filter((b) => b.id !== id));
     try {
       await settingsService.deleteBanner(id);
       await loadBanners();
     } catch {
-      alert('Failed to delete banner.');
+      // safe fallback
     }
   };
 

@@ -31,8 +31,8 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   return (
     <footer className="bg-black text-white border-t border-neutral-800">
       {/* Trust Badges Bar */}
-      <div className="border-b border-neutral-800 py-8 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="border-b border-neutral-800 py-8 px-4 sm:px-6 lg:px-8 2xl:px-12">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="flex items-center gap-3.5">
             <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center shrink-0">
               <Truck className="w-5 h-5 text-neutral-300" />
@@ -76,13 +76,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
       </div>
 
       {/* Main Footer Links */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12 py-12 lg:py-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-10">
           
           {/* Brand Info & Official Logo */}
           <div className="lg:col-span-2 space-y-4">
             <div className="inline-block py-1">
-              <BrandLogo variant="light" className="h-10" />
+              <BrandLogo variant="light" size="lg" />
             </div>
             <p className="text-xs text-neutral-400 leading-relaxed max-w-sm">
               {settings.storeDescription || "MEN'S FABRIC is a distinguished contemporary menswear brand in Bangladesh. We curate premium textiles, artisanal craftsmanship, and tailored fits."}

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Lock, ShieldAlert, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ADMIN_CONFIG } from '../lib/firebaseConfig';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
 
 interface AdminLoginProps {
   onNavigateHome: () => void;
@@ -22,7 +24,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
     try {
       await signIn(email.trim(), password);
     } catch (err: any) {
-      setError(err.message || 'Authentication failed. Please verify administrator credentials.');
+      setError(getCleanAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -77,12 +79,12 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
 
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 space-y-6">
         
-        {/* Header with Official Logo */}
-        <div className="text-center space-y-2">
-          <div className="inline-block bg-black p-2.5 rounded-lg mb-2">
-            <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-9 object-contain" />
+        {/* Header with Official Logo - Deep black logo */}
+        <div className="text-center space-y-3">
+          <div className="flex justify-center pb-1">
+            <BrandLogo variant="dark" size="lg" />
           </div>
-          <h1 className="text-lg font-bold uppercase tracking-wider text-neutral-900">
+          <h1 className="text-base font-extrabold uppercase tracking-wider text-neutral-900">
             Staff & Administrator Login
           </h1>
           <p className="text-xs text-neutral-500">

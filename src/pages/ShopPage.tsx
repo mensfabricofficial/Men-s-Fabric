@@ -154,7 +154,7 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
     priceMax < 15000;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12 py-6 sm:py-10">
       
       {/* Top Breadcrumb & Page Title */}
       <div className="mb-4">
@@ -178,11 +178,11 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         </h1>
       </div>
 
-      {/* Top Horizontal Category Pills Bar (Style matching reference) */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none">
+      {/* Top Horizontal Category Pills Bar (Touch-friendly & Smooth Scrolling) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none touch-pan-x">
         <button
           onClick={() => setSelectedCategory('')}
-          className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+          className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
             !selectedCategory
               ? 'bg-black text-white shadow-xs'
               : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
@@ -196,7 +196,7 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
             <button
               key={c.id}
               onClick={() => setSelectedCategory(isSelected ? '' : (c.slug || c.id))}
-              className={`px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
                 isSelected
                   ? 'bg-black text-white shadow-xs'
                   : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
@@ -208,118 +208,126 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         })}
       </div>
 
-      {/* Top Horizontal Filter & Controls Bar */}
-      <div className="bg-white border border-neutral-200 rounded-xl p-3 sm:p-4 mb-6 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          
-          {/* Left Controls: Gender, Size, Price, Availability */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-            
-            {/* Gender Selector */}
-            <div className="relative">
-              <select
-                value={selectedGender}
-                onChange={(e) => setSelectedGender(e.target.value)}
-                className="px-3 py-1.5 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
-              >
-                <option value="all">Gender: All</option>
-                <option value="men">Men</option>
-                <option value="women">Women</option>
-                <option value="unisex">Unisex</option>
-                <option value="kids">Kids</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
-            </div>
-
-            {/* Size Selector */}
-            {availableSizes.length > 0 && (
-              <div className="relative">
-                <select
-                  value={selectedSize}
-                  onChange={(e) => setSelectedSize(e.target.value)}
-                  className="px-3 py-1.5 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
-                >
-                  <option value="">Size: All</option>
-                  {availableSizes.map((s) => (
-                    <option key={s} value={s}>
-                      Size: {s}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
-              </div>
-            )}
-
-            {/* Price Max Filter */}
-            <div className="relative">
-              <select
-                value={priceMax}
-                onChange={(e) => setPriceMax(Number(e.target.value))}
-                className="px-3 py-1.5 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
-              >
-                <option value={15000}>Price: Any</option>
-                <option value={1500}>Under ৳1,500</option>
-                <option value={2500}>Under ৳2,500</option>
-                <option value={4000}>Under ৳4,000</option>
-                <option value={6000}>Under ৳6,000</option>
-                <option value={10000}>Under ৳10,000</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
-            </div>
-
-            {/* Availability / In Stock Toggle Button */}
-            <button
-              onClick={() => setInStockOnly(!inStockOnly)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                inStockOnly
-                  ? 'bg-black text-white border-black'
-                  : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${inStockOnly ? 'bg-emerald-400' : 'bg-neutral-400'}`} />
-              <span>In Stock Only</span>
-            </button>
-
-            {/* Search Input Box */}
-            <div className="relative w-40 sm:w-48">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search catalog..."
-                className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black"
-              />
-            </div>
-
-          </div>
-
-          {/* Right Controls: Sort Order & Clear */}
-          <div className="flex items-center gap-2 ml-auto">
-            {hasActiveFilters && (
+      {/* Filter & Sort Controls Bar (Responsive Mobile Grid + Desktop Flex) */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-3 sm:p-4 mb-6 shadow-2xs space-y-3">
+        
+        {/* Search Bar - Full width on mobile, inline on desktop */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-full sm:max-w-md">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search products by title, fabric, or SKU..."
+              className="w-full pl-9 pr-8 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black text-neutral-900"
+            />
+            {searchQuery && (
               <button
-                onClick={resetFilters}
-                className="text-xs text-red-600 font-semibold hover:underline flex items-center gap-1 px-2 py-1 cursor-pointer"
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-black cursor-pointer"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset</span>
+                <X className="w-3.5 h-3.5" />
               </button>
             )}
+          </div>
 
-            <div className="relative">
+          {/* Quick Sort dropdown */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-neutral-500 uppercase hidden sm:inline">Sort:</span>
+            <div className="relative flex-1 sm:flex-initial">
               <select
                 value={sortBy}
                 onChange={(e: any) => setSortBy(e.target.value)}
-                className="px-3 py-1.5 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
+                className="w-full sm:w-auto px-3.5 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-8 focus:outline-none focus:border-black"
               >
-                <option value="newest">Sort: Default (Newest)</option>
+                <option value="newest">Sort: Newest First</option>
                 <option value="popular">Sort: Best Selling</option>
                 <option value="price-asc">Price: Low to High</option>
                 <option value="price-desc">Price: High to Low</option>
               </select>
-              <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
+              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
             </div>
+
+            {hasActiveFilters && (
+              <button
+                onClick={resetFilters}
+                className="text-xs text-red-600 font-semibold hover:underline flex items-center gap-1 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg cursor-pointer shrink-0 transition-colors"
+                title="Reset all filters"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
           </div>
+        </div>
+
+        {/* Filter Selectors - Clean 2-column or 4-column aligned responsive grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-neutral-100 text-xs">
+          
+          {/* Gender Selector */}
+          <div className="relative">
+            <select
+              value={selectedGender}
+              onChange={(e) => setSelectedGender(e.target.value)}
+              className="w-full px-3 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
+            >
+              <option value="all">Gender: All</option>
+              <option value="men">Men</option>
+              <option value="women">Women</option>
+              <option value="unisex">Unisex</option>
+              <option value="kids">Kids</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
+          </div>
+
+          {/* Size Selector */}
+          <div className="relative">
+            <select
+              value={selectedSize}
+              onChange={(e) => setSelectedSize(e.target.value)}
+              className="w-full px-3 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
+            >
+              <option value="">Size: All Sizes</option>
+              {availableSizes.map((s) => (
+                <option key={s} value={s}>
+                  Size: {s}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
+          </div>
+
+          {/* Price Max Filter */}
+          <div className="relative">
+            <select
+              value={priceMax}
+              onChange={(e) => setPriceMax(Number(e.target.value))}
+              className="w-full px-3 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
+            >
+              <option value={15000}>Price: Any Price</option>
+              <option value={1500}>Under ৳1,500</option>
+              <option value={2500}>Under ৳2,500</option>
+              <option value={4000}>Under ৳4,000</option>
+              <option value={6000}>Under ৳6,000</option>
+              <option value={10000}>Under ৳10,000</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
+          </div>
+
+          {/* Availability / In Stock Toggle Button */}
+          <button
+            onClick={() => setInStockOnly(!inStockOnly)}
+            className={`w-full px-3 py-2 rounded-lg font-semibold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              inStockOnly
+                ? 'bg-black text-white border-black'
+                : 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-700'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${inStockOnly ? 'bg-emerald-400' : 'bg-neutral-400'}`} />
+            <span className="truncate">In Stock Only</span>
+          </button>
 
         </div>
 

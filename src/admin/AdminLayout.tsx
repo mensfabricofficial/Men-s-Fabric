@@ -18,6 +18,7 @@ import {
   History
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { BrandLogo } from '../components/common/BrandLogo';
 
 export type AdminTab =
   | 'dashboard'
@@ -76,7 +77,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           >
             {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
-          <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-7 object-contain" />
+          <BrandLogo variant="light" size="sm" />
         </div>
         <span className="text-[10px] font-bold bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded uppercase">
           Admin
@@ -97,9 +98,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       }`}>
         <div>
           {/* Logo & Brand Header */}
-          <div className="p-5 border-b border-neutral-800 flex items-center justify-between">
+          <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-8 object-contain" />
+              <BrandLogo variant="light" size="sm" />
             </div>
             <span className="text-[10px] font-bold tracking-widest uppercase bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300">
               Admin

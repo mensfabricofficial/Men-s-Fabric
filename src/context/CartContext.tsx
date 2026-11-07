@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Coupon, DeliveryZone } from '../types';
 import { db } from '../lib/firebase';
 import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
-import { getLocalDeliveryZones } from '../services/settingsService';
+import { getLocalDeliveryZones, sortDeliveryZones } from '../services/settingsService';
 
 interface CartContextType {
   items: CartItem[];
@@ -107,7 +107,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
               }
             });
-            const mergedList = Array.from(mergedMap.values());
+            const mergedList = sortDeliveryZones(Array.from(mergedMap.values()));
             setDeliveryZones(mergedList);
             setSelectedZone((prev) => {
               if (!prev) return mergedList[0] || null;
@@ -234,7 +234,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         message: `Minimum order amount of ৳${coupon.minOrderAmount} required for this coupon.`,
       };
     }
-    if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+    if (coupon.usageLimit && (coupon.usedCount || 0) >= coupon.usageLimit) {
       return { success: false, message: 'Coupon usage limit has been reached.' };
     }
     setAppliedCoupon(coupon);

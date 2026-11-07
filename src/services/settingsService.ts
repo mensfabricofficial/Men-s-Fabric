@@ -66,6 +66,20 @@ const LOCAL_DELIVERY_ZONES_KEY = 'mf_delivery_zones_v2';
 const LOCAL_BANNERS_KEY = 'mf_banners_catalog_v2';
 const LOCAL_COUPONS_KEY = 'mf_coupons_catalog_v2';
 
+export const sortDeliveryZones = (zones: DeliveryZone[]): DeliveryZone[] => {
+  return [...zones].sort((a, b) => {
+    const aInside = a.id === 'dhaka' || a.name.toLowerCase().includes('inside');
+    const bInside = b.id === 'dhaka' || b.name.toLowerCase().includes('inside');
+    if (aInside && !bInside) return -1;
+    if (!aInside && bInside) return 1;
+    const aOutside = a.id === 'outside-dhaka' || a.name.toLowerCase().includes('outside');
+    const bOutside = b.id === 'outside-dhaka' || b.name.toLowerCase().includes('outside');
+    if (aOutside && !bOutside) return -1;
+    if (!aOutside && bOutside) return 1;
+    return 0;
+  });
+};
+
 const DEFAULT_DELIVERY_ZONES: DeliveryZone[] = [
   { id: 'dhaka', name: 'Inside Dhaka City', charge: 70, estimatedDays: '1 - 2 Days', active: true },
   { id: 'outside-dhaka', name: 'Outside Dhaka (Nationwide)', charge: 130, estimatedDays: '2 - 4 Days', active: true },
@@ -76,22 +90,23 @@ export const getLocalDeliveryZones = (): DeliveryZone[] => {
     const raw = localStorage.getItem(LOCAL_DELIVERY_ZONES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) return sortDeliveryZones(parsed);
     }
   } catch {
     // ignore
   }
-  return DEFAULT_DELIVERY_ZONES;
+  return sortDeliveryZones(DEFAULT_DELIVERY_ZONES);
 };
 
 export const saveLocalDeliveryZones = (zones: DeliveryZone[]) => {
+  const sorted = sortDeliveryZones(zones);
   try {
-    localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(zones));
+    localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(sorted));
   } catch {
     // ignore
   }
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('mf_delivery_zones_updated', { detail: zones }));
+    window.dispatchEvent(new CustomEvent('mf_delivery_zones_updated', { detail: sorted }));
   }
 };
 
@@ -354,9 +369,11 @@ export const settingsService = {
     try {
       const payload = sanitizeForFirestore({
         ...banner,
+        id: newId,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
-      await addDoc(collection(db, 'banners'), payload);
+      await setDoc(doc(db, 'banners', newId), payload, { merge: true });
     } catch (e) {
       console.warn('Remote banner save notice (saved in local store):', e);
     }
@@ -373,7 +390,7 @@ export const settingsService = {
         ...banner,
         updatedAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, 'banners', id), payload);
+      await setDoc(doc(db, 'banners', id), payload, { merge: true });
     } catch (e) {
       console.warn('Remote banner update notice (saved in local store):', e);
     }
@@ -415,15 +432,78 @@ export const settingsService = {
     }
   },
 
+  subscribeToCoupons(callback: (coupons: Coupon[]) => void): Unsubscribe {
+    callback(this.getLocalCoupons());
+
+    const handleLocal = (e: any) => {
+      callback((e.detail as Coupon[]) || this.getLocalCoupons());
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mf_coupons_updated', handleLocal);
+    }
+
+    let firestoreUnsub: (() => void) | null = null;
+    try {
+      firestoreUnsub = onSnapshot(
+        collection(db, 'coupons'),
+        (snap) => {
+          if (!snap.empty) {
+            const remoteList: Coupon[] = [];
+            snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
+            const local = this.getLocalCoupons();
+            const mergedMap = new Map<string, Coupon>();
+            remoteList.forEach((c) => mergedMap.set(c.id, c));
+            local.forEach((c) => {
+              if (!mergedMap.has(c.id)) {
+                mergedMap.set(c.id, c);
+              } else {
+                const remoteItem = mergedMap.get(c.id)!;
+                mergedMap.set(c.id, { ...remoteItem, ...c });
+              }
+            });
+            const combined = Array.from(mergedMap.values());
+            this.saveLocalCoupons(combined);
+            callback(combined);
+          }
+        },
+        () => {
+          // ignore
+        }
+      );
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('mf_coupons_updated', handleLocal);
+      }
+      if (firestoreUnsub) firestoreUnsub();
+    };
+  },
+
   async getCoupons(): Promise<Coupon[]> {
     const local = this.getLocalCoupons();
     try {
       const snap = await getDocs(collection(db, 'coupons'));
       if (!snap.empty) {
-        const list: Coupon[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Coupon));
-        this.saveLocalCoupons(list);
-        return list;
+        const remoteList: Coupon[] = [];
+        snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
+
+        // Intelligent merge: keep local additions if not yet indexed in remote
+        const mergedMap = new Map<string, Coupon>();
+        remoteList.forEach((c) => mergedMap.set(c.id, c));
+        local.forEach((c) => {
+          if (!mergedMap.has(c.id)) {
+            mergedMap.set(c.id, c);
+          } else {
+            const remoteItem = mergedMap.get(c.id)!;
+            mergedMap.set(c.id, { ...remoteItem, ...c });
+          }
+        });
+        const combined = Array.from(mergedMap.values());
+        this.saveLocalCoupons(combined);
+        return combined;
       }
     } catch {
       // ignore
@@ -432,24 +512,29 @@ export const settingsService = {
   },
 
   async createCoupon(coupon: Omit<Coupon, 'id' | 'usedCount'>) {
-    const newId = `cpn-${coupon.code.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    const cleanCode = coupon.code.toUpperCase().trim();
+    const slug = cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'cpn';
+    const newId = `cpn-${slug}-${Date.now().toString(36)}`;
     const newCoupon: Coupon = {
       ...coupon,
       id: newId,
-      code: coupon.code.toUpperCase().trim(),
+      code: cleanCode,
       usedCount: 0,
     };
     const current = this.getLocalCoupons();
-    this.saveLocalCoupons([newCoupon, ...current]);
+    const updated = [newCoupon, ...current.filter((c) => c.id !== newId && c.code !== cleanCode)];
+    this.saveLocalCoupons(updated);
 
     try {
       const payload = sanitizeForFirestore({
         ...coupon,
-        code: coupon.code.toUpperCase().trim(),
+        id: newId,
+        code: cleanCode,
         usedCount: 0,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
-      await addDoc(collection(db, 'coupons'), payload);
+      await setDoc(doc(db, 'coupons', newId), payload, { merge: true });
     } catch (e) {
       console.warn('Remote coupon save notice (saved in local store):', e);
     }
@@ -458,16 +543,19 @@ export const settingsService = {
 
   async updateCoupon(id: string, coupon: Partial<Coupon>) {
     const current = this.getLocalCoupons();
-    const updated = current.map((c) => (c.id === id ? { ...c, ...coupon } : c));
+    const cleanCode = coupon.code ? coupon.code.toUpperCase().trim() : undefined;
+    const updated = current.map((c) =>
+      c.id === id ? { ...c, ...coupon, ...(cleanCode ? { code: cleanCode } : {}) } : c
+    );
     this.saveLocalCoupons(updated);
 
     try {
       const payload = sanitizeForFirestore({
         ...coupon,
-        ...(coupon.code ? { code: coupon.code.toUpperCase().trim() } : {}),
+        ...(cleanCode ? { code: cleanCode } : {}),
         updatedAt: serverTimestamp(),
       });
-      await updateDoc(doc(db, 'coupons', id), payload);
+      await setDoc(doc(db, 'coupons', id), payload, { merge: true });
     } catch (e) {
       console.warn('Remote coupon update notice (saved in local store):', e);
     }
@@ -508,7 +596,7 @@ export const settingsService = {
             }
           }
         });
-        const finalZones = Array.from(mergedMap.values());
+        const finalZones = sortDeliveryZones(Array.from(mergedMap.values()));
         if (finalZones.length > 0) {
           saveLocalDeliveryZones(finalZones);
           return finalZones;
@@ -517,7 +605,7 @@ export const settingsService = {
     } catch (e) {
       console.warn('Delivery zones remote notice (using local-first):', e);
     }
-    return local;
+    return sortDeliveryZones(local);
   },
 
   async saveDeliveryZone(zone: Omit<DeliveryZone, 'id'>, id?: string) {

@@ -25,6 +25,8 @@ import { Order } from '../types';
 import { orderService } from '../services/orderService';
 import { EmptyState } from '../components/common/EmptyState';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
+import { BrandLogo } from '../components/common/BrandLogo';
+import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
 
 interface AccountPageProps {
   onNavigate: (route: string) => void;
@@ -179,7 +181,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
         onNavigate('/checkout');
       }
     } catch (err: any) {
-      setAuthError(err.message || 'Authentication failed. Please verify credentials.');
+      setAuthError(getCleanAuthErrorMessage(err));
     } finally {
       setAuthLoading(false);
     }
@@ -196,7 +198,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
       await resetPassword(email);
       setResetSent(true);
     } catch (err: any) {
-      setAuthError(err.message || 'Failed to send password reset email.');
+      setAuthError(getCleanAuthErrorMessage(err));
     } finally {
       setAuthLoading(false);
     }
@@ -345,14 +347,14 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
         <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-sm">
           
           {/* Logo / Header */}
-          <div className="text-center mb-6">
-            <div className="inline-block bg-black p-2 rounded mb-3">
-              <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-8 object-contain" />
+          <div className="text-center mb-6 space-y-3">
+            <div className="flex justify-center pb-1">
+              <BrandLogo variant="dark" size="lg" />
             </div>
-            <h1 className="text-xl font-bold uppercase tracking-tight text-neutral-900">
+            <h1 className="text-lg font-extrabold uppercase tracking-tight text-neutral-900">
               {authMode === 'login' ? 'Customer Sign In' : 'Create Customer Account'}
             </h1>
-            <p className="text-xs text-neutral-500 mt-1">
+            <p className="text-xs text-neutral-500">
               Access your order history, track deliveries, and manage your wishlist.
             </p>
           </div>

@@ -43,10 +43,13 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
     productService.getCategories().then((cats) => {
       setCategories(cats.filter((c) => c.active));
     });
-    settingsService.getSettings().then((s) => {
+    const unsubSettings = settingsService.subscribeToSettings((s) => {
       if (s.announcementText) setAnnouncement(s.announcementText);
       setAnnouncementActive(s.announcementActive !== false);
     });
+    return () => {
+      unsubSettings();
+    };
   }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -71,14 +74,14 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
     <header className="sticky top-0 z-40 bg-white border-b border-neutral-200">
       {/* Announcement Bar */}
       {announcementActive && (
-        <div className="bg-black text-white text-[11px] sm:text-xs font-medium py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-2">
+        <div className="bg-black text-white text-[11px] sm:text-xs font-medium py-2 px-4 text-center tracking-wide flex items-center justify-center gap-2">
           <span>{announcement}</span>
         </div>
       )}
 
-      {/* Main Header Container */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-20 gap-4">
+      {/* Main Header Container - Expanded for full luxury screen presence */}
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
+        <div className="flex items-center justify-between h-18 sm:h-22 gap-4">
           
           {/* Mobile Menu Button */}
           <div className="flex items-center lg:hidden">
@@ -91,12 +94,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             </button>
           </div>
 
-          {/* Official Brand Logo - Black logo on white background */}
+          {/* Official Brand Logo - Prominent & bold */}
           <div 
             onClick={() => onNavigate('/')}
             className="flex items-center cursor-pointer select-none py-1"
           >
-            <BrandLogo variant="dark" className="h-8 sm:h-10" />
+            <BrandLogo variant="dark" size="md" />
           </div>
 
           {/* Desktop Navigation */}

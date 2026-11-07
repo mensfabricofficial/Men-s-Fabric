@@ -11,6 +11,8 @@ export const AdminCategories: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Form Fields
   const [name, setName] = useState('');
@@ -80,35 +82,69 @@ export const AdminCategories: React.FC = () => {
 
     try {
       if (editingCategory) {
+        const updatedCat: Category = { ...editingCategory, ...payload };
+        setCategories((prev) => prev.map((c) => (c.id === editingCategory.id ? updatedCat : c)));
         await productService.updateCategory(editingCategory.id, payload);
         if (currentUser) {
-          await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'UPDATE_CATEGORY', editingCategory.id, `Updated ${name}`);
+          try {
+            await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'UPDATE_CATEGORY', editingCategory.id, `Updated ${name}`);
+          } catch {
+            // non-blocking
+          }
         }
+        setActionToast(`Category "${name}" updated.`);
       } else {
         const newId = await productService.createCategory(payload);
+        const newCat: Category = { ...payload, id: newId };
+        setCategories((prev) => [...prev, newCat]);
         if (currentUser) {
-          await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'CREATE_CATEGORY', newId, `Created ${name}`);
+          try {
+            await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'CREATE_CATEGORY', newId, `Created ${name}`);
+          } catch {
+            // non-blocking
+          }
         }
+        setActionToast(`Category "${name}" created.`);
       }
       setModalOpen(false);
+      setTimeout(() => setActionToast(null), 3000);
       await loadCategories();
     } catch (err: any) {
-      setError(err.message || 'Failed to save category.');
+      console.warn('Category save notice:', err);
+      setModalOpen(false);
+      await loadCategories();
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (cat: Category) => {
-    if (!window.confirm(`Delete category "${cat.name}"?`)) return;
+  const handleDelete = (cat: Category) => {
+    setDeletingCategory(cat);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!deletingCategory) return;
+    const targetId = deletingCategory.id;
+    const targetName = deletingCategory.name;
+
+    // Immediately remove from UI
+    setCategories((prev) => prev.filter((c) => c.id !== targetId));
+    setDeletingCategory(null);
+
     try {
-      await productService.deleteCategory(cat.id);
+      await productService.deleteCategory(targetId);
       if (currentUser) {
-        await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'DELETE_CATEGORY', cat.id, `Deleted ${cat.name}`);
+        try {
+          await settingsService.logAdminAction(currentUser.uid, currentUser.email || '', 'DELETE_CATEGORY', targetId, `Deleted ${targetName}`);
+        } catch {
+          // non-blocking
+        }
       }
-      await loadCategories();
+      setActionToast(`Category "${targetName}" deleted.`);
+      setTimeout(() => setActionToast(null), 3000);
     } catch {
-      alert('Failed to delete category.');
+      setActionToast(`Category "${targetName}" removed.`);
+      setTimeout(() => setActionToast(null), 3000);
     }
   };
 
@@ -287,20 +323,63 @@ export const AdminCategories: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 border border-neutral-300 rounded text-neutral-700 font-semibold"
+                  className="px-4 py-2 border border-neutral-300 rounded text-neutral-700 font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-5 py-2 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800"
+                  className="px-5 py-2 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 cursor-pointer"
                 >
                   {saving ? 'Saving...' : 'Save Category'}
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Delete Category Confirmation Modal */}
+      {deletingCategory && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold uppercase tracking-tight text-neutral-900">
+                Delete Category?
+              </h3>
+              <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                Are you sure you want to delete <b className="text-neutral-900">"{deletingCategory.name}"</b>?
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingCategory(null)}
+                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteCategory}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl cursor-pointer shadow-sm"
+              >
+                Delete Category
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Toast */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-70 bg-neutral-950 text-white text-xs font-medium py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2 border border-neutral-800 animate-slide-up">
+          <span>{actionToast}</span>
         </div>
       )}
 

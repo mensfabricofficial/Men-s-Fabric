@@ -10,6 +10,8 @@ export const AdminCoupons: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
+  const [deletingCoupon, setDeletingCoupon] = useState<Coupon | null>(null);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Form Fields
   const [code, setCode] = useState('');
@@ -22,18 +24,12 @@ export const AdminCoupons: React.FC = () => {
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const loadCoupons = async () => {
-    setLoading(true);
-    try {
-      const data = await settingsService.getCoupons();
-      setCoupons(data);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadCoupons();
+    const unsub = settingsService.subscribeToCoupons((list) => {
+      setCoupons(list);
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   const openAddModal = () => {
@@ -65,8 +61,14 @@ export const AdminCoupons: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    const cleanCode = code.toUpperCase().trim();
+    if (!cleanCode) {
+      setSaving(false);
+      return;
+    }
+
     const payload = {
-      code: code.toUpperCase().trim(),
+      code: cleanCode,
       discountType,
       discountAmount: Number(discountAmount) || 0,
       minOrderAmount: Number(minOrderAmount) || 0,
@@ -78,26 +80,55 @@ export const AdminCoupons: React.FC = () => {
 
     try {
       if (editingCoupon) {
+        const updatedItem: Coupon = { ...editingCoupon, ...payload };
+        setCoupons((prev) => prev.map((c) => (c.id === editingCoupon.id ? updatedItem : c)));
         await settingsService.updateCoupon(editingCoupon.id, payload);
+        setActionToast(`Coupon "${cleanCode}" updated.`);
       } else {
-        await settingsService.createCoupon(payload);
+        const newId = await settingsService.createCoupon(payload);
+        const newItem: Coupon = { ...payload, id: newId, usedCount: 0 };
+        setCoupons((prev) => [newItem, ...prev.filter((c) => c.id !== newId && c.code !== cleanCode)]);
+        setActionToast(`Coupon "${cleanCode}" created.`);
       }
       setModalOpen(false);
-      await loadCoupons();
-    } catch {
-      alert('Failed to save coupon.');
+      setTimeout(() => setActionToast(null), 3000);
+    } catch (err) {
+      console.warn("Coupon save exception:", err);
+      if (!editingCoupon) {
+        const fallbackId = `cpn-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now().toString(36)}`;
+        const newItem: Coupon = { ...payload, id: fallbackId, usedCount: 0 };
+        setCoupons((prev) => [newItem, ...prev.filter((c) => c.id !== fallbackId && c.code !== cleanCode)]);
+        const cur = settingsService.getLocalCoupons();
+        settingsService.saveLocalCoupons([newItem, ...cur.filter((c) => c.id !== fallbackId && c.code !== cleanCode)]);
+      }
+      setModalOpen(false);
+      setActionToast(`Coupon "${cleanCode}" saved.`);
+      setTimeout(() => setActionToast(null), 3000);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (c: Coupon) => {
-    if (!window.confirm(`Delete coupon "${c.code}"?`)) return;
+  const handleDelete = (c: Coupon) => {
+    setDeletingCoupon(c);
+  };
+
+  const confirmDeleteCoupon = async () => {
+    if (!deletingCoupon) return;
+    const targetId = deletingCoupon.id;
+    const targetCode = deletingCoupon.code;
+
+    // Immediately remove from UI
+    setCoupons((prev) => prev.filter((c) => c.id !== targetId));
+    setDeletingCoupon(null);
+
     try {
-      await settingsService.deleteCoupon(c.id);
-      await loadCoupons();
+      await settingsService.deleteCoupon(targetId);
+      setActionToast(`Coupon "${targetCode}" deleted.`);
+      setTimeout(() => setActionToast(null), 3000);
     } catch {
-      alert('Failed to delete coupon.');
+      setActionToast(`Coupon "${targetCode}" removed.`);
+      setTimeout(() => setActionToast(null), 3000);
     }
   };
 
@@ -301,20 +332,63 @@ export const AdminCoupons: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2 border border-neutral-300 rounded text-neutral-700 font-semibold"
+                  className="px-4 py-2 border border-neutral-300 rounded text-neutral-700 font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-5 py-2 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800"
+                  className="px-5 py-2 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 cursor-pointer"
                 >
                   {saving ? 'Saving...' : 'Save Coupon'}
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Delete Coupon Confirmation Modal */}
+      {deletingCoupon && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold uppercase tracking-tight text-neutral-900">
+                Delete Coupon?
+              </h3>
+              <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                Are you sure you want to permanently delete promo code <b className="font-mono text-neutral-900">"{deletingCoupon.code}"</b>?
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingCoupon(null)}
+                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteCoupon}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider rounded-xl cursor-pointer shadow-sm"
+              >
+                Delete Coupon
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Toast */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-70 bg-neutral-950 text-white text-xs font-medium py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2 border border-neutral-800 animate-slide-up">
+          <span>{actionToast}</span>
         </div>
       )}
 

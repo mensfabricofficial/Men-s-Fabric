@@ -16,7 +16,9 @@ import {
   Ruler,
   KeyRound,
   Plus,
-  RefreshCw
+  RefreshCw,
+  Megaphone,
+  Bell
 } from 'lucide-react';
 import { SiteSettings, PaymentSettings, MfsGatewayConfig } from '../types';
 import { settingsService, defaultSettings, defaultPaymentSettings } from '../services/settingsService';
@@ -35,6 +37,10 @@ export const AdminSettings: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Delivery charges state
+  const [dhakaFee, setDhakaFee] = useState<number>(70);
+  const [outsideFee, setOutsideFee] = useState<number>(130);
 
   // Authorized Devices state
   const [devices, setDevices] = useState<AdminDevice[]>([]);
@@ -96,6 +102,12 @@ export const AdminSettings: React.FC = () => {
   useEffect(() => {
     Promise.all([
       settingsService.getSettings().then((s) => setSettings(s)),
+      settingsService.getDeliveryZones().then((zones) => {
+        const dh = zones.find((z) => z.id === 'dhaka');
+        const out = zones.find((z) => z.id === 'outside-dhaka');
+        if (dh) setDhakaFee(dh.charge);
+        if (out) setOutsideFee(out.charge);
+      }),
       loadDevices(),
       loadSizeGuides(),
       loadApiConfig(),
@@ -109,14 +121,28 @@ export const AdminSettings: React.FC = () => {
     setErrorMessage('');
     try {
       await settingsService.updateSettings(settings);
+      await Promise.all([
+        settingsService.saveDeliveryZone(
+          { name: 'Inside Dhaka City', charge: Number(dhakaFee) || 0, estimatedDays: '1 - 2 Days', active: true },
+          'dhaka'
+        ),
+        settingsService.saveDeliveryZone(
+          { name: 'Outside Dhaka (Nationwide)', charge: Number(outsideFee) || 0, estimatedDays: '2 - 4 Days', active: true },
+          'outside-dhaka'
+        ),
+      ]);
       if (currentUser) {
-        await settingsService.logAdminAction(
-          currentUser.uid,
-          currentUser.email || '',
-          'UPDATE_SETTINGS',
-          'general',
-          'Updated store settings & online payment gateways'
-        );
+        try {
+          await settingsService.logAdminAction(
+            currentUser.uid,
+            currentUser.email || '',
+            'UPDATE_SETTINGS',
+            'general',
+            'Updated announcement, store settings & delivery fees'
+          );
+        } catch {
+          // non-blocking
+        }
       }
       setSuccess(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -309,8 +335,88 @@ export const AdminSettings: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8 space-y-8 text-xs shadow-xs">
             
-            {/* SECTION 1: Online Prepayment & Discount Settings */}
+            {/* SECTION 0: Top Header Announcement & Welcome Bar */}
             <div className="space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-neutral-200">
+                <div className="flex items-center gap-2">
+                  <Megaphone className="w-4 h-4 text-neutral-800" />
+                  <h3 className="font-extrabold uppercase tracking-wider text-neutral-900 text-sm">
+                    Top Announcement & Welcome Message
+                  </h3>
+                </div>
+                <label className="flex items-center gap-2 font-bold cursor-pointer text-neutral-800">
+                  <input
+                    type="checkbox"
+                    checked={settings.announcementActive !== false}
+                    onChange={(e) => setSettings({ ...settings, announcementActive: e.target.checked })}
+                    className="accent-black w-4 h-4 cursor-pointer"
+                  />
+                  <span>Show Top Bar</span>
+                </label>
+              </div>
+
+              <div className="bg-neutral-50 rounded-xl p-4 border border-neutral-200 space-y-4">
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">
+                    Announcement Banner Text (Welcome Bar) *
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.announcementText || ''}
+                    onChange={(e) => setSettings({ ...settings, announcementText: e.target.value })}
+                    placeholder="🔥 Welcome to MEN'S FABRIC — Free Shipping on Orders Over ৳2500!"
+                    className="w-full px-3.5 py-2.5 bg-white border border-neutral-300 rounded-lg font-medium text-neutral-900 focus:outline-none focus:border-black"
+                  />
+                  <p className="text-[11px] text-neutral-500 mt-1">
+                    Displayed at the very top of every page for customer greetings, offers, or notice updates.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-neutral-200">
+                  <div>
+                    <label className="block font-bold text-neutral-700 uppercase mb-1">
+                      Free Delivery Minimum Order (৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settings.freeDeliveryThreshold || 2500}
+                      onChange={(e) => setSettings({ ...settings, freeDeliveryThreshold: Number(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 bg-white border border-neutral-300 rounded font-bold font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-neutral-700 uppercase mb-1">
+                      Inside Dhaka Delivery Charge (৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={dhakaFee}
+                      onChange={(e) => setDhakaFee(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-neutral-300 rounded font-bold font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-neutral-700 uppercase mb-1">
+                      Outside Dhaka Nationwide Charge (৳)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={outsideFee}
+                      onChange={(e) => setOutsideFee(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-neutral-300 rounded font-bold font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 1: Online Prepayment & Discount Settings */}
+            <div className="space-y-4 pt-4 border-t border-neutral-200">
               <div className="flex items-center gap-2 pb-2 border-b border-neutral-200">
                 <Percent className="w-4 h-4 text-emerald-600" />
                 <h3 className="font-extrabold uppercase tracking-wider text-neutral-900 text-sm">

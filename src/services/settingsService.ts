@@ -288,13 +288,14 @@ export const settingsService = {
 
     let firestoreUnsub: (() => void) | null = null;
     try {
-      const q = query(collection(db, 'banners'), orderBy('sortOrder', 'asc'));
+      const q = query(collection(db, 'banners'), where('active', '==', true));
       firestoreUnsub = onSnapshot(
         q,
         (snap) => {
           if (!snap.empty) {
             const list: Banner[] = [];
             snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
+            list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
             this.saveLocalBanners(list);
             callback(list);
           }
@@ -343,14 +344,14 @@ export const settingsService = {
   async getBanners(activeOnly = true): Promise<Banner[]> {
     const local = this.getLocalBanners();
     try {
-      let q = query(collection(db, 'banners'), orderBy('sortOrder', 'asc'));
-      if (activeOnly) {
-        q = query(collection(db, 'banners'), where('active', '==', true), orderBy('sortOrder', 'asc'));
-      }
+      let q = activeOnly
+        ? query(collection(db, 'banners'), where('active', '==', true))
+        : collection(db, 'banners');
       const snap = await getDocs(q);
       if (!snap.empty) {
         const list: Banner[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
+        list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
         this.saveLocalBanners(list);
         return list;
       }

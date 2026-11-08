@@ -21,7 +21,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
     // Real-time products subscription
     const unsubProducts = productService.subscribeToActiveProducts((products) => {
-      setNewArrivals(products.filter((p) => p.newArrival).slice(0, 8));
+      const arrivals = products.filter((p) => p.newArrival);
+      setNewArrivals(arrivals.length > 0 ? arrivals.slice(0, 8) : products.slice(0, 8));
       setLoadingProducts(false);
     });
 

@@ -17,6 +17,7 @@ import { db, storage } from '../lib/firebase';
 import { CartItem, Order, OrderStatus, PaymentStatus, ShippingAddress, PaymentMethod, PaymentDetails } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { getLocalDeliveryZones } from './settingsService';
+import { productService } from './productService';
 
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
 const cachedOrdersMap = new Map<string, Order>();
@@ -344,6 +345,20 @@ export const orderService = {
           transaction.set(orderDocRef, sanitizedOrder);
         });
 
+        // Automatically decrement inventory across local catalog & broadcast to Admin Panel
+        try {
+          await productService.decrementProductStock(
+            items.map((i) => ({
+              productId: i.productId,
+              size: i.size,
+              color: i.color,
+              quantity: i.quantity,
+            }))
+          );
+        } catch (stockErr) {
+          console.warn('Stock decrement notice:', stockErr);
+        }
+
         return {
           success: true,
           orderId: orderDocRef.id,
@@ -428,6 +443,20 @@ export const orderService = {
           await setDoc(orderDocRef, sanitizedOrder);
         } catch (setDocErr) {
           console.warn('Remote setDoc notice, order preserved in persistent storage:', setDocErr);
+        }
+
+        // Automatically decrement inventory across local catalog & broadcast to Admin Panel in fallback mode
+        try {
+          await productService.decrementProductStock(
+            items.map((i) => ({
+              productId: i.productId,
+              size: i.size,
+              color: i.color,
+              quantity: i.quantity,
+            }))
+          );
+        } catch (stockErr) {
+          console.warn('Fallback stock decrement notice:', stockErr);
         }
 
         return {

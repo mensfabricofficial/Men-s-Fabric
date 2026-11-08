@@ -372,20 +372,7 @@ export const AdminSettings: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-neutral-200">
-                  <div>
-                    <label className="block font-bold text-neutral-700 uppercase mb-1">
-                      Free Delivery Minimum Order (৳)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={settings.freeDeliveryThreshold || 2500}
-                      onChange={(e) => setSettings({ ...settings, freeDeliveryThreshold: Number(e.target.value) || 0 })}
-                      className="w-full px-3 py-2 bg-white border border-neutral-300 rounded font-bold font-mono"
-                    />
-                  </div>
-
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-neutral-200">
                   <div>
                     <label className="block font-bold text-neutral-700 uppercase mb-1">
                       Inside Dhaka Delivery Charge (৳)

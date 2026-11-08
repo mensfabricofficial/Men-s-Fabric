@@ -122,12 +122,12 @@ export const productService = {
       window.addEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
     }
 
-    // 3. Connect to Firestore realtime listener
+    // 3. Connect to Firestore realtime listener matching security rule: where('active', '==', true)
     let firestoreUnsub: (() => void) | null = null;
     try {
-      const colRef = collection(db, 'products');
+      const q = query(collection(db, 'products'), where('active', '==', true));
       firestoreUnsub = onSnapshot(
-        colRef,
+        q,
         (snap) => {
           if (!snap.empty) {
             const list: Product[] = [];
@@ -295,15 +295,13 @@ export const productService = {
   // Get all active products for the public catalog (Shop page)
   async getAllActiveProducts(): Promise<Product[]> {
     try {
-      const colRef = collection(db, 'products');
-      const snap = await getDocs(colRef);
+      const q = query(collection(db, 'products'), where('active', '==', true));
+      const snap = await getDocs(q);
       if (!snap.empty) {
         const list: Product[] = [];
         snap.forEach((d) => {
           const data = d.data() as Product;
-          if (data.active !== false) {
-            list.push({ ...data, id: d.id });
-          }
+          list.push({ ...data, id: d.id });
         });
         list.sort((a, b) => {
           const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
@@ -314,7 +312,7 @@ export const productService = {
         return list;
       }
     } catch (err) {
-      console.warn('Remote fetch active products notice, using persistent local store');
+      console.warn('Remote fetch active products notice, using persistent local store:', err);
     }
     return this.getLocalProducts().filter((p) => p.active !== false);
   },
@@ -558,6 +556,69 @@ export const productService = {
       );
     } catch (e) {
       console.warn('Remote stock update notice (saved to local catalog):', e);
+    }
+  },
+
+  // Automatically decrement product inventory when an order is placed
+  async decrementProductStock(
+    items: { productId: string; size?: string; color?: string; quantity: number }[]
+  ): Promise<void> {
+    if (!items || items.length === 0) return;
+
+    const currentProducts = this.getLocalProducts();
+    const updatedProducts = currentProducts.map((p) => {
+      const matchingItems = items.filter((it) => it.productId === p.id);
+      if (matchingItems.length === 0) return p;
+
+      let newTotalStock = typeof p.totalStock === 'number' ? p.totalStock : 0;
+      let newVariants = p.variants ? [...p.variants] : [];
+
+      for (const it of matchingItems) {
+        const qty = Number(it.quantity) || 1;
+        newTotalStock = Math.max(0, newTotalStock - qty);
+
+        if (newVariants.length > 0) {
+          newVariants = newVariants.map((v) => {
+            const sizeMatches = !it.size || it.size === 'Standard' || v.size === it.size;
+            const colorMatches = !it.color || it.color === 'Standard' || !v.color || v.color === it.color;
+            if (sizeMatches && colorMatches) {
+              return { ...v, stock: Math.max(0, (v.stock || 0) - qty) };
+            }
+            return v;
+          });
+        }
+      }
+
+      if (newVariants.length > 0) {
+        newTotalStock = newVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
+      }
+
+      return {
+        ...p,
+        totalStock: newTotalStock,
+        variants: newVariants,
+        updatedAt: new Date().toISOString() as any,
+      };
+    });
+
+    // 1. Immediately update persistent local catalog and dispatch event for instant UI update
+    this.saveLocalProducts(updatedProducts);
+
+    // 2. Persist to Firestore for all affected products
+    for (const it of items) {
+      const updatedP = updatedProducts.find((p) => p.id === it.productId);
+      if (updatedP) {
+        try {
+          const payload = sanitizeForFirestore({
+            totalStock: updatedP.totalStock,
+            variants: updatedP.variants || [],
+            updatedAt: serverTimestamp(),
+          });
+          await setDoc(doc(db, 'products', updatedP.id), payload, { merge: true });
+        } catch (err) {
+          console.warn(`Remote stock decrement notice for ${updatedP.id}:`, err);
+        }
+      }
     }
   },
 

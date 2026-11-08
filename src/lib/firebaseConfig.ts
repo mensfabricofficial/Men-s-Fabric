@@ -14,10 +14,10 @@ export const firebaseConfig = {
 
 // Configured Administrator Information - Primary Store Owner
 export const ADMIN_CONFIG = {
-  PRIMARY_ADMIN_UID: "lw3mX9AivNduzBGundo3rB2jZcp2",
+  PRIMARY_ADMIN_UID: "HvhASQq3i8M7cFdrHRTC7f6hbuH3",
   ADMIN_EMAIL: "admin@mensfabric.com",
   SECONDARY_ADMIN_EMAILS: ["mensfabricofficial@gmail.com", "me@admin.com"],
-  SECONDARY_ADMIN_UIDS: ["HvhASQq3i8M7cFdrHRTC7f6hbuH3"],
+  SECONDARY_ADMIN_UIDS: ["lw3mX9AivNduzBGundo3rB2jZcp2", "HvhASQq3i8M7cFdrHRTC7f6hbuH3"],
   STORE_NAME: "MEN'S FABRIC",
   CURRENCY: "৳",
   TIMEZONE: "Asia/Dhaka",

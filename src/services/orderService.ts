@@ -132,8 +132,8 @@ export const orderService = {
         }
       }
 
-      // Generate human-readable order number
-      const orderNumber = `MF-${Math.floor(100000 + Math.random() * 900000)}`;
+      // Generate human-readable order number with # format (e.g. #102948)
+      const orderNumber = `#${Math.floor(100000 + Math.random() * 900000)}`;
       const orderDocRef = doc(collection(db, 'orders'));
 
       // Use Firestore transaction to verify prices and decrement inventory atomically
@@ -474,67 +474,85 @@ export const orderService = {
     }
   },
 
-  // Customer order history - Multi-field resilient lookup without composite index requirement
+  // Customer order history - strictly isolated so customer only sees their own orders
   async getCustomerOrders(customerId?: string, email?: string, phone?: string): Promise<Order[]> {
     try {
       const orderMap = new Map<string, Order>();
+      const cleanCustomerId = customerId && customerId !== 'guest' ? customerId.trim() : '';
+      const cleanEmail = email ? email.trim().toLowerCase() : '';
+      const cleanPhoneDigits = phone ? phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
-      // 1. Local orders first
+      // If no valid identifiers, return empty immediately
+      if (!cleanCustomerId && !cleanEmail && (!cleanPhoneDigits || cleanPhoneDigits.length < 10)) {
+        return [];
+      }
+
+      // 1. Local orders check (strictly filtered to this customer only)
       const localOrders = this.getLocalOrders();
       localOrders.forEach((lo) => {
-        const matchesId = customerId && customerId !== 'guest' && lo.customerId === customerId;
-        const matchesEmail = email && lo.customerEmail && lo.customerEmail.toLowerCase() === email.toLowerCase();
-        const matchesPhone = phone && lo.customerPhone && lo.customerPhone.replace(/[^0-9]/g, '').slice(-8) === phone.replace(/[^0-9]/g, '').slice(-8);
-        if (matchesId || matchesEmail || matchesPhone) {
+        let isOwner = false;
+        if (cleanCustomerId && lo.customerId === cleanCustomerId) {
+          isOwner = true;
+        } else if (cleanEmail && lo.customerEmail && lo.customerEmail.trim().toLowerCase() === cleanEmail) {
+          isOwner = true;
+        } else if (cleanPhoneDigits && cleanPhoneDigits.length >= 10 && lo.customerPhone) {
+          const ordPhone = lo.customerPhone.replace(/[^0-9]/g, '').slice(-10);
+          if (ordPhone === cleanPhoneDigits) {
+            isOwner = true;
+          }
+        }
+        if (isOwner) {
           orderMap.set(lo.id, lo);
         }
       });
 
-      // 2. Query by customerId (if available and not 'guest')
-      if (customerId && customerId !== 'guest') {
+      // 2. Query Firestore by customerId (matches security rule)
+      if (cleanCustomerId) {
         try {
-          const q = query(collection(db, 'orders'), where('customerId', '==', customerId));
+          const q = query(collection(db, 'orders'), where('customerId', '==', cleanCustomerId));
           const snap = await getDocs(q);
           snap.forEach((d) => {
             const ord = { id: d.id, ...d.data() } as Order;
             orderMap.set(d.id, ord);
-            this.saveLocalOrder(ord);
           });
         } catch (idErr) {
           console.warn('Orders by customerId notice:', idErr);
         }
       }
 
-      // 3. Query by customerEmail
-      if (email && email.trim()) {
+      // 3. Query Firestore by customerEmail (if still no customerId or guest lookup)
+      if (cleanEmail && (!cleanCustomerId || orderMap.size === 0)) {
         try {
-          const q = query(collection(db, 'orders'), where('customerEmail', '==', email.trim().toLowerCase()));
+          const q = query(collection(db, 'orders'), where('customerEmail', '==', cleanEmail));
           const snap = await getDocs(q);
           snap.forEach((d) => {
             const ord = { id: d.id, ...d.data() } as Order;
             orderMap.set(d.id, ord);
-            this.saveLocalOrder(ord);
           });
         } catch (mailErr) {
           console.warn('Orders by email notice:', mailErr);
         }
       }
 
-      // 4. Query by customerPhone
-      if (phone && phone.trim()) {
-        const cleanPhone = phone.trim().replace(/[^0-9]/g, '');
-        if (cleanPhone.length >= 10) {
-          try {
-            const q = query(collection(db, 'orders'), where('customerPhone', '==', cleanPhone));
+      // 4. Query Firestore by customerPhone (exact 10 digits match)
+      if (cleanPhoneDigits && cleanPhoneDigits.length >= 10 && (!cleanCustomerId || orderMap.size === 0)) {
+        try {
+          const phoneVariants = [
+            cleanPhoneDigits,
+            `0${cleanPhoneDigits}`,
+            `+880${cleanPhoneDigits}`,
+            `880${cleanPhoneDigits}`,
+          ];
+          for (const pv of phoneVariants) {
+            const q = query(collection(db, 'orders'), where('customerPhone', '==', pv), limit(10));
             const snap = await getDocs(q);
             snap.forEach((d) => {
               const ord = { id: d.id, ...d.data() } as Order;
               orderMap.set(d.id, ord);
-              this.saveLocalOrder(ord);
             });
-          } catch (phoneErr) {
-            console.warn('Orders by phone notice:', phoneErr);
           }
+        } catch (phoneErr) {
+          console.warn('Orders by phone notice:', phoneErr);
         }
       }
 
@@ -549,7 +567,7 @@ export const orderService = {
       return orders;
     } catch (e) {
       console.warn('Customer orders fetch error:', e);
-      return this.getLocalOrders();
+      return [];
     }
   },
 
@@ -557,218 +575,191 @@ export const orderService = {
   async getOrderById(id: string): Promise<Order | null> {
     if (!id) return null;
     const cleanId = id.trim();
+    const cleanNum = cleanId.replace(/^[#]/, '').replace(/^MF-/, '').trim();
 
-    // 1. Instant Cache & Local Storage Check (0ms)
-    const cached = cachedOrdersMap.get(cleanId) || cachedOrdersMap.get(cleanId.toUpperCase()) || cachedOrdersMap.get(cleanId.toLowerCase());
+    // 1. Instant Cache Check
+    const cached = cachedOrdersMap.get(cleanId) ||
+                   cachedOrdersMap.get(cleanNum) ||
+                   cachedOrdersMap.get(`#${cleanNum}`) ||
+                   cachedOrdersMap.get(`MF-${cleanNum}`);
     if (cached) return cached;
 
+    // 2. Local orders check
     const localOrders = this.getLocalOrders();
-    const localMatch = localOrders.find(
-      (o) =>
-        o.id === cleanId ||
-        o.orderNumber?.toUpperCase() === cleanId.toUpperCase() ||
-        o.orderNumber?.replace(/^MF-/, '') === cleanId.replace(/^MF-/, '')
-    );
+    const localMatch = localOrders.find((o) => {
+      const oNum = (o.orderNumber || '').replace(/^[#]/, '').replace(/^MF-/, '').trim();
+      return o.id === cleanId || oNum === cleanNum || o.orderNumber === cleanId;
+    });
     if (localMatch) {
       cacheOrderRecord(localMatch);
       return localMatch;
     }
 
-    // 2. Query Firestore by doc ID
+    // 3. Query Firestore by doc ID
     try {
       const snap = await getDoc(doc(db, 'orders', cleanId));
       if (snap.exists()) {
         const ord = { id: snap.id, ...snap.data() } as Order;
-        this.saveLocalOrder(ord);
+        cacheOrderRecord(ord);
         return ord;
       }
-    } catch (e) {
-      console.warn('Order fetch error by doc ID:', e);
+    } catch {
+      // Continue
     }
 
-    // 3. Query Firestore by orderNumber
-    try {
-      const q = query(collection(db, 'orders'), where('orderNumber', '==', cleanId.toUpperCase()), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
-        this.saveLocalOrder(ord);
-        return ord;
+    // 4. Query Firestore by orderNumber
+    const searchVariants = [
+      cleanId,
+      `#${cleanNum}`,
+      `MF-${cleanNum}`,
+      cleanNum,
+    ].filter(Boolean);
+
+    for (const v of searchVariants) {
+      try {
+        const q = query(collection(db, 'orders'), where('orderNumber', '==', v), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
+          cacheOrderRecord(ord);
+          return ord;
+        }
+      } catch {
+        // Continue
       }
-    } catch (e) {
-      console.warn('Order fetch error by orderNumber:', e);
     }
 
     return null;
   },
 
-  // Track order by Order Number and/or Phone Number (Multi-strategy & 100% forgiving)
+  // Track order by Order Number and/or Phone Number (Strict identity isolation - never leaks other orders)
   async trackOrder(orderQuery: string, phoneQuery?: string): Promise<Order | null> {
     try {
       const rawOrder = (orderQuery || '').trim();
-      const cleanOrderNumber = rawOrder.replace(/^#/, '').trim().toUpperCase();
       const cleanDigits = rawOrder.replace(/[^0-9]/g, '');
-      const cleanPhone = (phoneQuery || '').trim().replace(/[^0-9]/g, '');
+      const cleanOrderNumber = rawOrder.replace(/^[#]/, '').replace(/^MF-/, '').trim().toUpperCase();
+      const rawPhone = (phoneQuery || '').trim().replace(/[^0-9]/g, '');
+      const cleanPhoneDigits = rawPhone.length >= 10 ? rawPhone.slice(-10) : '';
 
-      if (!cleanOrderNumber && !cleanPhone) {
+      if (!cleanOrderNumber && !cleanPhoneDigits) {
         return null;
       }
 
-      // 1. Instant Cache Check (Memory + Local Storage)
-      const cached =
-        cachedOrdersMap.get(rawOrder) ||
-        cachedOrdersMap.get(cleanOrderNumber) ||
-        cachedOrdersMap.get(cleanOrderNumber.toLowerCase()) ||
-        (cleanDigits.length >= 4 ? cachedOrdersMap.get(cleanDigits) : undefined);
+      // Matching helper: strictly matches order against provided criteria
+      const isOrderMatch = (ord: Order): boolean => {
+        const ordRawNum = (ord.orderNumber || '').trim().toUpperCase();
+        const ordCleanNum = ordRawNum.replace(/^[#]/, '').replace(/^MF-/, '').trim();
+        const ordDigits = ordRawNum.replace(/[^0-9]/g, '');
+        const ordDocId = (ord.id || '').trim();
 
-      if (cached) {
-        return cached;
-      }
-
-      const localOrders = this.getLocalOrders();
-      const localMatch = localOrders.find((ord) => {
-        const ordNum = (ord.orderNumber || '').toUpperCase();
-        const ordId = (ord.id || '').toUpperCase();
-        const ordPhone = (ord.customerPhone || '').replace(/[^0-9]/g, '');
-        const shippingPhone = (ord.shippingAddress?.phone || '').replace(/[^0-9]/g, '');
-
-        const orderMatches = Boolean(
+        const orderNumMatches = Boolean(
           cleanOrderNumber &&
-            (ordNum === cleanOrderNumber ||
-              ordId === cleanOrderNumber ||
-              ordNum.replace(/^MF-/, '') === cleanOrderNumber.replace(/^MF-/, '') ||
-              (cleanDigits.length >= 4 && ordNum.includes(cleanDigits)) ||
-              (cleanDigits.length >= 4 && ordId.includes(cleanDigits)))
+          (ordRawNum === cleanOrderNumber ||
+           ordDocId === rawOrder ||
+           ordCleanNum === cleanOrderNumber ||
+           (cleanDigits.length >= 5 && ordDigits === cleanDigits))
         );
 
+        const ordPhone = (ord.customerPhone || '').replace(/[^0-9]/g, '').slice(-10);
+        const shipPhone = (ord.shippingAddress?.phone || '').replace(/[^0-9]/g, '').slice(-10);
         const phoneMatches = Boolean(
-          cleanPhone &&
-            (ordPhone.includes(cleanPhone) ||
-              cleanPhone.includes(ordPhone) ||
-              shippingPhone.includes(cleanPhone) ||
-              (cleanPhone.length >= 8 && ordPhone.slice(-8) === cleanPhone.slice(-8)))
+          cleanPhoneDigits &&
+          (ordPhone === cleanPhoneDigits || shipPhone === cleanPhoneDigits)
         );
 
-        if (cleanOrderNumber && cleanPhone) {
-          return orderMatches || phoneMatches;
+        // If BOTH order number and phone are provided, BOTH MUST MATCH!
+        if (cleanOrderNumber && cleanPhoneDigits) {
+          return orderNumMatches && phoneMatches;
         }
         if (cleanOrderNumber) {
-          return orderMatches;
+          return orderNumMatches;
         }
-        if (cleanPhone) {
+        if (cleanPhoneDigits) {
           return phoneMatches;
         }
         return false;
-      });
+      };
 
+      // 1. Check in local storage
+      const localOrders = this.getLocalOrders();
+      const localMatch = localOrders.find(isOrderMatch);
       if (localMatch) {
         cacheOrderRecord(localMatch);
         return localMatch;
       }
 
-      // 2. Direct Firestore Doc ID lookup
-      if (rawOrder) {
+      // 2. Direct Firestore Doc ID query
+      if (rawOrder && !rawOrder.startsWith('#')) {
         try {
           const docSnap = await getDoc(doc(db, 'orders', rawOrder));
           if (docSnap.exists()) {
             const ord = { id: docSnap.id, ...docSnap.data() } as Order;
-            this.saveLocalOrder(ord);
-            return ord;
+            if (isOrderMatch(ord)) {
+              cacheOrderRecord(ord);
+              return ord;
+            }
           }
         } catch {
-          // ignore
+          // Continue
         }
       }
 
       // 3. Query Firestore by orderNumber variations
       if (cleanOrderNumber) {
         const variants = [
+          `#${cleanOrderNumber}`,
           cleanOrderNumber,
           `MF-${cleanOrderNumber}`,
-          cleanOrderNumber.replace(/^MF-/, ''),
-        ];
-        if (cleanDigits.length >= 5) {
-          variants.push(`MF-${cleanDigits}`);
-        }
+          `#${cleanDigits}`,
+          `MF-${cleanDigits}`,
+        ].filter(Boolean);
 
         for (const variant of variants) {
           try {
-            const q = query(
-              collection(db, 'orders'),
-              where('orderNumber', '==', variant),
-              limit(1)
-            );
+            const q = query(collection(db, 'orders'), where('orderNumber', '==', variant), limit(5));
             const snap = await getDocs(q);
-            if (!snap.empty) {
-              const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
-              this.saveLocalOrder(ord);
-              return ord;
+            for (const d of snap.docs) {
+              const ord = { id: d.id, ...d.data() } as Order;
+              if (isOrderMatch(ord)) {
+                cacheOrderRecord(ord);
+                return ord;
+              }
             }
           } catch {
-            // ignore
+            // Continue
           }
         }
       }
 
-      // 4. Query Firestore by customerPhone
-      if (cleanPhone && cleanPhone.length >= 8) {
-        try {
-          const phoneVariants = [
-            phoneQuery?.trim() || '',
-            cleanPhone,
-            `+88${cleanPhone}`,
-            cleanPhone.startsWith('88') ? cleanPhone.slice(2) : cleanPhone,
-          ].filter(Boolean);
+      // 4. Query Firestore by customerPhone (exact 10 digits match)
+      if (cleanPhoneDigits) {
+        const phoneVariants = [
+          cleanPhoneDigits,
+          `0${cleanPhoneDigits}`,
+          `+880${cleanPhoneDigits}`,
+          `880${cleanPhoneDigits}`,
+        ];
 
-          for (const pv of phoneVariants) {
-            const q = query(
-              collection(db, 'orders'),
-              where('customerPhone', '==', pv),
-              limit(5)
-            );
+        for (const pv of phoneVariants) {
+          try {
+            const q = query(collection(db, 'orders'), where('customerPhone', '==', pv), limit(5));
             const snap = await getDocs(q);
-            if (!snap.empty) {
-              const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
-              this.saveLocalOrder(ord);
-              return ord;
+            for (const d of snap.docs) {
+              const ord = { id: d.id, ...d.data() } as Order;
+              if (isOrderMatch(ord)) {
+                cacheOrderRecord(ord);
+                return ord;
+              }
             }
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // 5. Broad scan in recent orders
-      try {
-        const recentQ = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
-        const recentSnap = await getDocs(recentQ);
-        for (const d of recentSnap.docs) {
-          const ord = { id: d.id, ...d.data() } as Order;
-          this.saveLocalOrder(ord);
-          const ordNum = (ord.orderNumber || '').toUpperCase();
-          const ordId = (ord.id || '').toUpperCase();
-          const ordPhone = (ord.customerPhone || '').replace(/[^0-9]/g, '');
-
-          if (cleanOrderNumber) {
-            if (
-              ordNum === cleanOrderNumber ||
-              ordId === cleanOrderNumber ||
-              ordNum.replace(/^MF-/, '') === cleanOrderNumber.replace(/^MF-/, '') ||
-              (cleanDigits.length >= 4 && ordNum.includes(cleanDigits))
-            ) {
-              return ord;
-            }
-          } else if (cleanPhone && (ordPhone.includes(cleanPhone) || ordPhone.slice(-8) === cleanPhone.slice(-8))) {
-            return ord;
+          } catch {
+            // Continue
           }
         }
-      } catch {
-        // ignore
       }
 
       return null;
     } catch (e) {
-      console.warn('Track order error:', e);
+      console.warn('Track order lookup exception:', e);
       return null;
     }
   },
@@ -796,7 +787,7 @@ export const orderService = {
       snap.forEach((d) => {
         const ord = { id: d.id, ...d.data() } as Order;
         orderMap.set(d.id, ord);
-        this.saveLocalOrder(ord);
+        cacheOrderRecord(ord);
       });
     } catch (e) {
       console.warn('Admin remote orders notice (using local-first):', e);

@@ -514,12 +514,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                         <div className="text-xs flex-1">
                           <div className="flex items-center justify-between">
                             <p className="font-bold text-neutral-900">{zone.name}</p>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-600 bg-neutral-100 px-2 py-0.5 rounded">
-                              {isInside ? 'Inside Dhaka' : 'Outside Dhaka'}
-                            </span>
+                            <span className="font-bold text-neutral-900 text-xs">৳{zone.charge}</span>
                           </div>
-                          <p className="text-neutral-500 text-[11px] mt-0.5">{zone.estimatedDays}</p>
-                          <p className="font-bold text-neutral-900 mt-1">৳{zone.charge}</p>
+                          <p className="text-neutral-500 text-[11px] mt-1">{zone.estimatedDays}</p>
                         </div>
                       </label>
                     );

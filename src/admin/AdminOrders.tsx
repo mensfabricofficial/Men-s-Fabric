@@ -28,6 +28,7 @@ import { Order, OrderStatus, PaymentStatus, PaymentMethod } from '../types';
 import { orderService } from '../services/orderService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
+import { printElementById } from '../lib/printHelper';
 import { BrandLogo } from '../components/common/BrandLogo';
 
 export const AdminOrders: React.FC = () => {
@@ -132,7 +133,11 @@ export const AdminOrders: React.FC = () => {
   };
 
   const handlePrintInvoice = () => {
-    window.print();
+    if (selectedOrder) {
+      printElementById('printable-invoice-container', `Invoice-${selectedOrder.orderNumber}`);
+    } else {
+      window.print();
+    }
   };
 
   const filteredOrders = orders.filter((o) => {
@@ -450,7 +455,7 @@ export const AdminOrders: React.FC = () => {
                 {/* Print Button */}
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={handlePrintInvoice}
                   className="px-3.5 py-1.5 bg-black hover:bg-neutral-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                   <Printer className="w-3.5 h-3.5" />

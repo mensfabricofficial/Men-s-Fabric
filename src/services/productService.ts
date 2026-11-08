@@ -129,24 +129,31 @@ export const productService = {
       firestoreUnsub = onSnapshot(
         q,
         (snap) => {
-          if (!snap.empty) {
-            const list: Product[] = [];
-            snap.forEach((d) => {
-              const data = d.data() as Product;
-              if (data.active !== false) {
-                const prod = { ...data, id: d.id };
-                list.push(prod);
-                cacheProductRecord(prod);
-              }
-            });
-            list.sort((a, b) => {
-              const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
-              const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
-              return timeB - timeA;
-            });
-            this.saveLocalProducts(list);
-            callback(list);
-          }
+          const remoteList: Product[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Product;
+            if (data.active !== false) {
+              const prod = { ...data, id: d.id };
+              remoteList.push(prod);
+              cacheProductRecord(prod);
+            }
+          });
+
+          // Merge remote items with local items
+          const localItems = this.getLocalProducts().filter((p) => p.active !== false);
+          const map = new Map<string, Product>();
+          remoteList.forEach((p) => map.set(p.id, p));
+          localItems.forEach((p) => {
+            if (!map.has(p.id)) map.set(p.id, p);
+          });
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => {
+            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+            return timeB - timeA;
+          });
+          this.saveLocalProducts(merged);
+          callback(merged);
         },
         (err) => {
           console.warn('Real-time active products remote notice (using local-first):', err);
@@ -187,21 +194,28 @@ export const productService = {
       firestoreUnsub = onSnapshot(
         colRef,
         (snap) => {
-          if (!snap.empty) {
-            const list: Product[] = [];
-            snap.forEach((d) => {
-              const prod = { ...(d.data() as Product), id: d.id };
-              list.push(prod);
-              cacheProductRecord(prod);
-            });
-            list.sort((a, b) => {
-              const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
-              const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
-              return timeB - timeA;
-            });
-            this.saveLocalProducts(list);
-            callback(list);
-          }
+          const remoteList: Product[] = [];
+          snap.forEach((d) => {
+            const prod = { ...(d.data() as Product), id: d.id };
+            remoteList.push(prod);
+            cacheProductRecord(prod);
+          });
+
+          // Merge with local items
+          const localItems = this.getLocalProducts();
+          const map = new Map<string, Product>();
+          remoteList.forEach((p) => map.set(p.id, p));
+          localItems.forEach((p) => {
+            if (!map.has(p.id)) map.set(p.id, p);
+          });
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => {
+            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+            return timeB - timeA;
+          });
+          this.saveLocalProducts(merged);
+          callback(merged);
         },
         (err) => {
           console.warn('Admin real-time products remote notice (using local-first):', err);
@@ -474,13 +488,14 @@ export const productService = {
       ...data,
       id: newId,
       totalStock,
+      active: data.active !== false,
       createdAt: new Date().toISOString() as any,
       updatedAt: new Date().toISOString() as any,
     };
 
     // Save to local catalog immediately (0ms responsiveness)
     const current = this.getLocalProducts();
-    const updated = [newProduct, ...current];
+    const updated = [newProduct, ...current.filter((p) => p.id !== newId)];
     this.saveLocalProducts(updated);
 
     // Attempt remote Firestore persistence with explicit ID matching local
@@ -489,6 +504,7 @@ export const productService = {
         ...data,
         id: newId,
         totalStock,
+        active: data.active !== false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -514,6 +530,7 @@ export const productService = {
         return {
           ...p,
           ...data,
+          ...(data.active !== undefined ? { active: Boolean(data.active) } : {}),
           ...(totalStock !== undefined ? { totalStock } : {}),
           updatedAt: new Date().toISOString() as any,
         };
@@ -526,6 +543,7 @@ export const productService = {
     try {
       const payload = sanitizeForFirestore({
         ...data,
+        ...(data.active !== undefined ? { active: Boolean(data.active) } : {}),
         ...(totalStock !== undefined ? { totalStock } : {}),
         updatedAt: serverTimestamp(),
       });

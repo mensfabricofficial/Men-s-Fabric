@@ -4,6 +4,8 @@ import { Order } from '../../types';
 import { BrandLogo } from './BrandLogo';
 import { Barcode } from './Barcode';
 
+import { printElementById } from '../../lib/printHelper';
+
 interface A4InvoiceModalProps {
   order: Order;
   isOpen: boolean;
@@ -13,8 +15,12 @@ interface A4InvoiceModalProps {
 export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, onClose }) => {
   if (!isOpen) return null;
 
+  const displayOrderNumber = order.orderNumber?.startsWith('#')
+    ? order.orderNumber
+    : `#${order.orderNumber}`;
+
   const handlePrint = () => {
-    window.print();
+    printElementById('printable-customer-invoice', `Invoice-${order.orderNumber}`);
   };
 
   const isCod = order.paymentMethod === 'cod';
@@ -34,7 +40,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
             <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
               Official A4 Customer Invoice
             </span>
-            <span className="font-mono text-xs font-bold text-neutral-500">#{order.orderNumber}</span>
+            <span className="font-mono text-xs font-bold text-neutral-500">{displayOrderNumber}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -106,7 +112,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
               <span className="inline-block text-[10px] font-mono uppercase font-black bg-black text-white px-2.5 py-1 rounded">
                 TAX INVOICE
               </span>
-              <p className="text-lg font-black font-mono text-black">{order.orderNumber}</p>
+              <p className="text-lg font-black font-mono text-black">{displayOrderNumber}</p>
               <p className="text-[11px] text-neutral-500">
                 Date: {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleDateString('en-BD') : new Date().toLocaleDateString('en-BD')}
               </p>

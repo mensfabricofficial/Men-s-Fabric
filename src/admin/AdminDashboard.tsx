@@ -15,7 +15,11 @@ import {
   TrendingUp,
   Truck,
   Eye,
-  Calendar
+  Calendar,
+  Wallet,
+  Coins,
+  BarChart3,
+  Sparkles
 } from 'lucide-react';
 import { collection, getDocs, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -169,14 +173,74 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
     loadAllDashboardData();
   };
 
-  // Derived real metrics
+  // Helper to parse date from order createdAt
+  const getOrderDate = (ord: Order): Date | null => {
+    if (!ord.createdAt) return null;
+    if (typeof (ord.createdAt as any).toDate === 'function') {
+      return (ord.createdAt as any).toDate();
+    }
+    if (typeof (ord.createdAt as any).toMillis === 'function') {
+      return new Date((ord.createdAt as any).toMillis());
+    }
+    if ((ord.createdAt as any).seconds) {
+      return new Date((ord.createdAt as any).seconds * 1000);
+    }
+    const d = new Date(ord.createdAt as any);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const now = new Date();
+  const isToday = (d: Date | null) => {
+    if (!d) return false;
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth() === now.getMonth() &&
+           d.getDate() === now.getDate();
+  };
+  const isThisMonth = (d: Date | null) => {
+    if (!d) return false;
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth() === now.getMonth();
+  };
+
+  const validOrders = orders.filter((o) => o.orderStatus !== 'cancelled');
+
+  // Product cost lookup map
+  const productCostMap = new Map<string, number>();
+  products.forEach((p) => {
+    if (p.id && typeof p.costPrice === 'number') {
+      productCostMap.set(p.id, p.costPrice);
+    }
+  });
+
+  const getOrderCost = (ord: Order): number => {
+    return (ord.items || []).reduce((sum, item) => {
+      const unitCost = productCostMap.get(item.productId) ?? (item.unitPrice * 0.6);
+      return sum + (unitCost * (item.quantity || 1));
+    }, 0);
+  };
+
+  // 1. Today's Metrics
+  const todayOrders = validOrders.filter((o) => isToday(getOrderDate(o)));
+  const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const todayCost = todayOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
+  const todayProfit = Math.max(0, todayRevenue - todayCost);
+  const todayOrdersCount = todayOrders.length;
+
+  // 2. This Month's Metrics
+  const monthOrders = validOrders.filter((o) => isThisMonth(getOrderDate(o)));
+  const monthRevenue = monthOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const monthCost = monthOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
+  const monthProfit = Math.max(0, monthRevenue - monthCost);
+  const monthOrdersCount = monthOrders.length;
+
+  // 3. All-Time Operational Metrics
   const totalOrders = orders.length;
   const pendingOrders = orders.filter((o) => o.orderStatus === 'pending').length;
   const processingOrders = orders.filter((o) => o.orderStatus === 'processing' || o.orderStatus === 'confirmed').length;
   const deliveredOrders = orders.filter((o) => o.orderStatus === 'delivered').length;
-  const totalRevenue = orders
-    .filter((o) => o.orderStatus !== 'cancelled')
-    .reduce((sum, o) => sum + (o.total || 0), 0);
+  const totalRevenue = validOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const totalCost = validOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
+  const totalProfit = Math.max(0, totalRevenue - totalCost);
   const totalProducts = products.length;
   const lowStockProducts = products.filter((p) => (p.totalStock || 0) < 5).length;
 
@@ -201,12 +265,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-              Store Performance & Overview
+              Store Performance & Financials
             </h1>
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Live synchronized" />
           </div>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Real-time store metrics directly from Firestore & persistent order catalog.
+            Real-time store metrics, sales revenue, costs, and profit calculated directly from orders.
             {lastRefreshed && <span className="ml-2 font-mono text-[11px] text-neutral-400">Synced at {lastRefreshed}</span>}
           </p>
         </div>
@@ -231,7 +295,80 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         </div>
       </div>
 
-      {/* Metrics Grid */}
+      {/* PRIMARY SALES & FINANCIAL METRICS (Today Sales, Monthly Sales, COGS Cost, Net Profit) */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 flex items-center gap-1.5">
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Sales & Profit Overview</span>
+          </span>
+          <span className="text-[11px] text-neutral-400 font-mono">Currency: ৳ (BDT)</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          
+          {/* Today's Sales */}
+          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black transition-all">
+            <div className="flex items-center justify-between text-neutral-500 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Today's Sales</span>
+              <Calendar className="w-4 h-4 text-neutral-700" />
+            </div>
+            <p className="text-2xl font-black text-neutral-900 font-mono">
+              ৳{todayRevenue.toLocaleString('en-BD')}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-1 flex items-center justify-between">
+              <span>{todayOrdersCount} orders placed today</span>
+              <span className="font-semibold text-emerald-700">Profit: ৳{todayProfit.toLocaleString('en-BD')}</span>
+            </p>
+          </div>
+
+          {/* This Month's Sales */}
+          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black transition-all">
+            <div className="flex items-center justify-between text-neutral-500 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider">This Month's Sales</span>
+              <TrendingUp className="w-4 h-4 text-emerald-600" />
+            </div>
+            <p className="text-2xl font-black text-neutral-900 font-mono">
+              ৳{monthRevenue.toLocaleString('en-BD')}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-1 flex items-center justify-between">
+              <span>{monthOrdersCount} monthly orders</span>
+              <span className="font-semibold text-emerald-700">Profit: ৳{monthProfit.toLocaleString('en-BD')}</span>
+            </p>
+          </div>
+
+          {/* Product Cost (COGS) */}
+          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-neutral-400 transition-all">
+            <div className="flex items-center justify-between text-neutral-500 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Total Product Cost</span>
+              <Coins className="w-4 h-4 text-amber-600" />
+            </div>
+            <p className="text-2xl font-black text-neutral-900 font-mono">
+              ৳{totalCost.toLocaleString('en-BD')}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-1">
+              Manufacturing & unit purchase cost (COGS)
+            </p>
+          </div>
+
+          {/* Net Profit */}
+          <div className="bg-emerald-50/60 p-5 rounded-xl border border-emerald-300 shadow-xs hover:border-emerald-600 transition-all">
+            <div className="flex items-center justify-between text-emerald-800 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Estimated Net Profit</span>
+              <Wallet className="w-4 h-4 text-emerald-700" />
+            </div>
+            <p className="text-2xl font-black text-emerald-950 font-mono">
+              ৳{totalProfit.toLocaleString('en-BD')}
+            </p>
+            <p className="text-[11px] text-emerald-800 font-semibold mt-1">
+              Gross Revenue minus Product Costs ({totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0}% margin)
+            </p>
+          </div>
+
+        </div>
+      </div>
+
+      {/* SECONDARY OPERATIONAL METRICS (Total Orders, Pending, Revenue, Inventory) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Total Orders */}
@@ -270,7 +407,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         {/* Real Revenue */}
         <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs">
           <div className="flex items-center justify-between text-emerald-700 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Gross Revenue</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">All-Time Revenue</span>
             <DollarSign className="w-4 h-4" />
           </div>
           <p className="text-2xl font-black text-neutral-900 font-mono">

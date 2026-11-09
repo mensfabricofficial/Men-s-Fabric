@@ -92,13 +92,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         />
       )}
 
-      {/* Admin Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-black text-white flex flex-col justify-between transition-transform duration-300 lg:translate-x-0 lg:static lg:h-screen shrink-0 ${
+      {/* Admin Sidebar - Permanently pinned and sticky on desktop */}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-black text-white flex flex-col justify-between transition-transform duration-300 lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen shrink-0 ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
       }`}>
-        <div>
+        <div className="flex flex-col flex-1 min-h-0">
           {/* Logo & Brand Header */}
-          <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
+          <div className="p-4 border-b border-neutral-800 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               <BrandLogo variant="light" size="sm" />
             </div>
@@ -107,8 +107,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </span>
           </div>
 
-          {/* Navigation Items */}
-          <nav className="p-3 space-y-1">
+          {/* Navigation Items - Scrollable if screen is short */}
+          <nav className="p-3 space-y-1 overflow-y-auto flex-1 custom-scrollbar">
             {menuItems.map((item) => (
               <button
                 key={item.id}

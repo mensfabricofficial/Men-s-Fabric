@@ -495,28 +495,46 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   })
                   .map((zone) => {
                     const isInside = zone.id === 'dhaka' || zone.name.toLowerCase().includes('inside');
+                    const isSelected = selectedZone?.id === zone.id;
+                    const zoneTitle = isInside ? 'Inside Dhaka City' : 'Outside Dhaka (Nationwide)';
+                    const timingBadge = isInside ? '1–2 Days Express Delivery' : '2–4 Days Nationwide Courier';
+                    const detailDesc = isInside
+                      ? 'Fast home delivery to your doorstep within 24–48 hours. Cash on delivery available.'
+                      : 'Doorstep courier service covering all 64 districts across Bangladesh via Steadfast / Pathao.';
+
                     return (
                       <label
                         key={zone.id}
-                        className={`flex items-start gap-3 p-4 border rounded-xl cursor-pointer transition-all ${
-                          selectedZone?.id === zone.id
-                            ? 'border-black bg-neutral-50 ring-1 ring-black'
-                            : 'border-neutral-200 bg-white hover:border-neutral-400'
+                        className={`relative flex items-start gap-3.5 p-4 rounded-xl cursor-pointer border transition-all duration-200 ${
+                          isSelected
+                            ? 'border-neutral-900 bg-neutral-50/90 ring-1 ring-neutral-900 shadow-xs'
+                            : 'border-neutral-200 bg-white hover:border-neutral-400 hover:bg-neutral-50/30'
                         }`}
                       >
                         <input
                           type="radio"
                           name="deliveryZone"
-                          checked={selectedZone?.id === zone.id}
+                          checked={isSelected}
                           onChange={() => setSelectedZone(zone)}
-                          className="mt-0.5 accent-black cursor-pointer"
+                          className="mt-1 accent-black cursor-pointer shrink-0"
                         />
-                        <div className="text-xs flex-1">
-                          <div className="flex items-center justify-between">
-                            <p className="font-bold text-neutral-900">{zone.name}</p>
-                            <span className="font-bold text-neutral-900 text-xs">৳{zone.charge}</span>
+                        <div className="flex-1 text-xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="font-bold text-neutral-900 text-sm tracking-tight">{zoneTitle}</p>
+                              <span className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                isSelected ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'
+                              }`}>
+                                {timingBadge}
+                              </span>
+                            </div>
+                            <span className="font-black text-neutral-900 text-base font-mono shrink-0">
+                              ৳{zone.charge}
+                            </span>
                           </div>
-                          <p className="text-neutral-500 text-[11px] mt-1">{zone.estimatedDays}</p>
+                          <p className="text-neutral-500 text-[11px] leading-relaxed mt-2.5 pt-2 border-t border-neutral-100">
+                            {detailDesc}
+                          </p>
                         </div>
                       </label>
                     );

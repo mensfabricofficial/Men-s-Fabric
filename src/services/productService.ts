@@ -53,6 +53,7 @@ const CATEGORY_UPDATE_EVENT = 'mf_categories_updated';
 
 // In-memory catalog cache for instantaneous zero-latency product navigation
 const cachedProductsMap = new Map<string, Product>();
+let lastFirestoreSyncStatus: { ok: boolean; error?: string } = { ok: true };
 
 export const cacheProductRecord = (prod: Product) => {
   if (!prod || !prod.id) return;
@@ -509,8 +510,15 @@ export const productService = {
         updatedAt: serverTimestamp(),
       });
       await setDoc(doc(db, 'products', newId), payload, { merge: true });
-    } catch (e) {
+      lastFirestoreSyncStatus = { ok: true };
+    } catch (e: any) {
       console.warn('Remote product save notice (saved to local catalog):', e);
+      lastFirestoreSyncStatus = {
+        ok: false,
+        error: e?.code === 'permission-denied'
+          ? 'Firebase Permission Denied: Your Firestore database rules rejected write access.'
+          : (e?.message || 'Sync failed'),
+      };
     }
 
     return newId;
@@ -548,8 +556,15 @@ export const productService = {
         updatedAt: serverTimestamp(),
       });
       await setDoc(doc(db, 'products', id), payload, { merge: true });
-    } catch (e) {
+      lastFirestoreSyncStatus = { ok: true };
+    } catch (e: any) {
       console.warn('Remote product update notice (saved to local catalog):', e);
+      lastFirestoreSyncStatus = {
+        ok: false,
+        error: e?.code === 'permission-denied'
+          ? 'Firebase Permission Denied: Your Firestore database rules rejected update access.'
+          : (e?.message || 'Update sync failed'),
+      };
     }
   },
 
@@ -651,9 +666,50 @@ export const productService = {
     // 2. Attempt remote Firestore persistence without throwing to caller
     try {
       await deleteDoc(doc(db, 'products', id));
-    } catch (e) {
+      lastFirestoreSyncStatus = { ok: true };
+    } catch (e: any) {
       console.warn('Remote product delete notice (removed from local catalog):', e);
+      lastFirestoreSyncStatus = {
+        ok: false,
+        error: e?.code === 'permission-denied'
+          ? 'Firebase Permission Denied: Your Firestore database rules rejected delete access.'
+          : (e?.message || 'Delete sync failed'),
+      };
     }
+  },
+
+  // Get last Firestore sync status
+  getLastSyncStatus(): { ok: boolean; error?: string } {
+    return lastFirestoreSyncStatus;
+  },
+
+  // Bulk-sync all locally created products to remote Firestore
+  async syncAllProductsToFirestore(): Promise<{ success: number; failed: number; error?: string }> {
+    const list = this.getLocalProducts();
+    let success = 0;
+    let failed = 0;
+    let lastErr = '';
+
+    for (const p of list) {
+      try {
+        const payload = sanitizeForFirestore({
+          ...p,
+          active: p.active !== false,
+          totalStock: typeof p.totalStock === 'number' ? p.totalStock : 0,
+          updatedAt: serverTimestamp(),
+        });
+        await setDoc(doc(db, 'products', p.id), payload, { merge: true });
+        success++;
+      } catch (err: any) {
+        failed++;
+        lastErr = err?.code === 'permission-denied'
+          ? 'Firebase Permission Denied in Firestore Rules'
+          : (err?.message || 'Sync failed');
+      }
+    }
+
+    lastFirestoreSyncStatus = failed === 0 ? { ok: true } : { ok: false, error: lastErr };
+    return { success, failed, error: lastErr };
   },
 
   // Categories

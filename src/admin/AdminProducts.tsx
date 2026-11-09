@@ -12,7 +12,13 @@ import {
   Eye,
   Sliders,
   DollarSign,
-  Package
+  Package,
+  RefreshCw,
+  ShieldAlert,
+  Cloud,
+  ExternalLink,
+  Copy,
+  CheckCircle2
 } from 'lucide-react';
 import { Product, Category, ProductColor, ProductVariant } from '../types';
 import { productService } from '../services/productService';
@@ -26,6 +32,12 @@ export const AdminProducts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
+
+  // Firebase Sync State
+  const [syncingCloud, setSyncingCloud] = useState(false);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [copiedRules, setCopiedRules] = useState(false);
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -310,6 +322,11 @@ export const AdminProducts: React.FC = () => {
         setActionToast(`Product "${name}" created successfully.`);
       }
 
+      const syncStatus = productService.getLastSyncStatus();
+      if (!syncStatus.ok) {
+        setSyncStatusMessage(`⚠️ Firebase Rules Notice: Product "${name}" was saved locally, but Firebase Cloud rejected the upload (${syncStatus.error}). Mobile view cannot see this product until you add your email to Firestore Rules in Firebase Console.`);
+      }
+
       setModalOpen(false);
       setTimeout(() => setActionToast(null), 3500);
       await loadData();
@@ -409,6 +426,100 @@ export const AdminProducts: React.FC = () => {
     }
   };
 
+  const RECOMMENDED_RULES_SNIPPET = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.uid == 'HvhASQq3i8M7cFdrHRTC7f6hbuH3' ||
+        request.auth.uid == 'lw3mX9AivNduzBGundo3rB2jZcp2' ||
+        request.auth.token.admin == true ||
+        request.auth.token.email in [
+          'mensfabricofficial@gmail.com',
+          'admin@mensfabric.com',
+          'me@admin.com'
+        ]
+      );
+    }
+
+    // Products: Public can read active garments, Admin has full write access
+    match /products/{productId} {
+      allow read: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalStock', 'variants', 'updatedAt']);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /deliveryZones/{zoneId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'updatedAt']);
+    }
+
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}`;
+
+  const handleCopyRules = () => {
+    navigator.clipboard.writeText(RECOMMENDED_RULES_SNIPPET);
+    setCopiedRules(true);
+    setTimeout(() => setCopiedRules(false), 2500);
+  };
+
+  const handleSyncToCloud = async () => {
+    setSyncingCloud(true);
+    setSyncStatusMessage(null);
+    try {
+      const res = await productService.syncAllProductsToFirestore();
+      if (res.failed > 0) {
+        setSyncStatusMessage(`⚠️ Firebase Permission Notice: Uploaded ${res.success} products, but ${res.failed} rejected (${res.error}). To allow mobile visitors to see your products, update your Firebase Firestore Rules.`);
+      } else {
+        setSyncStatusMessage(`✅ Success! All ${res.success} products are uploaded to Firebase Cloud! Now visible across all devices & phones.`);
+        setTimeout(() => setSyncStatusMessage(null), 6000);
+      }
+    } catch (e: any) {
+      setSyncStatusMessage(`Sync error: ${e?.message || 'Unknown error'}`);
+    } finally {
+      setSyncingCloud(false);
+    }
+  };
+
   const filteredProducts = products.filter((p) => {
     if (filterCat !== 'all' && p.category !== filterCat) return false;
     if (search.trim()) {
@@ -432,7 +543,30 @@ export const AdminProducts: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Sync All to Cloud Button */}
+          <button
+            type="button"
+            onClick={handleSyncToCloud}
+            disabled={syncingCloud}
+            className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-neutral-300"
+            title="Upload all locally saved products to Firebase Cloud so mobile devices see them"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncingCloud ? 'animate-spin' : ''}`} />
+            <span>{syncingCloud ? 'Syncing...' : 'Sync to Cloud (মোবাইলে দেখানোর জন্য)'}</span>
+          </button>
+
+          {/* Firebase Rules Guide Button */}
+          <button
+            type="button"
+            onClick={() => setShowRulesModal(true)}
+            className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-neutral-300"
+            title="View Firebase Security Rules configuration"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-neutral-700" />
+            <span>Firebase Rules</span>
+          </button>
+
           <button
             onClick={openAddModal}
             className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
@@ -442,6 +576,38 @@ export const AdminProducts: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Sync Status Banner */}
+      {syncStatusMessage && (
+        <div className={`p-4 rounded-xl text-xs flex items-start justify-between gap-3 ${
+          syncStatusMessage.startsWith('✅')
+            ? 'bg-emerald-50 border border-emerald-300 text-emerald-900'
+            : 'bg-amber-50 border border-amber-300 text-amber-900'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <Cloud className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">{syncStatusMessage}</p>
+              {!syncStatusMessage.startsWith('✅') && (
+                <button
+                  type="button"
+                  onClick={() => setShowRulesModal(true)}
+                  className="mt-1 font-bold underline hover:text-black cursor-pointer inline-flex items-center gap-1"
+                >
+                  Click here to view the 1-minute Firebase Console Rules update guide →
+                </button>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSyncStatusMessage(null)}
+            className="p-1 hover:bg-black/5 rounded text-neutral-500 hover:text-black cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-xl border border-neutral-200 shadow-xs flex flex-col sm:flex-row gap-3">
@@ -1181,6 +1347,88 @@ export const AdminProducts: React.FC = () => {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeleting ? 'Deleting...' : 'Delete Product'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Firebase Rules Configuration Modal */}
+      {showRulesModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 sm:p-7 space-y-4 max-h-[90vh] flex flex-col justify-between">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-neutral-900" />
+                <h3 className="text-sm font-extrabold uppercase tracking-tight text-neutral-900">
+                  Firebase Cloud Database Rules Setup
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRulesModal(false)}
+                className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-400 hover:text-black cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-4 text-xs text-neutral-700 pr-1 flex-1">
+              <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl space-y-1.5">
+                <p className="font-bold text-neutral-900">
+                  📱 কেন ডেস্কটপে প্রোডাক্ট দেখায় কিন্তু মোবাইলে দেখায় না?
+                </p>
+                <p className="text-neutral-600 leading-relaxed text-[11px]">
+                  আপনার Firebase Console-এর ফায়ারস্টোর সিকিউরিটি রুলসে অ্যাডমিন হিসেবে আপনার ইমেইল (<b className="text-neutral-900">mensfabricofficial@gmail.com</b>) অনুমোদন দেওয়া না থাকায় ডাটাবেস ক্লাউডে প্রোডাক্ট সেভ হতে পারছে না। নিচের রুলসটি Firebase Console-এ আপডেট করে Publish করলেই সাথে সাথে মোবাইলেও সব প্রোডাক্ট লাইভ দেখতে পাবেন।
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-neutral-900 uppercase text-[11px] tracking-wider">
+                    সম্পূর্ণ অনুমোদিত ফায়ারস্টোর রুলস (Copy & Paste)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyRules}
+                    className="px-2.5 py-1 bg-black text-white rounded text-[11px] font-bold flex items-center gap-1 hover:bg-neutral-800 cursor-pointer shadow-xs"
+                  >
+                    {copiedRules ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedRules ? 'Copied!' : 'Copy Code'}</span>
+                  </button>
+                </div>
+                <pre className="p-3 bg-neutral-950 text-neutral-100 rounded-xl text-[10px] font-mono overflow-x-auto max-h-56 leading-relaxed border border-neutral-800">
+                  {RECOMMENDED_RULES_SNIPPET}
+                </pre>
+              </div>
+
+              <div className="text-[11px] text-neutral-600 space-y-1">
+                <p className="font-bold text-neutral-800">কিভাবে আপডেট করবেন:</p>
+                <ol className="list-decimal list-inside space-y-0.5 ml-1">
+                  <li><a href="https://console.firebase.google.com/project/men-s-fabric-71eb8/firestore/rules" target="_blank" rel="noreferrer" className="text-blue-600 underline font-semibold">Firebase Console → Firestore Database → Rules</a> এ যান।</li>
+                  <li>সব কোড মুছে দিয়ে উপরের <b>Copy Code</b> বাটনে ক্লিক করা কোডটি পেস্ট করুন।</li>
+                  <li>উপরের ডানপাশে থাকা <b>Publish</b> বাটনে ক্লিক করুন।</li>
+                  <li>তারপর এই পেজে এসে <b>"Sync to Cloud"</b> বাটনে ক্লিক করলেই আপনার সব প্রোডাক্ট ক্লাউডে উঠে যাবে!</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-3 border-t border-neutral-200 shrink-0">
+              <a
+                href="https://console.firebase.google.com/project/men-s-fabric-71eb8/firestore/rules"
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 bg-neutral-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-black text-center flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <span>Open Firebase Console</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowRulesModal(false)}
+                className="px-5 py-2.5 bg-neutral-100 text-neutral-700 text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-neutral-200 cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

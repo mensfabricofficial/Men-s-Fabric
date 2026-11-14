@@ -75,7 +75,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <img
           src={isHovered && secondaryImage ? secondaryImage : primaryImage}
           alt={product.name}
-          loading="lazy"
+          decoding="async"
           className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-103"
         />
 

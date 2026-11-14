@@ -311,12 +311,14 @@ export const settingsService = {
       window.addEventListener('mf_banners_updated', handleLocal);
     }
 
+    let remoteArrived = false;
     let firestoreUnsub: (() => void) | null = null;
     try {
       const q = query(collection(db, 'banners'), where('active', '==', true));
       firestoreUnsub = onSnapshot(
         q,
         (snap) => {
+          remoteArrived = true;
           const list: Banner[] = [];
           snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
           list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -329,6 +331,37 @@ export const settingsService = {
       );
     } catch {
       // ignore
+    }
+
+    // Consume early HTML prefetch for banners if available
+    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
+    if (prefetch?.banners) {
+      Promise.resolve(prefetch.banners)
+        .then((rows) => {
+          if (remoteArrived || !Array.isArray(rows)) return;
+          const parseVal = (v: any): any => {
+            if (!v || typeof v !== 'object') return v;
+            if ('stringValue' in v) return v.stringValue;
+            if ('booleanValue' in v) return v.booleanValue;
+            if ('integerValue' in v) return Number(v.integerValue);
+            if ('doubleValue' in v) return Number(v.doubleValue);
+            return null;
+          };
+          const list: Banner[] = [];
+          for (const row of rows) {
+            const d = row?.document;
+            if (!d?.name || !d?.fields) continue;
+            const b: any = { id: d.name.split('/').pop() };
+            for (const k of Object.keys(d.fields)) b[k] = parseVal(d.fields[k]);
+            list.push(b as Banner);
+          }
+          if (list.length > 0) {
+            list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+            this.saveLocalBanners(list);
+            callback(list);
+          }
+        })
+        .catch(() => {});
     }
 
     return () => {

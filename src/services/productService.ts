@@ -93,6 +93,51 @@ const markPendingSyncId = (id: string, pending: boolean) => {
   }
 };
 
+const getTimeMs = (t: any): number => {
+  if (!t) return 0;
+  if (typeof t.toMillis === 'function') return t.toMillis();
+  if (typeof t.seconds === 'number') return t.seconds * 1000;
+  if (typeof t === 'string') return Date.parse(t) || 0;
+  if (typeof t === 'number') return t;
+  return 0;
+};
+
+const fromFirestoreValue = (v: any): any => {
+  if (!v || typeof v !== 'object') return v;
+  if ('stringValue' in v) return v.stringValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return Number(v.doubleValue);
+  if ('nullValue' in v) return null;
+  if ('timestampValue' in v) return v.timestampValue;
+  if ('arrayValue' in v) return (v.arrayValue?.values || []).map(fromFirestoreValue);
+  if ('mapValue' in v) {
+    const out: Record<string, any> = {};
+    const fields = v.mapValue?.fields || {};
+    for (const k of Object.keys(fields)) out[k] = fromFirestoreValue(fields[k]);
+    return out;
+  }
+  return null;
+};
+
+export const parseRestQueryDocs = (rows: any): Record<string, any>[] => {
+  if (!Array.isArray(rows)) return [];
+  const out: Record<string, any>[] = [];
+  for (const row of rows) {
+    const docObj = row?.document;
+    if (!docObj?.name || !docObj?.fields) continue;
+    const id = docObj.name.split('/').pop();
+    const parsed: Record<string, any> = { id };
+    for (const k of Object.keys(docObj.fields)) {
+      parsed[k] = fromFirestoreValue(docObj.fields[k]);
+    }
+    out.push(parsed);
+  }
+  return out;
+};
+
+let hasRemoteSnapshotArrived = false;
+
 export const cacheProductRecord = (prod: Product) => {
   if (!prod || !prod.id) return;
   cachedProductsMap.set(prod.id, prod);
@@ -111,17 +156,26 @@ export const cacheProductRecord = (prod: Product) => {
 };
 
 export const productService = {
-  // Get persistent local products (purges any legacy demo items)
+  // Get persistent local products (reconstructs deduplicated images[0] from thumbnail)
   getLocalProducts(): Product[] {
     try {
       const saved = localStorage.getItem(LOCAL_PRODUCTS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          // Strictly purge any legacy demo products
-          const realItems = parsed.filter((p) => p && p.id && !DEMO_PRODUCT_IDS.has(p.id));
+          const realItems = parsed
+            .filter((p) => p && p.id && !DEMO_PRODUCT_IDS.has(p.id))
+            .map((p) => ({
+              ...p,
+              images:
+                Array.isArray(p.images) && p.images.length > 0
+                  ? p.images
+                  : p.thumbnail
+                    ? [p.thumbnail]
+                    : [],
+            }));
           if (realItems.length !== parsed.length) {
-            localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(realItems));
+            this.saveLocalProducts(realItems);
           }
           realItems.forEach(cacheProductRecord);
           return realItems;
@@ -133,12 +187,19 @@ export const productService = {
     return [];
   },
 
-  // Save to local storage and notify listeners
+  // Save to local storage with image deduplication to avoid 5MB quota overflow
   saveLocalProducts(list: Product[]) {
     try {
-      localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(list));
+      const compact = list.map((p) => ({
+        ...p,
+        images:
+          p.thumbnail && Array.isArray(p.images) && p.images.length === 1 && p.images[0] === p.thumbnail
+            ? []
+            : p.images,
+      }));
+      localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(compact));
     } catch {
-      // ignore
+      // ignore quota limits (IndexedDB persistentLocalCache handles large catalogs)
     }
     list.forEach(cacheProductRecord);
     if (typeof window !== 'undefined') {
@@ -190,12 +251,9 @@ export const productService = {
           }
 
           const merged = Array.from(map.values());
-          merged.sort((a, b) => {
-            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
-            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
-            return timeB - timeA;
-          });
+          merged.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
 
+          hasRemoteSnapshotArrived = true;
           liveActiveProducts = merged;
           this.saveLocalProducts(merged);
           activeProductListeners.forEach((cb) => cb(merged));
@@ -213,15 +271,38 @@ export const productService = {
     } catch (e) {
       console.warn('Firestore subscription exception:', e);
     }
+
+    // Consume early HTML <head> parallel REST prefetch if snapshot hasn't arrived yet
+    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
+    if (prefetch?.products && !hasRemoteSnapshotArrived) {
+      Promise.resolve(prefetch.products)
+        .then((rows) => {
+          if (hasRemoteSnapshotArrived) return;
+          const docs = parseRestQueryDocs(rows);
+          if (docs.length === 0) return;
+          const prefetched: Product[] = docs.map((d: any) => ({
+            ...d,
+            images: Array.isArray(d.images) && d.images.length > 0 ? d.images : d.thumbnail ? [d.thumbnail] : [],
+          }));
+          prefetched.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+          prefetched.forEach(cacheProductRecord);
+          liveActiveProducts = prefetched;
+          this.saveLocalProducts(prefetched);
+          activeProductListeners.forEach((cb) => cb(prefetched));
+        })
+        .catch(() => {});
+    }
   },
 
   ensureSharedCategoriesListener() {
     if (sharedCategoriesUnsub) return;
+    let remoteCatArrived = false;
     try {
       const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
       sharedCategoriesUnsub = onSnapshot(
         q,
         (snap) => {
+          remoteCatArrived = true;
           const list: Category[] = [];
           snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
           liveCategories = list;
@@ -234,6 +315,20 @@ export const productService = {
       );
     } catch {
       // ignore
+    }
+
+    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
+    if (prefetch?.categories) {
+      Promise.resolve(prefetch.categories)
+        .then((rows) => {
+          if (remoteCatArrived) return;
+          const docs = parseRestQueryDocs(rows) as Category[];
+          if (docs.length === 0) return;
+          liveCategories = docs;
+          this.saveLocalCategories(docs);
+          categoryListeners.forEach((cb) => cb(docs));
+        })
+        .catch(() => {});
     }
   },
 
@@ -879,8 +974,8 @@ export const productService = {
     }
   },
 
-  // Client-side image compression utility: downsamples large camera/phone photos to ~50KB
-  async compressImage(file: File, maxWidth = 1200, quality = 0.82): Promise<string> {
+  // Client-side image compression utility: downsamples large camera/phone photos to ~50KB for instant load
+  async compressImage(file: File, maxWidth = 800, quality = 0.72): Promise<string> {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {

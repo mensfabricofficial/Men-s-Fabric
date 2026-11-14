@@ -17,10 +17,54 @@
     <link rel="icon" type="image/jpeg" href="/assets/aistudio/selvee1_8ff37f5b.jpg" />
     <link rel="apple-touch-icon" href="/assets/aistudio/selvee1_8ff37f5b.jpg" />
     
-    <!-- Google Fonts: Cinzel luxury serif & Plus Jakarta Sans & Syne -->
+    <!-- Preconnect to Google Fonts & Firestore REST API for instant mobile load -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://firestore.googleapis.com">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        try {
+          var base = 'https://firestore.googleapis.com/v1/projects/men-s-fabric-71eb8/databases/(default)/documents';
+          var post = function (sq) {
+            return fetch(base + ':runQuery', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ structuredQuery: sq })
+            }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+          };
+          window.__SELVEE_PREFETCH__ = {
+            products: post({
+              from: [{ collectionId: 'products' }],
+              where: { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: true } } },
+              select: {
+                fields: [
+                  { fieldPath: 'id' }, { fieldPath: 'name' }, { fieldPath: 'slug' }, { fieldPath: 'sku' },
+                  { fieldPath: 'price' }, { fieldPath: 'salePrice' }, { fieldPath: 'thumbnail' },
+                  { fieldPath: 'totalStock' }, { fieldPath: 'sizes' }, { fieldPath: 'colors' },
+                  { fieldPath: 'variants' }, { fieldPath: 'description' },
+                  { fieldPath: 'newArrival' }, { fieldPath: 'bestSeller' }, { fieldPath: 'featured' },
+                  { fieldPath: 'active' }, { fieldPath: 'category' }, { fieldPath: 'categoryName' },
+                  { fieldPath: 'gender' }, { fieldPath: 'fabric' }, { fieldPath: 'brand' }, { fieldPath: 'createdAt' }
+                ]
+              }
+            }),
+            categories: post({
+              from: [{ collectionId: 'categories' }],
+              orderBy: [{ field: { fieldPath: 'sortOrder' }, direction: 'ASCENDING' }]
+            }),
+            banners: post({
+              from: [{ collectionId: 'banners' }],
+              where: { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: true } } }
+            }),
+            settings: fetch(base + '/settings/general')
+              .then(function (r) { return r.ok ? r.json() : null; })
+              .catch(function () { return null; })
+          };
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="bg-white text-neutral-900 antialiased selection:bg-black selection:text-white">
     <div id="root"></div>

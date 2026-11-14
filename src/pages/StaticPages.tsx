@@ -30,19 +30,19 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <div className="border-b border-neutral-200 pb-6 text-center">
             <span className="text-[11px] font-bold uppercase tracking-widest text-neutral-400">Our Heritage & Craft</span>
             <h1 className="text-3xl sm:text-5xl font-extrabold text-neutral-900 tracking-tight mt-1">
-              About MEN'S FABRIC
+              About Selvee
             </h1>
           </div>
           
           <div className="prose text-sm text-neutral-700 leading-relaxed space-y-4">
             <p className="text-base font-medium text-neutral-900">
-              MEN'S FABRIC was founded with a singular conviction: to create uncompromising menswear rooted in authenticity, premium textiles, and effortless modern fits tailored for Bangladesh.
+              Selvee was founded with a singular conviction: to create uncompromising menswear rooted in authenticity, premium textiles, and effortless modern fits tailored for Bangladesh.
             </p>
             <p>
               We source raw long-staple cottons, breathable blended linens, and rich traditional weaves from reputable international and domestic textile mills. Every collar point, sleeve cuff, and seam is measured and stress-tested to endure daily urban life while preserving its graceful drape.
             </p>
             <p>
-              Whether you are looking for an executive formal shirt, an opulent festive panjabi, or an everyday refined casual garment, MEN'S FABRIC is dedicated to understated luxury with transparent value.
+              Whether you are looking for an executive formal shirt, an opulent festive panjabi, or an everyday refined casual garment, Selvee is dedicated to understated luxury with transparent value.
             </p>
           </div>
 
@@ -229,7 +229,7 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <h1 className="text-2xl sm:text-4xl font-extrabold text-neutral-900 tracking-tight mb-4">
             Shipping & Delivery Policy
           </h1>
-          <p>At MEN'S FABRIC, we ensure fast, reliable delivery throughout Bangladesh in partnership with leading express courier networks.</p>
+          <p>At Selvee, we ensure fast, reliable delivery throughout Bangladesh in partnership with leading express courier networks.</p>
           <h3 className="font-bold text-neutral-900 pt-2">Delivery Rates & Coverage</h3>
           <ul className="list-disc pl-5 space-y-1 text-neutral-600">
             <li><b>Inside Dhaka:</b> ৳70 flat delivery fee. Expected within 24 to 48 hours.</li>
@@ -263,7 +263,7 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <h1 className="text-2xl sm:text-4xl font-extrabold text-neutral-900 tracking-tight mb-4">
             Privacy Policy
           </h1>
-          <p>MEN'S FABRIC respects the privacy of our valued clientele. We collect only necessary contact information (name, address, mobile number) exclusively to fulfill your orders and keep you updated on delivery status.</p>
+          <p>Selvee respects the privacy of our valued clientele. We collect only necessary contact information (name, address, mobile number) exclusively to fulfill your orders and keep you updated on delivery status.</p>
           <p>We never sell, rent, or trade customer information to third parties.</p>
         </div>
       )}
@@ -274,8 +274,8 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <h1 className="text-2xl sm:text-4xl font-extrabold text-neutral-900 tracking-tight mb-4">
             Terms & Conditions
           </h1>
-          <p>By placing an order on MEN'S FABRIC, you agree to provide truthful delivery information and honor Cash on Delivery terms upon delivery.</p>
-          <p>All trademarks, fabric designs, logos, and digital imagery are the property of MEN'S FABRIC.</p>
+          <p>By placing an order on Selvee, you agree to provide truthful delivery information and honor Cash on Delivery terms upon delivery.</p>
+          <p>All trademarks, fabric designs, logos, and digital imagery are the property of Selvee.</p>
         </div>
       )}
 

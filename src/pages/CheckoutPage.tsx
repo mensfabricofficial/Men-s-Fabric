@@ -858,7 +858,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-2.5 flex items-center justify-between text-xs first:pt-0">
                     <div className="flex items-center gap-3">
                       <img
-                        src={item.productImage || '/logo.jpg'}
+                        src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={item.productName}
                         className="w-12 h-14 object-cover rounded-lg bg-neutral-100 border border-neutral-200"
                       />

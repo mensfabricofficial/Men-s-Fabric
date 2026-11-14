@@ -487,7 +487,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
             <h3 className="text-sm font-bold uppercase tracking-wider">First-Time Store Setup Checklist</h3>
           </div>
           <p className="text-xs text-neutral-300 max-w-2xl leading-relaxed">
-            Your store is connected to your production Firebase database with NO demo data. Follow these 4 essential steps to launch MEN'S FABRIC:
+            Your store is connected to your production Firebase database with NO demo data. Follow these 4 essential steps to launch Selvee:
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
             <button

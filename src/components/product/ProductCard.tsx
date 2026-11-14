@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { Heart, ShoppingBag, Eye, ChevronUp } from 'lucide-react';
+import { ShoppingBag, Eye, ChevronUp } from 'lucide-react';
 import { Product } from '../../types';
-import { useWishlist } from '../../context/WishlistContext';
 import { useCart } from '../../context/CartContext';
 
 interface ProductCardProps {
@@ -15,17 +14,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onQuickView,
   onNavigate,
 }) => {
-  const { isInWishlist, toggleWishlist } = useWishlist();
   const { addItem } = useCart();
   const [isHovered, setIsHovered] = useState(false);
-  const isWishlisted = isInWishlist(product.id);
 
   const isSale = typeof product.salePrice === 'number' && product.salePrice > 0 && product.salePrice < product.price;
   const currentPrice = isSale ? product.salePrice! : product.price;
   const discountPercent = isSale ? Math.round(((product.price - product.salePrice!) / product.price) * 100) : 0;
   const isOutOfStock = product.totalStock <= 0;
 
-  const primaryImage = product.thumbnail || product.images?.[0] || '/logo.jpg';
+  const primaryImage = product.thumbnail || product.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
   const secondaryImage = product.images?.[1] || primaryImage;
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
@@ -66,11 +63,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     });
   };
 
-  const handleWishlistClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    toggleWishlist(product);
-  };
-
   return (
     <div
       onClick={() => onNavigate(`/product/${product.id}`)}
@@ -87,38 +79,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-103"
         />
 
-        {/* Badges on top-left: Red discount badge overlaid directly on square image */}
+        {/* Badges on top-left: Discount % or Sold Out only (no extra label below discount) */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
           {isOutOfStock ? (
             <span className="bg-neutral-900/90 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-wider uppercase">
               Sold Out
             </span>
           ) : (
-            <>
-              {isSale && (
-                <span className="bg-red-600 text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
-                  -{discountPercent}%
-                </span>
-              )}
-              {product.newArrival && (
-                <span className="bg-white/95 text-black border border-black/20 text-[10px] font-bold px-2 py-0.5 rounded tracking-wider uppercase">
-                  New
-                </span>
-              )}
-            </>
+            isSale && (
+              <span className="bg-red-600 text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
+                -{discountPercent}%
+              </span>
+            )
           )}
         </div>
 
-        {/* Wishlist Button top-right */}
-        <button
-          onClick={handleWishlistClick}
-          aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
-          className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-neutral-700 hover:text-black hover:bg-white transition-all shadow-2xs z-10 cursor-pointer"
-        >
-          <Heart className={`w-4 h-4 transition-colors ${isWishlisted ? 'fill-black text-black' : 'text-neutral-600'}`} />
-        </button>
-
-        {/* Bottom-left ILLIYEEN-style Shopping Bag Icon Button */}
+        {/* Bottom-left Premium White Shopping Bag Icon Button */}
         <button
           onClick={handleQuickAdd}
           disabled={isOutOfStock}

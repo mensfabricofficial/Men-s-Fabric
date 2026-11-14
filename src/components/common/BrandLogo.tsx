@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface BrandLogoProps {
-  variant?: 'dark' | 'light'; // 'dark' = deep black for white/light bg; 'light' = pure white for dark bg
+  variant?: 'dark' | 'light'; // 'dark' = black Selvee for white/light bg; 'light' = white Selvee for dark bg
   className?: string;
   imgClassName?: string;
   alt?: string;
@@ -13,24 +13,24 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   variant = 'dark',
   className = '',
   imgClassName,
-  alt = "MEN'S FABRIC",
+  alt = 'Selvee',
   size = 'md',
 }) => {
   const isLightOnDark = variant === 'light';
 
-  // Size configurations for high-contrast prestige presence
+  // Size configurations for crisp brand presence
   const sizeStyles = {
-    sm: 'h-8 sm:h-9',
-    md: 'h-10 sm:h-12',
-    lg: 'h-12 sm:h-16',
-    xl: 'h-16 sm:h-20',
+    sm: 'h-7 sm:h-8',
+    md: 'h-9 sm:h-11',
+    lg: 'h-11 sm:h-14',
+    xl: 'h-14 sm:h-18',
   }[size];
 
   return (
     <div className={`inline-flex items-center justify-center select-none ${className}`}>
-      {/* Official Brand Logo Image Only */}
+      {/* Official Selvee Wordmark Logo: black on light backgrounds, white on dark backgrounds */}
       <img
-        src="/logo.jpg"
+        src="/assets/aistudio/selvee1_8ff37f5b.jpg"
         alt={alt}
         className={`${imgClassName || sizeStyles} w-auto object-contain transition-all ${
           isLightOnDark
@@ -41,4 +41,3 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     </div>
   );
 };
-

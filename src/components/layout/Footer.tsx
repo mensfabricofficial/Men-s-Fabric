@@ -13,7 +13,7 @@ import {
   Youtube 
 } from 'lucide-react';
 import { SiteSettings } from '../../types';
-import { settingsService, defaultSettings } from '../../services/settingsService';
+import { settingsService, getLocalSettings } from '../../services/settingsService';
 
 import { BrandLogo } from '../common/BrandLogo';
 
@@ -22,10 +22,11 @@ interface FooterProps {
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
-  const [settings, setSettings] = useState<SiteSettings>(defaultSettings);
+  const [settings, setSettings] = useState<SiteSettings>(() => getLocalSettings());
 
   useEffect(() => {
-    settingsService.getSettings().then(setSettings);
+    const unsub = settingsService.subscribeToSettings(setSettings);
+    return () => unsub();
   }, []);
 
   return (
@@ -85,7 +86,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <BrandLogo variant="light" size="lg" />
             </div>
             <p className="text-xs text-neutral-400 leading-relaxed max-w-sm">
-              {settings.storeDescription || "MEN'S FABRIC is a distinguished contemporary menswear brand in Bangladesh. We curate premium textiles, artisanal craftsmanship, and tailored fits."}
+              {settings.storeDescription || "Selvee is a distinguished contemporary menswear brand in Bangladesh. We curate premium textiles, artisanal craftsmanship, and tailored fits."}
             </p>
             
             {/* Contact details */}
@@ -255,7 +256,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
         {/* Bottom copyright & payment methods */}
         <div className="border-t border-neutral-800 mt-12 pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-neutral-500 gap-4">
-          <p>© {new Date().getFullYear()} MEN'S FABRIC. All Rights Reserved. Crafted for Bangladesh.</p>
+          <p>© {new Date().getFullYear()} Selvee. All Rights Reserved. Crafted for Bangladesh.</p>
           <div className="flex items-center gap-3 text-[11px]">
             <span className="bg-neutral-900 border border-neutral-800 px-2.5 py-1 rounded text-neutral-300 font-medium">
               💵 Cash on Delivery

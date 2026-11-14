@@ -693,7 +693,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                       <div key={idx} className="py-2 flex items-center justify-between text-xs">
                         <div className="flex items-center gap-3">
                           <img
-                            src={item.productImage || '/logo.jpg'}
+                            src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                             alt={item.productName}
                             className="w-10 h-12 object-cover rounded bg-neutral-100"
                           />

@@ -7,6 +7,7 @@ import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { CartDrawer } from './components/cart/CartDrawer';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
+import { BrandLogo } from './components/common/BrandLogo';
 
 import { HomePage } from './pages/HomePage';
 import { ShopPage } from './pages/ShopPage';
@@ -138,8 +139,8 @@ const AppContent: React.FC = () => {
     // 404 Not Found Page
     PageComponent = (
       <div className="max-w-xl mx-auto px-4 py-24 text-center">
-        <div className="inline-block bg-black p-2.5 rounded mb-4">
-          <img src="/logo.jpg" alt="MEN'S FABRIC" className="h-9 object-contain" />
+        <div className="mb-4 flex justify-center">
+          <BrandLogo variant="dark" size="md" />
         </div>
         <h1 className="text-4xl font-extrabold text-neutral-900 tracking-tight mb-2">404</h1>
         <p className="text-sm font-semibold uppercase tracking-wider text-neutral-500 mb-6">Page Not Found</p>

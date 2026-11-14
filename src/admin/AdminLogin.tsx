@@ -73,7 +73,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
           className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-white cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to MEN'S FABRIC Store</span>
+          <span>Back to Selvee Store</span>
         </button>
       </div>
 
@@ -88,7 +88,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onNavigateHome }) => {
             Staff & Administrator Login
           </h1>
           <p className="text-xs text-neutral-500">
-            Authorized store management portal for MEN'S FABRIC.
+            Authorized store management portal for Selvee.
           </p>
         </div>
 

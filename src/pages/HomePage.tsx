@@ -10,15 +10,20 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
-  const [banners, setBanners] = useState<Banner[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [newArrivals, setNewArrivals] = useState<Product[]>([]);
+  const initialProducts = productService.getInstantActiveProducts();
+  const initialCategories = productService.getInstantCategories();
+
+  const [banners, setBanners] = useState<Banner[]>(() => settingsService.getLocalBanners().filter((b) => b.active));
+  const [categories, setCategories] = useState<Category[]>(() => (initialCategories || []).filter((c) => c.active));
+  const [newArrivals, setNewArrivals] = useState<Product[]>(() => {
+    if (!initialProducts) return [];
+    const arrivals = initialProducts.filter((p) => p.newArrival);
+    return arrivals.length > 0 ? arrivals.slice(0, 8) : initialProducts.slice(0, 8);
+  });
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(initialProducts === null);
 
   useEffect(() => {
-    setLoadingProducts(true);
-
     // Real-time products subscription
     const unsubProducts = productService.subscribeToActiveProducts((products) => {
       const arrivals = products.filter((p) => p.newArrival);
@@ -95,7 +100,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <span>Elegance Defined • Contemporary Bangladeshi Menswear</span>
               </div>
               <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-none">
-                MEN'S FABRIC
+                SELVEE
               </h1>
               <p className="text-base sm:text-xl text-neutral-400 font-light max-w-xl leading-relaxed">
                 Elevate your presence with meticulously engineered menswear. Experience breathable pure cottons, regal panjabis, and sharp silhouettes tailored for distinction.

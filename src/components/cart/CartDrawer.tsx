@@ -113,7 +113,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                 return (
                   <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-4 flex gap-4 first:pt-0">
                     <img
-                      src={item.productImage || '/logo.jpg'}
+                      src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                       alt={item.productName}
                       onClick={() => {
                         setIsCartDrawerOpen(false);

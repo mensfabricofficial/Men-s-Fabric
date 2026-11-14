@@ -18,8 +18,8 @@ export const ADMIN_CONFIG = {
   ADMIN_EMAIL: "admin@mensfabric.com",
   SECONDARY_ADMIN_EMAILS: ["mensfabricofficial@gmail.com", "me@admin.com"],
   SECONDARY_ADMIN_UIDS: ["lw3mX9AivNduzBGundo3rB2jZcp2", "HvhASQq3i8M7cFdrHRTC7f6hbuH3"],
-  STORE_NAME: "MEN'S FABRIC",
+  STORE_NAME: "Selvee",
   CURRENCY: "৳",
   TIMEZONE: "Asia/Dhaka",
-  OFFICIAL_LOGO: "/logo.jpg"
+  OFFICIAL_LOGO: "/assets/aistudio/selvee1_8ff37f5b.jpg"
 };

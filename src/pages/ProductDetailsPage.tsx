@@ -75,7 +75,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
         if (prod) {
           setProduct(prod);
-          const initialImg = prod.thumbnail || prod.images?.[0] || '/logo.jpg';
+          const initialImg = prod.thumbnail || prod.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
           setSelectedImage(initialImg);
           
           // Default size & color selection
@@ -212,7 +212,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       productId: product.id,
       productName: product.name,
       productSlug: product.slug,
-      productImage: selectedImage || product.thumbnail || '/logo.jpg',
+      productImage: selectedImage || product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg',
       size: selectedSize || 'Standard',
       color: selectedColor || 'Standard',
       quantity,
@@ -290,23 +290,18 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
           {/* Main Display Image */}
           <div className="relative flex-1 aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200">
             <img
-              src={selectedImage || product.thumbnail || '/logo.jpg'}
+              src={selectedImage || product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
               alt={product.name}
               className="w-full h-full object-cover object-center"
             />
             {/* Badges */}
-            <div className="absolute top-4 left-4 flex flex-col gap-1.5 z-10">
-              {isSale && (
+            {isSale && (
+              <div className="absolute top-4 left-4 z-10">
                 <span className="bg-red-600 text-white text-[11px] font-extrabold px-2.5 py-1 rounded tracking-wider uppercase shadow-xs">
                   -{discountPercent}%
                 </span>
-              )}
-              {product.fabric && (
-                <span className="bg-white/95 backdrop-blur-xs text-black border border-neutral-300 text-[10px] font-semibold px-2 py-0.5 rounded tracking-wider">
-                  {product.fabric}
-                </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -315,7 +310,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
           
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs text-neutral-400 font-semibold tracking-wider uppercase">
-              <span>{product.brand || "MEN'S FABRIC"}</span>
+              <span>{product.brand && !/men'?s\s*fabric/i.test(product.brand) ? product.brand : 'Selvee'}</span>
               <span>SKU: {currentSku}</span>
             </div>
 
@@ -460,14 +455,6 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   <Heart className={`w-5 h-5 ${isWishlisted ? 'fill-black' : ''}`} />
                 </button>
               </div>
-
-              <button
-                onClick={() => handleAddToCart(true)}
-                disabled={isOutOfStock}
-                className="w-full py-3.5 bg-neutral-900 text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-black transition-colors shadow-sm disabled:bg-neutral-300 disabled:cursor-not-allowed cursor-pointer"
-              >
-                Instant Checkout
-              </button>
             </div>
 
             {/* Shipping & Assurance Highlights */}
@@ -663,7 +650,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
                 <div>
                   <h3 className="text-sm font-extrabold uppercase tracking-wider text-neutral-900">
-                    MEN'S FABRIC — Size Chart
+                    Selvee — Size Chart
                   </h3>
                   <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest">
                     Precision Fit ({currentGuide?.unit || 'Inches'})

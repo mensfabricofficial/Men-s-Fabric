@@ -266,7 +266,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                 <div key={i} className="py-2.5 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-3">
                     <img
-                      src={item.productImage || '/logo.jpg'}
+                      src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                       alt={item.productName}
                       className="w-10 h-12 object-cover rounded bg-white border border-neutral-200"
                     />

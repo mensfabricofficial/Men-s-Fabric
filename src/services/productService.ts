@@ -38,22 +38,60 @@ const DEMO_PRODUCT_IDS = new Set([
   'prod-chino-pant-402',
 ]);
 
-export const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'panjabi', name: 'Panjabi', slug: 'panjabi', active: true, sortOrder: 1, image: '/assets/aistudio/image_86004842.png' },
-  { id: 'shirts', name: 'Shirts', slug: 'shirts', active: true, sortOrder: 2, image: '/logo.jpg' },
-  { id: 'polos', name: 'T-Shirts & Polos', slug: 'polos', active: true, sortOrder: 3, image: '/logo.jpg' },
-  { id: 'pants', name: 'Pants & Trousers', slug: 'pants', active: true, sortOrder: 4, image: '/logo.jpg' },
-  { id: 'casuals', name: 'Casual Wear', slug: 'casuals', active: true, sortOrder: 5, image: '/logo.jpg' },
-];
+export const DEFAULT_CATEGORIES: Category[] = [];
 
-const LOCAL_PRODUCTS_KEY = 'mf_products_catalog_v2';
-const LOCAL_CATEGORIES_KEY = 'mf_categories_catalog_v2';
-const UPDATE_EVENT_NAME = 'mf_products_updated';
-const CATEGORY_UPDATE_EVENT = 'mf_categories_updated';
+const LOCAL_PRODUCTS_KEY = 'selvee_products_catalog_v3';
+const LOCAL_CATEGORIES_KEY = 'selvee_categories_catalog_v3';
+const LOCAL_PENDING_SYNC_KEY = 'selvee_pending_sync_ids_v1';
+const UPDATE_EVENT_NAME = 'selvee_products_updated';
+const CATEGORY_UPDATE_EVENT = 'selvee_categories_updated';
+
+// Purge legacy MEN'S FABRIC demo localStorage keys on startup
+if (typeof window !== 'undefined') {
+  try {
+    ['mf_products_catalog_v2', 'mf_categories_catalog_v2'].forEach((k) => {
+      if (localStorage.getItem(k)) localStorage.removeItem(k);
+    });
+  } catch {
+    // ignore
+  }
+}
 
 // In-memory catalog cache for instantaneous zero-latency product navigation
 const cachedProductsMap = new Map<string, Product>();
 let lastFirestoreSyncStatus: { ok: boolean; error?: string } = { ok: true };
+
+// Shared singleton live state so page transitions never re-query Firestore or flash old data
+let liveActiveProducts: Product[] | null = null;
+let liveCategories: Category[] | null = null;
+const activeProductListeners = new Set<(products: Product[]) => void>();
+const categoryListeners = new Set<(categories: Category[]) => void>();
+let sharedActiveUnsub: Unsubscribe | null = null;
+let sharedCategoriesUnsub: Unsubscribe | null = null;
+
+const getPendingSyncIds = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(LOCAL_PENDING_SYNC_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed);
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+};
+
+const markPendingSyncId = (id: string, pending: boolean) => {
+  try {
+    const set = getPendingSyncIds();
+    if (pending) set.add(id);
+    else set.delete(id);
+    localStorage.setItem(LOCAL_PENDING_SYNC_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+};
 
 export const cacheProductRecord = (prod: Product) => {
   if (!prod || !prod.id) return;
@@ -108,26 +146,24 @@ export const productService = {
     }
   },
 
-  // Real-time listener for active products (Customer Home & Shop pages)
-  subscribeToActiveProducts(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
-    // 1. Immediately emit local products for 0ms page load
-    const initial = this.getLocalProducts().filter((p) => p.active !== false);
-    callback(initial);
+  // Synchronous instant accessor for zero-skeleton page navigation
+  getInstantActiveProducts(): Product[] | null {
+    if (liveActiveProducts !== null) return liveActiveProducts;
+    const local = this.getLocalProducts().filter((p) => p.active !== false);
+    return local.length > 0 ? local : null;
+  },
 
-    // 2. Listen to local update events
-    const handleLocalUpdate = (e: any) => {
-      const list = (e.detail as Product[]) || this.getLocalProducts();
-      callback(list.filter((p) => p.active !== false));
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
-    }
+  getInstantCategories(): Category[] | null {
+    if (liveCategories !== null) return liveCategories;
+    const local = this.getLocalCategories();
+    return local.length > 0 ? local : null;
+  },
 
-    // 3. Connect to Firestore realtime listener matching security rule: where('active', '==', true)
-    let firestoreUnsub: (() => void) | null = null;
+  ensureSharedActiveListener(onError?: (err: any) => void) {
+    if (sharedActiveUnsub) return;
     try {
       const q = query(collection(db, 'products'), where('active', '==', true));
-      firestoreUnsub = onSnapshot(
+      sharedActiveUnsub = onSnapshot(
         q,
         (snap) => {
           const remoteList: Product[] = [];
@@ -137,47 +173,118 @@ export const productService = {
               const prod = { ...data, id: d.id };
               remoteList.push(prod);
               cacheProductRecord(prod);
+              markPendingSyncId(d.id, false);
             }
           });
 
-          // Merge remote items with local items
-          const localItems = this.getLocalProducts().filter((p) => p.active !== false);
+          // Authoritative remote catalog + only genuinely unsynced local drafts (never stale demo data)
+          const pendingIds = getPendingSyncIds();
           const map = new Map<string, Product>();
           remoteList.forEach((p) => map.set(p.id, p));
-          localItems.forEach((p) => {
-            if (!map.has(p.id)) map.set(p.id, p);
-          });
+          if (pendingIds.size > 0) {
+            this.getLocalProducts()
+              .filter((p) => p.active !== false && pendingIds.has(p.id))
+              .forEach((p) => {
+                if (!map.has(p.id)) map.set(p.id, p);
+              });
+          }
+
           const merged = Array.from(map.values());
           merged.sort((a, b) => {
             const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
             const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
             return timeB - timeA;
           });
+
+          liveActiveProducts = merged;
           this.saveLocalProducts(merged);
-          callback(merged);
+          activeProductListeners.forEach((cb) => cb(merged));
         },
         (err) => {
-          console.warn('Real-time active products remote notice (using local-first):', err);
+          console.warn('Real-time active products remote notice:', err);
+          if (liveActiveProducts === null) {
+            const fallback = this.getLocalProducts().filter((p) => p.active !== false);
+            liveActiveProducts = fallback;
+            activeProductListeners.forEach((cb) => cb(fallback));
+          }
           if (onError) onError(err);
         }
       );
     } catch (e) {
       console.warn('Firestore subscription exception:', e);
     }
+  },
+
+  ensureSharedCategoriesListener() {
+    if (sharedCategoriesUnsub) return;
+    try {
+      const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
+      sharedCategoriesUnsub = onSnapshot(
+        q,
+        (snap) => {
+          const list: Category[] = [];
+          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
+          liveCategories = list;
+          this.saveLocalCategories(list);
+          categoryListeners.forEach((cb) => cb(list));
+        },
+        (err) => {
+          console.warn('Real-time categories remote notice:', err);
+        }
+      );
+    } catch {
+      // ignore
+    }
+  },
+
+  // Real-time listener for active products (Customer Home & Shop pages)
+  subscribeToActiveProducts(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
+    activeProductListeners.add(callback);
+
+    // 1. Emit immediately ONLY if we already have real live/cached products (0ms)
+    const instant = this.getInstantActiveProducts();
+    if (instant !== null) {
+      callback(instant);
+    }
+
+    // 2. Listen to local update events (e.g. instant updates after admin creates a product)
+    const handleLocalUpdate = (e: any) => {
+      const list = ((e.detail as Product[]) || this.getLocalProducts()).filter((p) => p.active !== false);
+      liveActiveProducts = list;
+      callback(list);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
+    }
+
+    // 3. Ensure shared Firestore realtime listener is running
+    this.ensureSharedActiveListener(onError);
+
+    // Safety fallback if first-ever Firestore connection takes >4s
+    const safetyTimer = instant === null
+      ? window.setTimeout(() => {
+          if (liveActiveProducts === null) {
+            callback([]);
+          }
+        }, 4000)
+      : null;
 
     return () => {
+      if (safetyTimer) window.clearTimeout(safetyTimer);
+      activeProductListeners.delete(callback);
       if (typeof window !== 'undefined') {
         window.removeEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
       }
-      if (firestoreUnsub) firestoreUnsub();
     };
   },
 
   // Real-time listener for all products (Admin panel)
   subscribeToAllProductsAdmin(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
-    // 1. Immediately emit local products for instant admin render (0ms delay)
+    // 1. Immediately emit local products if present for instant admin render
     const initial = this.getLocalProducts();
-    callback(initial);
+    if (initial.length > 0) {
+      callback(initial);
+    }
 
     // 2. Listen to local update events
     const handleLocalUpdate = (e: any) => {
@@ -200,15 +307,20 @@ export const productService = {
             const prod = { ...(d.data() as Product), id: d.id };
             remoteList.push(prod);
             cacheProductRecord(prod);
+            markPendingSyncId(d.id, false);
           });
 
-          // Merge with local items
-          const localItems = this.getLocalProducts();
+          const pendingIds = getPendingSyncIds();
           const map = new Map<string, Product>();
           remoteList.forEach((p) => map.set(p.id, p));
-          localItems.forEach((p) => {
-            if (!map.has(p.id)) map.set(p.id, p);
-          });
+          if (pendingIds.size > 0) {
+            this.getLocalProducts()
+              .filter((p) => pendingIds.has(p.id))
+              .forEach((p) => {
+                if (!map.has(p.id)) map.set(p.id, p);
+              });
+          }
+
           const merged = Array.from(map.values());
           merged.sort((a, b) => {
             const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
@@ -220,6 +332,7 @@ export const productService = {
         },
         (err) => {
           console.warn('Admin real-time products remote notice (using local-first):', err);
+          callback(this.getLocalProducts());
           if (onError) onError(err);
         }
       );
@@ -237,44 +350,29 @@ export const productService = {
 
   // Real-time listener for categories
   subscribeToCategories(callback: (categories: Category[]) => void): Unsubscribe {
-    // 1. Immediately emit categories
-    const initial = this.getLocalCategories();
-    callback(initial);
+    categoryListeners.add(callback);
+
+    const instant = this.getInstantCategories();
+    if (instant !== null) {
+      callback(instant);
+    }
 
     const handleLocalCat = (e: any) => {
       const list = (e.detail as Category[]) || this.getLocalCategories();
+      liveCategories = list;
       callback(list);
     };
     if (typeof window !== 'undefined') {
       window.addEventListener(CATEGORY_UPDATE_EVENT, handleLocalCat);
     }
 
-    let firestoreUnsub: (() => void) | null = null;
-    try {
-      const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
-      firestoreUnsub = onSnapshot(
-        q,
-        (snap) => {
-          if (!snap.empty) {
-            const list: Category[] = [];
-            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
-            this.saveLocalCategories(list);
-            callback(list);
-          }
-        },
-        (err) => {
-          console.warn('Real-time categories remote notice (using local):', err);
-        }
-      );
-    } catch {
-      // ignore
-    }
+    this.ensureSharedCategoriesListener();
 
     return () => {
+      categoryListeners.delete(callback);
       if (typeof window !== 'undefined') {
         window.removeEventListener(CATEGORY_UPDATE_EVENT, handleLocalCat);
       }
-      if (firestoreUnsub) firestoreUnsub();
     };
   },
 
@@ -283,17 +381,12 @@ export const productService = {
       const saved = localStorage.getItem(LOCAL_CATEGORIES_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {
       // ignore
     }
-    try {
-      localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(DEFAULT_CATEGORIES));
-    } catch {
-      // ignore
-    }
-    return DEFAULT_CATEGORIES;
+    return [];
   },
 
   saveLocalCategories(list: Category[]) {
@@ -499,6 +592,9 @@ export const productService = {
     const updated = [newProduct, ...current.filter((p) => p.id !== newId)];
     this.saveLocalProducts(updated);
 
+    // Mark pending until remote confirms
+    markPendingSyncId(newId, true);
+
     // Attempt remote Firestore persistence with explicit ID matching local
     try {
       const payload = sanitizeForFirestore({
@@ -510,6 +606,7 @@ export const productService = {
         updatedAt: serverTimestamp(),
       });
       await setDoc(doc(db, 'products', newId), payload, { merge: true });
+      markPendingSyncId(newId, false);
       lastFirestoreSyncStatus = { ok: true };
     } catch (e: any) {
       console.warn('Remote product save notice (saved to local catalog):', e);
@@ -809,7 +906,7 @@ export const productService = {
         img.onerror = () => resolve(result);
         img.src = result;
       };
-      reader.onerror = () => resolve('/logo.jpg');
+      reader.onerror = () => resolve('/assets/aistudio/selvee1_8ff37f5b.jpg');
       reader.readAsDataURL(file);
     });
   },
@@ -830,7 +927,14 @@ export const productService = {
       }
     } catch (err) {
       console.error('Image upload failed:', err);
-      return '/logo.jpg';
+      return '/assets/aistudio/selvee1_8ff37f5b.jpg';
     }
   },
 };
+
+// Immediately warm up public product & category listeners on boot for instant zero-latency rendering
+if (typeof window !== 'undefined') {
+  productService.ensureSharedActiveListener();
+  productService.ensureSharedCategoriesListener();
+}
+

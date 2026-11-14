@@ -140,7 +140,7 @@ export const AdminProducts: React.FC = () => {
     setPrice(1850);
     setSalePrice(undefined);
     setCostPrice(1100);
-    setImages(['/logo.jpg']);
+    setImages(['/assets/aistudio/selvee1_8ff37f5b.jpg']);
     setSizesInput('S, M, L, XL, XXL');
     setColors([
       { name: 'Black', code: '#000000' },
@@ -169,7 +169,7 @@ export const AdminProducts: React.FC = () => {
     setPrice(prod.price);
     setSalePrice(prod.salePrice);
     setCostPrice(prod.costPrice);
-    setImages(prod.images || [prod.thumbnail || '/logo.jpg']);
+    setImages(prod.images || [prod.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg']);
     setSizesInput((prod.sizes || []).join(', '));
     setColors(prod.colors || []);
     setVariants(prod.variants || []);
@@ -266,15 +266,15 @@ export const AdminProducts: React.FC = () => {
       sku: sku.trim(),
       category,
       categoryName: chosenCat?.name || category,
-      brand: "MEN'S FABRIC",
+      brand: 'Selvee',
       gender,
       fabric: fabric.trim(),
       description: description.trim(),
       price: Number(price) || 0,
       salePrice: salePrice ? Number(salePrice) : undefined,
       costPrice: costPrice ? Number(costPrice) : undefined,
-      images: images.length > 0 ? images : ['/logo.jpg'],
-      thumbnail: images[0] || '/logo.jpg',
+      images: images.length > 0 ? images : ['/assets/aistudio/selvee1_8ff37f5b.jpg'],
+      thumbnail: images[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg',
       sizes: parsedSizes,
       colors,
       variants,
@@ -681,7 +681,7 @@ service cloud.firestore {
                       <td className="p-3.5">
                         <div className="flex items-center gap-3">
                           <img
-                            src={p.thumbnail || p.images?.[0] || '/logo.jpg'}
+                            src={p.thumbnail || p.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                             alt={p.name}
                             className="w-10 h-12 object-cover rounded bg-neutral-100 border border-neutral-200 shrink-0"
                           />

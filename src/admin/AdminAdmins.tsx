@@ -241,7 +241,7 @@ export const AdminAdmins: React.FC = () => {
   };
 
   const copyInviteText = (emailToCopy: string, roleTitle: string) => {
-    const text = `Hello! You have been granted ${roleTitle} access to MEN'S FABRIC administration console.\n1. Go to: ${window.location.origin}/account\n2. Sign in or register with: ${emailToCopy}\n3. Access the admin console at: ${window.location.origin}/admin\nDevice Security Key: MF-DEV-2026`;
+    const text = `Hello! You have been granted ${roleTitle} access to Selvee administration console.\n1. Go to: ${window.location.origin}/account\n2. Sign in or register with: ${emailToCopy}\n3. Access the admin console at: ${window.location.origin}/admin\nDevice Security Key: MF-DEV-2026`;
     navigator.clipboard.writeText(text);
     setCopiedKey(emailToCopy);
     setTimeout(() => setCopiedKey(null), 2500);
@@ -286,7 +286,7 @@ export const AdminAdmins: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm sm:text-base tracking-wide">MEN'S FABRIC Official</span>
+                <span className="font-extrabold text-sm sm:text-base tracking-wide">Selvee Official</span>
                 <span className="text-[9px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full">
                   Primary Owner
                 </span>

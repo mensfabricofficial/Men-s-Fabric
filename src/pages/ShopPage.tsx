@@ -20,9 +20,12 @@ interface ShopPageProps {
 }
 
 export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, initialCategory }) => {
-  const [allProducts, setAllProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const initialProducts = productService.getInstantActiveProducts();
+  const initialCategories = productService.getInstantCategories();
+
+  const [allProducts, setAllProducts] = useState<Product[]>(initialProducts || []);
+  const [categories, setCategories] = useState<Category[]>(() => (initialCategories || []).filter((c) => c.active));
+  const [loading, setLoading] = useState(initialProducts === null);
 
   // Filters State
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || '');
@@ -53,8 +56,6 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
 
   // Real-time synchronization
   useEffect(() => {
-    setLoading(true);
-
     const unsubProducts = productService.subscribeToActiveProducts((products) => {
       setAllProducts(products);
       setLoading(false);

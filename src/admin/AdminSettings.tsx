@@ -364,7 +364,7 @@ export const AdminSettings: React.FC = () => {
                     type="text"
                     value={settings.announcementText || ''}
                     onChange={(e) => setSettings({ ...settings, announcementText: e.target.value })}
-                    placeholder="🔥 Welcome to MEN'S FABRIC — Free Shipping on Orders Over ৳2500!"
+                    placeholder="Welcome to Selvee — Save 5% on online payment!"
                     className="w-full px-3.5 py-2.5 bg-white border border-neutral-300 rounded-lg font-medium text-neutral-900 focus:outline-none focus:border-black"
                   />
                   <p className="text-[11px] text-neutral-500 mt-1">

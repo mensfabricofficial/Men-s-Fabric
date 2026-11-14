@@ -98,7 +98,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
                 <BrandLogo variant="dark" className="h-9" />
               </div>
               <h2 className="text-base font-black uppercase tracking-tight text-neutral-900">
-                MEN'S FABRIC <span className="text-xs font-normal text-neutral-500">(Clothing Brand)</span>
+                Selvee <span className="text-xs font-normal text-neutral-500">(Clothing Brand)</span>
               </h2>
               <p className="text-[11px] text-neutral-600">
                 Dhaka, Bangladesh • Official Customer Tax & Delivery Invoice
@@ -313,7 +313,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
 
             <div className="text-left sm:text-right space-y-4">
               <div className="border-b border-neutral-400 w-40 sm:ml-auto pb-1">
-                <span className="font-script text-sm font-bold text-neutral-700 italic">MEN'S FABRIC</span>
+                <span className="font-script text-sm font-bold text-neutral-700 italic">Selvee</span>
               </div>
               <p className="font-bold uppercase tracking-wider text-neutral-800 text-[10px]">
                 Authorized Store Representative

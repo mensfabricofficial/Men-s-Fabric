@@ -40,7 +40,7 @@ export const AdminBanners: React.FC = () => {
     setTitle('ELEGANCE REDEFINED');
     setSubtitle('Experience the finest long-staple cottons and artisanal craftsmanship.');
     setBadge('Autumn / Winter 2026');
-    setImage('/logo.jpg');
+    setImage('/assets/aistudio/selvee1_8ff37f5b.jpg');
     setButtonText('Shop Collection');
     setButtonLink('/shop');
     setSortOrder(banners.length + 1);
@@ -82,7 +82,7 @@ export const AdminBanners: React.FC = () => {
       title: title.trim(),
       subtitle: subtitle.trim(),
       badge: badge.trim(),
-      image: image.trim() || '/logo.jpg',
+      image: image.trim() || '/assets/aistudio/selvee1_8ff37f5b.jpg',
       buttonText: buttonText.trim(),
       buttonLink: buttonLink.trim(),
       sortOrder: Number(sortOrder) || 1,

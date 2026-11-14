@@ -45,26 +45,42 @@ export const defaultPaymentSettings: PaymentSettings = {
 };
 
 export const defaultSettings: SiteSettings = {
-  storeName: "MEN'S FABRIC",
+  storeName: 'Selvee',
   storeDescription: 'Premium clothing brand specializing in curated menswear, shirts, panjabi, and contemporary attire.',
   phone: '+880 1700-000000',
   email: 'mensfabricofficial@gmail.com',
   address: 'Dhaka, Bangladesh',
   whatsapp: '+8801700000000',
-  facebookUrl: 'https://facebook.com/mensfabricofficial',
-  instagramUrl: 'https://instagram.com/mensfabricofficial',
+  facebookUrl: 'https://facebook.com',
+  instagramUrl: 'https://instagram.com',
   youtubeUrl: '',
   tiktokUrl: '',
-  announcementText: '🔥 Welcome to MEN\'S FABRIC — Free Shipping on Orders Over ৳2500!',
+  announcementText: 'Welcome to Selvee — Save 5% on online payment!',
   announcementActive: true,
   freeDeliveryThreshold: 2500,
   paymentSettings: defaultPaymentSettings,
 };
 
-const LOCAL_SETTINGS_KEY = 'mf_site_settings_v2';
-const LOCAL_DELIVERY_ZONES_KEY = 'mf_delivery_zones_v2';
-const LOCAL_BANNERS_KEY = 'mf_banners_catalog_v2';
-const LOCAL_COUPONS_KEY = 'mf_coupons_catalog_v2';
+const normalizeBrandText = (val: string | undefined, fallback = ''): string => {
+  if (!val) return fallback;
+  return val.replace(/men'?s\s*fabric/gi, 'Selvee');
+};
+
+const LOCAL_SETTINGS_KEY = 'selvee_site_settings_v3';
+const LOCAL_DELIVERY_ZONES_KEY = 'selvee_delivery_zones_v3';
+const LOCAL_BANNERS_KEY = 'selvee_banners_catalog_v3';
+const LOCAL_COUPONS_KEY = 'selvee_coupons_catalog_v3';
+
+// Purge legacy MEN'S FABRIC localStorage caches so old demo items never load
+if (typeof window !== 'undefined') {
+  try {
+    ['mf_site_settings_v2', 'mf_delivery_zones_v2', 'mf_banners_catalog_v2', 'mf_coupons_catalog_v2'].forEach((k) => {
+      if (localStorage.getItem(k)) localStorage.removeItem(k);
+    });
+  } catch {
+    // ignore
+  }
+}
 
 export const sortDeliveryZones = (zones: DeliveryZone[]): DeliveryZone[] => {
   return [...zones].sort((a, b) => {
@@ -171,6 +187,9 @@ export const settingsService = {
         const merged = {
           ...local,
           ...data,
+          storeName: normalizeBrandText(data?.storeName, defaultSettings.storeName),
+          announcementText: normalizeBrandText(data?.announcementText, defaultSettings.announcementText),
+          storeDescription: normalizeBrandText(data?.storeDescription, defaultSettings.storeDescription),
           paymentSettings: {
             ...currentPay,
             ...(data?.paymentSettings || {}),
@@ -247,6 +266,9 @@ export const settingsService = {
             const merged = {
               ...local,
               ...data,
+              storeName: normalizeBrandText(data?.storeName, defaultSettings.storeName),
+              announcementText: normalizeBrandText(data?.announcementText, defaultSettings.announcementText),
+              storeDescription: normalizeBrandText(data?.storeDescription, defaultSettings.storeDescription),
               paymentSettings: {
                 ...currentPay,
                 ...(data?.paymentSettings || {}),
@@ -277,7 +299,10 @@ export const settingsService = {
 
   // Realtime banners subscription
   subscribeToBanners(callback: (banners: Banner[]) => void): Unsubscribe {
-    callback(this.getLocalBanners());
+    const local = this.getLocalBanners();
+    if (local.length > 0) {
+      callback(local);
+    }
 
     const handleLocal = (e: any) => {
       callback((e.detail as Banner[]) || this.getLocalBanners());
@@ -292,13 +317,11 @@ export const settingsService = {
       firestoreUnsub = onSnapshot(
         q,
         (snap) => {
-          if (!snap.empty) {
-            const list: Banner[] = [];
-            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
-            list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-            this.saveLocalBanners(list);
-            callback(list);
-          }
+          const list: Banner[] = [];
+          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
+          list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+          this.saveLocalBanners(list);
+          callback(list);
         },
         (err) => {
           console.warn('Realtime banners remote notice (using local-first):', err);

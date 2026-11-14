@@ -505,7 +505,7 @@ export const AdminOrders: React.FC = () => {
                 <div className="max-w-[340px] mx-auto bg-white p-5 border border-dashed border-neutral-300 font-mono text-[11px] text-neutral-900 space-y-3 leading-tight print:border-none print:p-0 print:max-w-none">
                   {/* Store Header */}
                   <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
-                    <p className="font-extrabold text-sm tracking-wider uppercase">MEN'S FABRIC</p>
+                    <p className="font-extrabold text-sm tracking-wider uppercase">Selvee</p>
                     <p className="text-[10px] text-neutral-600 font-sans italic">Clothing Brand • Premium Menswear</p>
                     <p className="text-[10px] text-neutral-600">Dhaka, Bangladesh</p>
                     <p className="text-[10px] text-neutral-600">Hotline: 01700-000000</p>
@@ -624,7 +624,7 @@ export const AdminOrders: React.FC = () => {
                       ||| | |||| | ||| || ||||| | |||
                     </div>
                     <p className="text-[9px] font-mono tracking-widest">{selectedOrder.orderNumber}</p>
-                    <p className="text-[10px] font-bold uppercase pt-1">Thank You For Choosing MEN'S FABRIC!</p>
+                    <p className="text-[10px] font-bold uppercase pt-1">Thank You For Choosing Selvee!</p>
                     <p className="text-[9px] text-neutral-500">7-Day exchange with original invoice & parcel tag.</p>
                   </div>
                 </div>
@@ -635,7 +635,7 @@ export const AdminOrders: React.FC = () => {
                   <div className="flex justify-between items-start border-b border-neutral-200 pb-4">
                     <div>
                       <BrandLogo variant="dark" className="h-9 mb-1" />
-                      <p className="font-bold text-neutral-900 text-sm">MEN'S FABRIC (Clothing Brand)</p>
+                      <p className="font-bold text-neutral-900 text-sm">Selvee (Clothing Brand)</p>
                       <p className="text-neutral-500 text-[11px]">Dhaka, Bangladesh • Official Customer Tax Invoice</p>
                     </div>
                     <div className="text-right">

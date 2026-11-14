@@ -17,7 +17,7 @@ import { useWishlist } from '../../context/WishlistContext';
 import { useAuth } from '../../context/AuthContext';
 import { Category } from '../../types';
 import { productService } from '../../services/productService';
-import { settingsService } from '../../services/settingsService';
+import { settingsService, getLocalSettings } from '../../services/settingsService';
 
 import { BrandLogo } from '../common/BrandLogo';
 
@@ -34,13 +34,13 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [announcement, setAnnouncement] = useState('🔥 Free Shipping on Orders Over ৳2500 across Bangladesh! Cash on Delivery Available.');
-  const [announcementActive, setAnnouncementActive] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(() => (productService.getInstantCategories() || []).filter((c) => c.active));
+  const [announcement, setAnnouncement] = useState(() => getLocalSettings().announcementText || 'Welcome to Selvee — Save 5% on online payment!');
+  const [announcementActive, setAnnouncementActive] = useState(() => getLocalSettings().announcementActive !== false);
   const [categoriesDropdownOpen, setCategoriesDropdownOpen] = useState(false);
 
   useEffect(() => {
-    productService.getCategories().then((cats) => {
+    const unsubCategories = productService.subscribeToCategories((cats) => {
       setCategories(cats.filter((c) => c.active));
     });
     const unsubSettings = settingsService.subscribeToSettings((s) => {
@@ -48,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
       setAnnouncementActive(s.announcementActive !== false);
     });
     return () => {
+      unsubCategories();
       unsubSettings();
     };
   }, []);

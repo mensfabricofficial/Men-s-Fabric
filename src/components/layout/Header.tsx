@@ -95,12 +95,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             </button>
           </div>
 
-          {/* Official Brand Logo - Balanced compact sizing for mobile & desktop */}
+          {/* Official Brand Logo - Prominent on mobile, compact & balanced on desktop */}
           <div 
             onClick={() => onNavigate('/')}
             className="flex items-center cursor-pointer select-none py-1 shrink-0"
           >
-            <BrandLogo variant="dark" imgClassName="h-6 sm:h-7 lg:h-8 w-auto" />
+            <BrandLogo variant="dark" imgClassName="h-8 sm:h-8 lg:h-8 w-auto" />
           </div>
 
           {/* Desktop Navigation */}
@@ -163,11 +163,11 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               <Search className="w-5 h-5" />
             </button>
 
-            {/* Wishlist */}
+            {/* Wishlist (Desktop header only) */}
             <button
               onClick={() => onNavigate('/wishlist')}
               aria-label="Wishlist"
-              className="relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+              className="hidden lg:inline-flex relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
             >
               <Heart className="w-5 h-5" />
               {wishlistIds.length > 0 && (
@@ -177,9 +177,9 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               )}
             </button>
 
-            {/* Account / Admin Portal */}
+            {/* Account / Admin Portal (Desktop header only) */}
             {currentUser ? (
-              <div className="relative group">
+              <div className="hidden lg:block relative group">
                 <button
                   onClick={() => onNavigate('/account')}
                   className="flex items-center gap-1 p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
@@ -218,7 +218,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               <button
                 onClick={() => onNavigate('/account')}
                 aria-label="Account Login"
-                className="p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                className="hidden lg:inline-flex p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >
                 <UserIcon className="w-5 h-5" />
               </button>

@@ -80,9 +80,9 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
         </div>
       )}
 
-      {/* Main Header Container - Expanded for full luxury screen presence */}
+      {/* Main Header Container */}
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
-        <div className="flex items-center justify-between h-18 sm:h-22 gap-4">
+        <div className="flex items-center justify-between h-15 sm:h-18 gap-4">
           
           {/* Mobile Menu Button */}
           <div className="flex items-center lg:hidden">
@@ -95,12 +95,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             </button>
           </div>
 
-          {/* Official Brand Logo - Prominent & bold */}
+          {/* Official Brand Logo - Balanced compact sizing for mobile & desktop */}
           <div 
             onClick={() => onNavigate('/')}
-            className="flex items-center cursor-pointer select-none py-1"
+            className="flex items-center cursor-pointer select-none py-1 shrink-0"
           >
-            <BrandLogo variant="dark" size="md" />
+            <BrandLogo variant="dark" imgClassName="h-6 sm:h-7 lg:h-8 w-auto" />
           </div>
 
           {/* Desktop Navigation */}

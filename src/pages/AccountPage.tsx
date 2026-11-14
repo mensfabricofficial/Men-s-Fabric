@@ -490,7 +490,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               disabled={authLoading}
               className="w-full py-3 bg-black text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-800 transition-colors shadow-md disabled:bg-neutral-400 cursor-pointer"
             >
-              {authLoading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Create Account & Send Verification'}
+              {authLoading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 

@@ -33,63 +33,79 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [customerCount, setCustomerCount] = useState<number>(0);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<Order[]>(() => orderService.getLocalOrders());
+  const [products, setProducts] = useState<Product[]>(() => productService.getLocalProducts());
+  const [customerCount, setCustomerCount] = useState<number>(() => {
+    try {
+      const unique = new Set<string>();
+      const rawLocal = localStorage.getItem('mf_registered_customers_v1');
+      if (rawLocal) {
+        const parsed = JSON.parse(rawLocal);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((c: any) => {
+            const id = c?.uid || c?.email || c?.phone;
+            if (id) unique.add(String(id).toLowerCase());
+          });
+        }
+      }
+      orderService.getLocalOrders().forEach((o) => {
+        const id = o.customerId && o.customerId !== 'guest' ? o.customerId : (o.customerEmail || o.customerPhone);
+        if (id) unique.add(String(id).toLowerCase());
+      });
+      return unique.size;
+    } catch {
+      return 0;
+    }
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>('');
 
+  const withTimeout = <T,>(promise: Promise<T>, ms = 5000): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), ms)),
+    ]);
+
   const loadAllDashboardData = useCallback(async () => {
+    setRefreshing(true);
     try {
-      // 1. Fetch Orders from orderService (aggregates both Firestore + local catalog)
-      let ordersList: Order[] = [];
-      try {
-        ordersList = await orderService.getAllOrdersAdmin();
-        setOrders(ordersList);
-      } catch (err) {
-        console.warn('Dashboard orders fetch notice:', err);
-      }
+      const [ordersRes, prodsRes, usersRes] = await Promise.allSettled([
+        withTimeout(orderService.getAllOrdersAdmin(), 6000),
+        withTimeout(productService.getAllProductsAdmin(), 6000),
+        withTimeout(getDocs(collection(db, 'users')), 6000),
+      ]);
 
-      // 2. Fetch Products from productService (aggregates both Firestore + local catalog)
-      let prodList: Product[] = [];
-      try {
-        prodList = await productService.getAllProductsAdmin();
-        setProducts(prodList);
-      } catch (err) {
-        console.warn('Dashboard products fetch notice:', err);
-      }
+      const ordersList: Order[] =
+        ordersRes.status === 'fulfilled' ? ordersRes.value : orderService.getLocalOrders();
+      setOrders(ordersList);
 
-      // 3. Count Customers from users collection + local registered store + buyers
+      const prodList: Product[] =
+        prodsRes.status === 'fulfilled' ? prodsRes.value : productService.getLocalProducts();
+      setProducts(prodList);
+
+      // Count Customers from users collection + local registered store + buyers
       try {
         const uniqueCustomers = new Set<string>();
-        
-        // A. Local registered customers
+
         const rawLocal = localStorage.getItem('mf_registered_customers_v1');
         if (rawLocal) {
           const parsed = JSON.parse(rawLocal);
           if (Array.isArray(parsed)) {
             parsed.forEach((c: any) => {
-              if (c.uid || c.email || c.phone) {
-                uniqueCustomers.add((c.uid || c.email || c.phone).toLowerCase());
-              }
+              const id = c?.uid || c?.email || c?.phone;
+              if (id) uniqueCustomers.add(String(id).toLowerCase());
             });
           }
         }
 
-        // B. Firestore users
-        try {
-          const usersSnap = await getDocs(collection(db, 'users'));
-          usersSnap.forEach((d) => {
+        if (usersRes.status === 'fulfilled') {
+          usersRes.value.forEach((d) => {
             const data = d.data();
             const id = d.id || data.email || data.phone;
             if (id) uniqueCustomers.add(String(id).toLowerCase());
           });
-        } catch {
-          // ignore
         }
 
-        // C. Buyers in orders
         ordersList.forEach((o) => {
           const id = o.customerId && o.customerId !== 'guest' ? o.customerId : (o.customerEmail || o.customerPhone);
           if (id) uniqueCustomers.add(String(id).toLowerCase());
@@ -102,74 +118,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
       setLastRefreshed(new Date().toLocaleTimeString('en-BD', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     loadAllDashboardData();
 
-    // Event listeners for immediate local events (0ms latency updates)
     const handleOrderUpdate = () => {
-      loadAllDashboardData();
+      setOrders(orderService.getLocalOrders());
     };
     const handleProductUpdate = () => {
-      loadAllDashboardData();
+      setProducts(productService.getLocalProducts());
     };
 
     window.addEventListener('mf_orders_updated', handleOrderUpdate);
+    window.addEventListener('selvee_products_updated', handleProductUpdate);
     window.addEventListener('mf_products_updated', handleProductUpdate);
 
-    // Live remote Firestore listeners with try/catch resilience
+    // Live remote Firestore listeners
     let unsubOrders: (() => void) | null = null;
-    let unsubProducts: (() => void) | null = null;
+    const unsubProducts = productService.subscribeToAllProductsAdmin((prods) => {
+      setProducts(prods);
+    });
 
     try {
-      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(30));
+      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
       unsubOrders = onSnapshot(qOrders, (snap) => {
-        if (!snap.empty) {
-          const list: Order[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Order));
-          // Merge with local orders
-          const localOrders = orderService.getLocalOrders();
-          const map = new Map<string, Order>();
-          list.forEach((o) => map.set(o.id, o));
-          localOrders.forEach((o) => {
-            if (!map.has(o.id)) map.set(o.id, o);
-          });
-          const merged = Array.from(map.values());
-          setOrders(merged);
-        }
+        const list: Order[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Order));
+        const localOrders = orderService.getLocalOrders();
+        const map = new Map<string, Order>();
+        list.forEach((o) => map.set(o.id, o));
+        localOrders.forEach((o) => {
+          if (!map.has(o.id)) map.set(o.id, o);
+        });
+        setOrders(Array.from(map.values()));
       }, (err) => console.warn('Live orders dashboard notice:', err));
-    } catch {
-      // ignore
-    }
-
-    try {
-      const qProds = query(collection(db, 'products'), limit(50));
-      unsubProducts = onSnapshot(qProds, (snap) => {
-        if (!snap.empty) {
-          const list: Product[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Product));
-          setProducts(list);
-        }
-      }, (err) => console.warn('Live prods dashboard notice:', err));
     } catch {
       // ignore
     }
 
     return () => {
       window.removeEventListener('mf_orders_updated', handleOrderUpdate);
+      window.removeEventListener('selvee_products_updated', handleProductUpdate);
       window.removeEventListener('mf_products_updated', handleProductUpdate);
       if (unsubOrders) unsubOrders();
-      if (unsubProducts) unsubProducts();
+      unsubProducts();
     };
   }, [loadAllDashboardData]);
 
   const handleManualRefresh = () => {
-    setRefreshing(true);
     loadAllDashboardData();
   };
 
@@ -214,21 +213,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
   const getOrderCost = (ord: Order): number => {
     return (ord.items || []).reduce((sum, item) => {
-      const unitCost = productCostMap.get(item.productId) ?? (item.unitPrice * 0.6);
-      return sum + (unitCost * (item.quantity || 1));
+      const unitPrice = Number(item.unitPrice) || 0;
+      const unitCost = productCostMap.get(item.productId) ?? (unitPrice * 0.6);
+      return sum + (unitCost * (Number(item.quantity) || 1));
     }, 0);
   };
 
   // 1. Today's Metrics
   const todayOrders = validOrders.filter((o) => isToday(getOrderDate(o)));
-  const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const todayRevenue = todayOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const todayCost = todayOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
   const todayProfit = Math.max(0, todayRevenue - todayCost);
   const todayOrdersCount = todayOrders.length;
 
   // 2. This Month's Metrics
   const monthOrders = validOrders.filter((o) => isThisMonth(getOrderDate(o)));
-  const monthRevenue = monthOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const monthRevenue = monthOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const monthCost = monthOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
   const monthProfit = Math.max(0, monthRevenue - monthCost);
   const monthOrdersCount = monthOrders.length;
@@ -238,24 +238,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
   const pendingOrders = orders.filter((o) => o.orderStatus === 'pending').length;
   const processingOrders = orders.filter((o) => o.orderStatus === 'processing' || o.orderStatus === 'confirmed').length;
   const deliveredOrders = orders.filter((o) => o.orderStatus === 'delivered').length;
-  const totalRevenue = validOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const totalRevenue = validOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const totalCost = validOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
   const totalProfit = Math.max(0, totalRevenue - totalCost);
   const totalProducts = products.length;
   const lowStockProducts = products.filter((p) => (p.totalStock || 0) < 5).length;
-
-  if (loading) {
-    return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 w-48 bg-neutral-200 rounded" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 bg-white rounded-xl border border-neutral-200" />
-          ))}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-8">
@@ -584,11 +571,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                 <tbody className="divide-y divide-neutral-100 font-medium">
                   {orders.slice(0, 6).map((ord) => (
                     <tr key={ord.id} className="hover:bg-neutral-50/50">
-                      <td className="p-3.5 font-mono font-bold text-neutral-900">{ord.orderNumber}</td>
-                      <td className="p-3.5 text-neutral-800">{ord.customerName}</td>
-                      <td className="p-3.5 text-neutral-600 font-mono">{ord.customerPhone}</td>
-                      <td className="p-3.5 text-neutral-600">{ord.shippingAddress?.district || ord.deliveryZone}</td>
-                      <td className="p-3.5 font-bold text-neutral-900 font-mono">৳{ord.total.toLocaleString('en-BD')}</td>
+                      <td className="p-3.5 font-mono font-bold text-neutral-900">{ord.orderNumber || ord.id}</td>
+                      <td className="p-3.5 text-neutral-800">{ord.customerName || 'Customer'}</td>
+                      <td className="p-3.5 text-neutral-600 font-mono">{ord.customerPhone || 'N/A'}</td>
+                      <td className="p-3.5 text-neutral-600">{ord.shippingAddress?.district || ord.deliveryZone || 'N/A'}</td>
+                      <td className="p-3.5 font-bold text-neutral-900 font-mono">৳{(Number(ord.total) || 0).toLocaleString('en-BD')}</td>
                       <td className="p-3.5">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                           ord.paymentMethod === 'bkash' ? 'bg-[#D12053]/10 text-[#D12053]' :
@@ -606,7 +593,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                           ord.orderStatus === 'pending' ? 'bg-amber-100 text-amber-800' :
                           'bg-neutral-100 text-neutral-800'
                         }`}>
-                          {ord.orderStatus}
+                          {ord.orderStatus || 'pending'}
                         </span>
                       </td>
                       <td className="p-3.5 text-right">
@@ -630,22 +617,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-neutral-900 text-xs">{ord.orderNumber}</span>
+                        <span className="font-mono font-bold text-neutral-900 text-xs">{ord.orderNumber || ord.id}</span>
                         <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                           ord.orderStatus === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
                           ord.orderStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
                           ord.orderStatus === 'pending' ? 'bg-amber-100 text-amber-800' :
                           'bg-neutral-100 text-neutral-800'
                         }`}>
-                          {ord.orderStatus}
+                          {ord.orderStatus || 'pending'}
                         </span>
                       </div>
-                      <p className="text-xs font-semibold text-neutral-800 mt-0.5">{ord.customerName}</p>
+                      <p className="text-xs font-semibold text-neutral-800 mt-0.5">{ord.customerName || 'Customer'}</p>
                     </div>
 
                     <div className="text-right">
                       <span className="text-sm font-black text-neutral-900 font-mono">
-                        ৳{ord.total.toLocaleString('en-BD')}
+                        ৳{(Number(ord.total) || 0).toLocaleString('en-BD')}
                       </span>
                       <span className="block text-[10px] uppercase font-bold text-neutral-500 mt-0.5">
                         {ord.paymentMethod?.toUpperCase() || 'COD'}

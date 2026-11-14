@@ -63,13 +63,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Check admin authorization securely
   const checkAdminStatus = async (user: User): Promise<boolean> => {
+    const emailLower = user.email?.trim().toLowerCase() || '';
     // 1. Direct configured UID match or Primary Admin emails
     if (
       user.uid === ADMIN_CONFIG.PRIMARY_ADMIN_UID ||
       user.uid === 'lw3mX9AivNduzBGundo3rB2jZcp2' ||
-      user.email === 'admin@mensfabric.com' ||
-      user.email === 'mensfabricofficial@gmail.com' ||
-      user.email === 'me@admin.com' ||
+      emailLower === 'admin@mensfabric.com' ||
+      emailLower === 'mensfabricofficial@gmail.com' ||
+      emailLower === 'me@admin.com' ||
       ADMIN_CONFIG.SECONDARY_ADMIN_UIDS.includes(user.uid)
     ) {
       return true;
@@ -77,7 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 2. Custom claims (if set via Firebase Admin SDK)
     try {
-      const tokenResult = await getIdTokenResult(user, true);
+      const tokenResult = await getIdTokenResult(user);
       if (tokenResult.claims.admin === true) {
         return true;
       }
@@ -97,13 +98,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 4. Lookup in settings/adminsList by registered email
     try {
-      const cleanEmail = user.email?.trim().toLowerCase();
-      if (cleanEmail) {
+      if (emailLower) {
         const snap = await getDoc(doc(db, 'settings', 'adminsList'));
         if (snap.exists()) {
           const adminsMap = snap.data()?.admins || {};
           const matched = Object.values(adminsMap).find(
-            (a: any) => a.email?.toLowerCase() === cleanEmail && a.active !== false
+            (a: any) => a.email?.toLowerCase() === emailLower && a.active !== false
           );
           if (matched) {
             return true;
@@ -137,12 +137,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (user) {
         const adminStatus = await checkAdminStatus(user);
         setIsAdmin(adminStatus);
-        await loadCustomerProfile(user.uid);
+        setLoading(false);
+        void loadCustomerProfile(user.uid);
       } else {
         setIsAdmin(false);
         setCustomerProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();

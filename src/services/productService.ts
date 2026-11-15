@@ -974,29 +974,70 @@ export const productService = {
     }
   },
 
-  // Client-side image compression utility: downsamples large camera/phone photos to ~50KB for instant load
-  async compressImage(file: File, maxWidth = 800, quality = 0.72): Promise<string> {
+  // High-definition adaptive image encoder: preserves crisp 2K/4K clarity while staying safe for cloud/Firestore storage
+  async compressImage(
+    file: File,
+    maxWidth = 2560,
+    quality = 0.93,
+    maxChars = 220000
+  ): Promise<string> {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const result = e.target?.result as string;
+        if (!result) {
+          resolve('/assets/aistudio/selvee1_8ff37f5b.jpg');
+          return;
+        }
+
+        // Preserve small original high-res files untouched (zero re-compression loss)
+        if (result.length <= maxChars && file.size <= 240 * 1024) {
+          resolve(result);
+          return;
+        }
+
         const img = new Image();
         img.onload = () => {
-          let { width, height } = img;
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
+          const encodeWith = (targetW: number, q: number, mime: string): string => {
+            let width = img.naturalWidth || img.width;
+            let height = img.naturalHeight || img.height;
+            if (width > targetW) {
+              height = Math.round((height * targetW) / width);
+              width = targetW;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return result;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
-          } else {
-            resolve(result);
+            return canvas.toDataURL(mime, q);
+          };
+
+          // Prefer crisp WebP (35%+ sharper per byte than JPEG), fallback to JPEG if unsupported
+          let mime = 'image/webp';
+          let encoded = encodeWith(maxWidth, quality, mime);
+          if (!encoded.startsWith('data:image/webp')) {
+            mime = 'image/jpeg';
+            encoded = encodeWith(maxWidth, quality, mime);
           }
+
+          // Gently step down only if exceeding Firestore safety budget so multi-image docs never fail
+          const attempts: [number, number][] = [
+            [maxWidth, 0.90],
+            [Math.min(maxWidth, 2048), 0.88],
+            [Math.min(maxWidth, 1800), 0.84],
+            [Math.min(maxWidth, 1600), 0.80],
+            [Math.min(maxWidth, 1440), 0.76],
+          ];
+          for (const [w, q] of attempts) {
+            if (encoded.length <= maxChars) break;
+            encoded = encodeWith(w, q, mime);
+          }
+
+          resolve(encoded);
         };
         img.onerror = () => resolve(result);
         img.src = result;
@@ -1006,19 +1047,30 @@ export const productService = {
     });
   },
 
-  // Resilient Image Upload with offline and cloud fallback
+  // Resilient Image Upload: attempts raw full-resolution cloud upload first, falls back to crisp HD WebP
   async uploadImage(file: File, folder = 'products'): Promise<string> {
     try {
-      const base64Data = await this.compressImage(file);
+      const ext = file.name.split('.').pop() || 'jpg';
+      const filename = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+      const storageRef = ref(storage, filename);
+
+      // Upload raw original 4K/full-res file if Firebase Storage responds cleanly
+      const uploadTask = uploadBytes(storageRef, file).then(() => getDownloadURL(storageRef));
+      const timeoutTask = new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Storage upload timeout')), 4500)
+      );
+
       try {
-        const ext = file.name.split('.').pop() || 'jpg';
-        const filename = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-        const storageRef = ref(storage, filename);
-        await uploadBytes(storageRef, file);
-        return await getDownloadURL(storageRef);
+        return await Promise.race([uploadTask, timeoutTask]);
       } catch (cloudErr) {
-        console.warn('Firebase Storage offline, using compressed image:', cloudErr);
-        return base64Data;
+        console.warn('Firebase Storage offline, using HD compressed image:', cloudErr);
+        const isBanner = folder === 'banners';
+        return await this.compressImage(
+          file,
+          isBanner ? 3840 : 2560,
+          0.93,
+          isBanner ? 580000 : 220000
+        );
       }
     } catch (err) {
       console.error('Image upload failed:', err);

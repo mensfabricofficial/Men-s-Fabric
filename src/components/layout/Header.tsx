@@ -72,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
   ];
 
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-neutral-200">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-neutral-200/80 shadow-[0_1px_12px_rgba(0,0,0,0.03)]">
       {/* Announcement Bar */}
       {announcementActive && (
         <div className="bg-black text-white text-[11px] sm:text-xs font-medium py-2 px-4 text-center tracking-wide flex items-center justify-center gap-2">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -15,10 +15,12 @@ import {
   ExternalLink, 
   Menu, 
   X,
-  History
+  History,
+  Smartphone
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { adminDeviceService } from '../services/adminDeviceService';
 
 export type AdminTab =
   | 'dashboard'
@@ -49,6 +51,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 }) => {
   const { currentUser, logOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingDeviceCount, setPendingDeviceCount] = useState(0);
+
+  useEffect(() => {
+    const unsub = adminDeviceService.subscribeToRegistry((devices) => {
+      setPendingDeviceCount(devices.filter((d) => d.status === 'pending').length);
+    });
+    return () => unsub();
+  }, []);
 
   const menuItems: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
@@ -64,6 +74,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'admins', label: 'Admins & Staff', icon: <ShieldCheck className="w-4 h-4" /> },
     { id: 'audit', label: 'Audit Logs', icon: <History className="w-4 h-4" /> },
   ];
+
+  const handleOpenDeviceApprovals = () => {
+    sessionStorage.setItem('selvee_open_devices_tab', '1');
+    onSelectTab('settings');
+  };
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col lg:flex-row text-neutral-900">
@@ -116,14 +131,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                   onSelectTab(item.id);
                   setSidebarOpen(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
                   currentTab === item.id
                     ? 'bg-white text-black'
                     : 'text-neutral-400 hover:text-white hover:bg-neutral-900'
                 }`}
               >
-                {item.icon}
-                <span>{item.label}</span>
+                <span className="flex items-center gap-3">
+                  {item.icon}
+                  <span>{item.label}</span>
+                </span>
+                {item.id === 'settings' && pendingDeviceCount > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500 text-white">
+                    {pendingDeviceCount}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -158,6 +180,23 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
+        {pendingDeviceCount > 0 && currentTab !== 'settings' && (
+          <div className="mb-5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-amber-900">
+              <Smartphone className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <b>{pendingDeviceCount}</b> {pendingDeviceCount === 1 ? 'device is' : 'devices are'} waiting for your Admin Panel approval.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenDeviceApprovals}
+              className="px-3.5 py-1.5 bg-amber-600 text-white font-bold uppercase tracking-wider rounded-lg hover:bg-amber-700 transition-colors cursor-pointer w-fit text-[11px]"
+            >
+              Review & Approve
+            </button>
+          </div>
+        )}
         {children}
       </main>
 

@@ -18,11 +18,17 @@ import {
   Plus,
   RefreshCw,
   Megaphone,
-  Bell
+  Bell,
+  Eye,
+  EyeOff,
+  Check,
+  X,
+  Clock,
+  Globe
 } from 'lucide-react';
 import { SiteSettings, PaymentSettings, MfsGatewayConfig } from '../types';
 import { settingsService, defaultSettings, defaultPaymentSettings } from '../services/settingsService';
-import { adminDeviceService, AdminDevice } from '../services/adminDeviceService';
+import { adminDeviceService, AdminDevice, DEFAULT_ADMIN_ACCESS_KEY } from '../services/adminDeviceService';
 import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 import { firebaseConfig, ADMIN_CONFIG } from '../lib/firebaseConfig';
 import { useAuth } from '../context/AuthContext';
@@ -42,12 +48,14 @@ export const AdminSettings: React.FC = () => {
   const [dhakaFee, setDhakaFee] = useState<number>(70);
   const [outsideFee, setOutsideFee] = useState<number>(130);
 
-  // Authorized Devices state
+  // Authorized Devices & Access Key state
   const [devices, setDevices] = useState<AdminDevice[]>([]);
-  const [masterCodeInput, setMasterCodeInput] = useState(
-    () => localStorage.getItem('mf_admin_master_code') || 'MF-DEV-2026'
-  );
-  const [codeSaved, setCodeSaved] = useState(false);
+  const [accessKeyInput, setAccessKeyInput] = useState(DEFAULT_ADMIN_ACCESS_KEY);
+  const [showAccessKey, setShowAccessKey] = useState(false);
+  const [keySaving, setKeySaving] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
+  const [keyError, setKeyError] = useState('');
+  const [deviceActionId, setDeviceActionId] = useState<string | null>(null);
 
   // Dynamic Size Guides state
   const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
@@ -78,7 +86,7 @@ export const AdminSettings: React.FC = () => {
   const [apiSuccess, setApiSuccess] = useState(false);
 
   const loadDevices = async () => {
-    const list = await adminDeviceService.getAllAuthorizedDevices();
+    const list = await adminDeviceService.getAllDevices();
     setDevices(list);
   };
 
@@ -100,6 +108,18 @@ export const AdminSettings: React.FC = () => {
   };
 
   useEffect(() => {
+    if (sessionStorage.getItem('selvee_open_devices_tab') === '1') {
+      sessionStorage.removeItem('selvee_open_devices_tab');
+      setActiveTab('devices');
+    }
+
+    const unsubRegistry = adminDeviceService.subscribeToRegistry((list, remoteKey) => {
+      setDevices(list);
+      setAccessKeyInput((prev) => (prev === DEFAULT_ADMIN_ACCESS_KEY || !prev ? remoteKey : prev));
+    });
+
+    adminDeviceService.getAccessKey().then((k) => setAccessKeyInput(k)).catch(() => {});
+
     Promise.all([
       settingsService.getSettings().then((s) => setSettings(s)),
       settingsService.getDeliveryZones().then((zones) => {
@@ -112,6 +132,8 @@ export const AdminSettings: React.FC = () => {
       loadSizeGuides(),
       loadApiConfig(),
     ]).finally(() => setLoading(false));
+
+    return () => unsubRegistry();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -320,6 +342,11 @@ export const AdminSettings: React.FC = () => {
         >
           <Laptop className="w-4 h-4" />
           <span>Device Access Security</span>
+          {devices.filter((d) => d.status === 'pending').length > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500 text-white">
+              {devices.filter((d) => d.status === 'pending').length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -663,6 +690,81 @@ export const AdminSettings: React.FC = () => {
               </div>
             </div>
 
+            {/* SECTION 6: Footer WhatsApp & Social Media Links */}
+            <div className="space-y-4 pt-4 border-t border-neutral-200">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-neutral-800" />
+                <h3 className="font-extrabold uppercase tracking-wider text-neutral-900 text-sm">
+                  6. Footer WhatsApp & Social Links
+                </h3>
+              </div>
+              <p className="text-[11px] text-neutral-500 -mt-2">
+                Update the WhatsApp number and social media links displayed in the storefront footer. Leave a link blank to hide its icon.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">WhatsApp Number</label>
+                  <input
+                    type="text"
+                    value={settings.whatsapp || ''}
+                    onChange={(e) => setSettings({ ...settings, whatsapp: e.target.value })}
+                    placeholder="+8801700000000"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded font-mono font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">Facebook URL</label>
+                  <input
+                    type="text"
+                    value={settings.facebookUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, facebookUrl: e.target.value })}
+                    placeholder="https://facebook.com/yourpage"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">Instagram URL</label>
+                  <input
+                    type="text"
+                    value={settings.instagramUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, instagramUrl: e.target.value })}
+                    placeholder="https://instagram.com/yourhandle"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">TikTok URL</label>
+                  <input
+                    type="text"
+                    value={settings.tiktokUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, tiktokUrl: e.target.value })}
+                    placeholder="https://tiktok.com/@yourhandle"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">X (Twitter) URL</label>
+                  <input
+                    type="text"
+                    value={settings.xUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, xUrl: e.target.value })}
+                    placeholder="https://x.com/yourhandle"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">YouTube URL (Optional)</label>
+                  <input
+                    type="text"
+                    value={settings.youtubeUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, youtubeUrl: e.target.value })}
+                    placeholder="https://youtube.com/@yourchannel"
+                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Submit Button */}
             <div className="pt-4 border-t border-neutral-200 flex justify-end">
               <button
@@ -929,124 +1031,290 @@ export const AdminSettings: React.FC = () => {
       )}
 
       {/* TAB 4: Authorized Admin Devices Security */}
-      {activeTab === 'devices' && (
-        <div className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8 space-y-6 text-xs shadow-xs animate-fade-in">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-neutral-200">
-            <div>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
-                  Authorized Admin Devices Security
-                </h2>
-              </div>
-              <p className="text-[11px] text-neutral-500 mt-0.5">
-                Strict device-level access control. Only approved devices can access the Admin Console.
-              </p>
-            </div>
-            <span className="px-3 py-1 bg-neutral-100 text-neutral-700 font-mono text-[11px] font-bold rounded-full w-fit">
-              {devices.length} {devices.length === 1 ? 'Device Authorized' : 'Devices Authorized'}
-            </span>
-          </div>
+      {activeTab === 'devices' && (() => {
+        const pendingDevices = devices.filter((d) => d.status === 'pending');
+        const approvedDevices = devices.filter((d) => d.status === 'approved');
+        const rejectedDevices = devices.filter((d) => d.status === 'rejected');
+        const currentDeviceId = adminDeviceService.getCurrentDeviceId();
 
-          {/* Master Access Key Configuration */}
-          <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Key className="w-4 h-4 text-neutral-700" />
-              <span className="font-bold text-neutral-900 uppercase text-[11px]">Master Device Authorization Key</span>
-            </div>
-            <p className="text-[11px] text-neutral-500">
-              When logging in from a new smartphone or computer, the user must provide this master key to authorize the hardware.
-            </p>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 max-w-md">
-              <input
-                type="text"
-                value={masterCodeInput}
-                onChange={(e) => setMasterCodeInput(e.target.value)}
-                placeholder="e.g. MF-DEV-2026"
-                className="flex-1 px-3.5 py-2 bg-white border border-neutral-300 rounded-lg text-xs font-mono font-bold"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.setItem('mf_admin_master_code', masterCodeInput.trim().toUpperCase());
-                  setCodeSaved(true);
-                  setTimeout(() => setCodeSaved(false), 2500);
-                }}
-                className="px-4 py-2 bg-black text-white font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
-              >
-                {codeSaved ? 'Saved!' : 'Update Key'}
-              </button>
-            </div>
-            {codeSaved && (
-              <p className="text-[11px] text-emerald-700 font-semibold">Master Device Authorization Key updated successfully.</p>
-            )}
-          </div>
-
-          {/* Current Device Identifier */}
-          <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-950">
-            <div className="flex items-center gap-2.5">
-              <Laptop className="w-4 h-4 text-emerald-700" />
+        return (
+          <div className="bg-white border border-neutral-200 rounded-xl p-6 sm:p-8 space-y-6 text-xs shadow-xs animate-fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-neutral-200">
               <div>
-                <p className="font-bold">Current Device: <span className="font-mono text-[11px]">{adminDeviceService.getCurrentDeviceId()}</span></p>
-                <p className="text-[11px] text-emerald-800">{adminDeviceService.getDeviceInfo().deviceName} • Status: Verified Active</p>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
+                    Admin Access Key & Device Security
+                  </h2>
+                </div>
+                <p className="text-[11px] text-neutral-500 mt-0.5">
+                  Strictly protects the Admin Panel only. New computers or phones must enter the Access Key and receive your approval here before accessing Admin Console.
+                </p>
               </div>
+              <span className="px-3 py-1 bg-neutral-100 text-neutral-700 font-mono text-[11px] font-bold rounded-full w-fit">
+                {approvedDevices.length} Approved • {pendingDevices.length} Pending
+              </span>
             </div>
-            <span className="text-[10px] font-bold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
-              This Device
-            </span>
-          </div>
 
-          {/* Registered Devices List */}
-          <div className="space-y-3">
-            <h3 className="font-bold text-neutral-900 uppercase text-[11px]">All Approved Hardware Devices</h3>
-            {devices.length === 0 ? (
-              <div className="p-6 text-center text-neutral-400 bg-neutral-50 rounded-xl">
-                No devices registered yet. The current primary device is active.
+            {/* Admin Access Key Configuration (Synced to Firestore) */}
+            <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-neutral-700" />
+                <span className="font-bold text-neutral-900 uppercase text-[11px]">Admin Panel Access Key</span>
               </div>
-            ) : (
-              <div className="divide-y divide-neutral-200 border border-neutral-200 rounded-xl overflow-hidden">
-                {devices.map((dev) => {
-                  const isCurrent = dev.deviceId === adminDeviceService.getCurrentDeviceId();
-                  return (
-                    <div key={dev.deviceId} className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <p className="text-[11px] text-neutral-500">
+                Required right after Admin Email & Password sign-in on every session. Synced across all your devices.
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 max-w-md">
+                <div className="relative flex-1">
+                  <input
+                    type={showAccessKey ? 'text' : 'password'}
+                    value={accessKeyInput}
+                    onChange={(e) => {
+                      setAccessKeyInput(e.target.value);
+                      setKeyError('');
+                    }}
+                    placeholder="Enter new Admin Access Key"
+                    className="w-full px-3.5 py-2 pr-9 bg-white border border-neutral-300 rounded-lg text-xs font-mono font-bold"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAccessKey((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                  >
+                    {showAccessKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  disabled={keySaving}
+                  onClick={async () => {
+                    setKeyError('');
+                    setKeySaving(true);
+                    try {
+                      await adminDeviceService.updateAccessKey(accessKeyInput, currentUser?.email || 'Admin');
+                      setKeySaved(true);
+                      setTimeout(() => setKeySaved(false), 3000);
+                    } catch (err: any) {
+                      setKeyError(err.message || 'Failed to update access key.');
+                    } finally {
+                      setKeySaving(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-black text-white font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {keySaving ? 'Saving...' : keySaved ? 'Updated!' : 'Update Key'}
+                </button>
+              </div>
+              {keyError && <p className="text-[11px] text-red-600 font-semibold">{keyError}</p>}
+              {keySaved && (
+                <p className="text-[11px] text-emerald-700 font-semibold">
+                  Admin Access Key updated across all devices.
+                </p>
+              )}
+            </div>
+
+            {/* Current Device Identifier */}
+            <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-950">
+              <div className="flex items-center gap-2.5">
+                {adminDeviceService.getDeviceInfo().deviceType === 'Mobile' ? (
+                  <Smartphone className="w-4 h-4 text-emerald-700" />
+                ) : (
+                  <Laptop className="w-4 h-4 text-emerald-700" />
+                )}
+                <div>
+                  <p className="font-bold">
+                    Current Device: <span className="font-mono text-[11px]">{currentDeviceId}</span>
+                  </p>
+                  <p className="text-[11px] text-emerald-800">
+                    {adminDeviceService.getDeviceInfo().deviceName} • Status: Verified Approved
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
+                This Device
+              </span>
+            </div>
+
+            {/* Pending Approval Requests */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-neutral-900 uppercase text-[11px] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Pending Device Approval Requests ({pendingDevices.length})</span>
+                </h3>
+              </div>
+              {pendingDevices.length === 0 ? (
+                <div className="p-4 text-center text-neutral-400 bg-neutral-50 border border-neutral-200 rounded-xl text-[11px]">
+                  No pending device requests. When you log in from your phone or another device, it will appear here for your approval.
+                </div>
+              ) : (
+                <div className="divide-y divide-amber-200 border border-amber-300 bg-amber-50/40 rounded-xl overflow-hidden">
+                  {pendingDevices.map((dev) => (
+                    <div key={dev.deviceId} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          {dev.deviceName?.includes('Mobile') ? (
-                            <Smartphone className="w-4 h-4 text-neutral-600" />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {dev.deviceType === 'Mobile' ? (
+                            <Smartphone className="w-4 h-4 text-amber-700" />
                           ) : (
-                            <Laptop className="w-4 h-4 text-neutral-600" />
+                            <Laptop className="w-4 h-4 text-amber-700" />
                           )}
-                          <span className="font-bold text-neutral-900 text-xs">{dev.deviceName || 'Admin Device'}</span>
-                          {isCurrent && (
-                            <span className="text-[9px] bg-black text-white px-1.5 py-0.5 rounded font-bold uppercase">Active Now</span>
-                          )}
+                          <span className="font-bold text-neutral-900 text-xs">{dev.deviceName}</span>
+                          <span className="text-[9px] bg-amber-500 text-white px-1.5 py-0.5 rounded font-bold uppercase">
+                            Awaiting Approval
+                          </span>
                         </div>
-                        <p className="font-mono text-[11px] text-neutral-500">ID: {dev.deviceId}</p>
-                        <p className="text-[10px] text-neutral-400">Authorized by: {dev.authorizedBy || 'System Administrator'}</p>
+                        <p className="font-mono text-[11px] text-neutral-600">ID: {dev.deviceId}</p>
+                        <p className="text-[10px] text-neutral-500">
+                          Account: {dev.requestedEmail || 'Admin'} • Requested:{' '}
+                          {dev.registeredAt ? new Date(dev.registeredAt).toLocaleString() : 'Just now'}
+                        </p>
                       </div>
 
-                      {!isCurrent && (
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
+                          disabled={deviceActionId === dev.deviceId}
                           onClick={async () => {
-                            await adminDeviceService.revokeDevice(dev.deviceId);
-                            await loadDevices();
+                            setDeviceActionId(dev.deviceId);
+                            try {
+                              await adminDeviceService.approveDevice(dev.deviceId, currentUser?.email || 'Admin');
+                            } finally {
+                              setDeviceActionId(null);
+                            }
                           }}
-                          className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer w-fit"
+                          className="px-3.5 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Approve</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deviceActionId === dev.deviceId}
+                          onClick={async () => {
+                            setDeviceActionId(dev.deviceId);
+                            try {
+                              await adminDeviceService.revokeDevice(dev.deviceId);
+                            } finally {
+                              setDeviceActionId(null);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg font-bold text-[11px] uppercase tracking-wider flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Reject</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Approved Devices List */}
+            <div className="space-y-3">
+              <h3 className="font-bold text-neutral-900 uppercase text-[11px]">
+                Approved Hardware Devices ({approvedDevices.length})
+              </h3>
+              {approvedDevices.length === 0 ? (
+                <div className="p-6 text-center text-neutral-400 bg-neutral-50 rounded-xl">
+                  No approved devices registered yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-neutral-200 border border-neutral-200 rounded-xl overflow-hidden">
+                  {approvedDevices.map((dev) => {
+                    const isCurrent = dev.deviceId === currentDeviceId;
+                    return (
+                      <div key={dev.deviceId} className="p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {dev.deviceType === 'Mobile' || dev.deviceName?.includes('Mobile') ? (
+                              <Smartphone className="w-4 h-4 text-neutral-600" />
+                            ) : (
+                              <Laptop className="w-4 h-4 text-neutral-600" />
+                            )}
+                            <span className="font-bold text-neutral-900 text-xs">{dev.deviceName || 'Admin Device'}</span>
+                            {isCurrent && (
+                              <span className="text-[9px] bg-black text-white px-1.5 py-0.5 rounded font-bold uppercase">
+                                This Device
+                              </span>
+                            )}
+                            {dev.isPrimary && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold uppercase">
+                                Primary Computer
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-mono text-[11px] text-neutral-500">ID: {dev.deviceId}</p>
+                          <p className="text-[10px] text-neutral-400">
+                            Approved by: {dev.authorizedBy || 'Administrator'}
+                          </p>
+                        </div>
+
+                        {!isCurrent && (
+                          <button
+                            type="button"
+                            disabled={deviceActionId === dev.deviceId}
+                            onClick={async () => {
+                              setDeviceActionId(dev.deviceId);
+                              try {
+                                await adminDeviceService.revokeDevice(dev.deviceId);
+                              } finally {
+                                setDeviceActionId(null);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-lg font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer w-fit disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Revoke Access</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Rejected / Revoked Devices (if any) */}
+            {rejectedDevices.length > 0 && (
+              <div className="space-y-3 pt-2 border-t border-neutral-100">
+                <h3 className="font-bold text-neutral-500 uppercase text-[11px]">
+                  Blocked / Revoked Devices ({rejectedDevices.length})
+                </h3>
+                <div className="divide-y divide-neutral-200 border border-neutral-200 rounded-xl overflow-hidden">
+                  {rejectedDevices.map((dev) => (
+                    <div key={dev.deviceId} className="p-3.5 bg-neutral-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div>
+                        <p className="font-bold text-neutral-700">{dev.deviceName}</p>
+                        <p className="font-mono text-[11px] text-neutral-500">ID: {dev.deviceId}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => adminDeviceService.approveDevice(dev.deviceId, currentUser?.email || 'Admin')}
+                          className="px-3 py-1 bg-white border border-neutral-300 text-neutral-800 hover:bg-neutral-100 rounded font-bold text-[11px] uppercase cursor-pointer"
+                        >
+                          Allow Again
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => adminDeviceService.removeDeviceRecord(dev.deviceId)}
+                          className="p-1.5 text-neutral-400 hover:text-red-600 cursor-pointer"
+                          title="Remove from list"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Revoke Access</span>
                         </button>
-                      )}
+                      </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
             )}
-          </div>
 
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
     </div>
   );

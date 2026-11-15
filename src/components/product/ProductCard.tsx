@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { ShoppingBag, Eye, ChevronUp } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
@@ -15,7 +15,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onNavigate,
 }) => {
   const { addItem } = useCart();
-  const [isHovered, setIsHovered] = useState(false);
 
   const isSale = typeof product.salePrice === 'number' && product.salePrice > 0 && product.salePrice < product.price;
   const currentPrice = isSale ? product.salePrice! : product.price;
@@ -63,23 +62,32 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     });
   };
 
+  const hasSecondary = Boolean(secondaryImage && secondaryImage !== primaryImage);
+
   return (
     <div
       onClick={() => onNavigate(`/product/${product.id}`)}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none transition-all duration-300"
+      className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none"
     >
       {/* Image container */}
-      <div className="relative w-full aspect-square bg-neutral-100 overflow-hidden rounded-md border border-neutral-100/80">
+      <div className="relative w-full aspect-square bg-neutral-100 overflow-hidden rounded-lg border border-neutral-200/70 group-hover:border-neutral-300 transition-colors duration-300">
         <img
-          src={isHovered && secondaryImage ? secondaryImage : primaryImage}
+          src={primaryImage}
           alt={product.name}
           decoding="async"
-          className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-103"
+          className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-[1.03] will-change-transform"
         />
+        {hasSecondary && (
+          <img
+            src={secondaryImage}
+            alt=""
+            decoding="async"
+            loading="lazy"
+            className="absolute inset-0 w-full h-full object-cover object-center opacity-0 group-hover:opacity-100 transition-all duration-500 ease-out group-hover:scale-[1.03] will-change-transform"
+          />
+        )}
 
-        {/* Badges on top-left: Discount % or Sold Out only (no extra label below discount) */}
+        {/* Badges on top-left: Discount % or Sold Out */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
           {isOutOfStock ? (
             <span className="bg-neutral-900/90 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-wider uppercase">
@@ -100,10 +108,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           disabled={isOutOfStock}
           aria-label="Add to bag"
           title={isOutOfStock ? 'Sold Out' : 'Quick Add to Bag'}
-          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 backdrop-blur-xs border border-neutral-200/90 shadow-xs flex items-center justify-center transition-all z-10 ${
+          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 backdrop-blur-xs border border-neutral-200/90 shadow-xs flex items-center justify-center transition-all duration-200 z-10 ${
             isOutOfStock
               ? 'opacity-40 cursor-not-allowed text-neutral-400'
-              : 'text-neutral-800 hover:bg-black hover:text-white hover:border-black cursor-pointer'
+              : 'text-neutral-800 hover:bg-black hover:text-white hover:border-black active:scale-95 cursor-pointer'
           }`}
         >
           <ShoppingBag className="w-4 h-4" />
@@ -117,26 +125,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               onQuickView(product);
             }}
             title="Quick view"
-            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-md bg-white/95 text-neutral-800 hover:text-black hover:bg-white border border-neutral-200/90 flex items-center justify-center shadow-xs opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 cursor-pointer z-10"
+            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-md bg-white/95 backdrop-blur-xs text-neutral-800 hover:text-black hover:bg-white border border-neutral-200/90 flex items-center justify-center shadow-xs opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 cursor-pointer z-10"
           >
             <Eye className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
 
-      {/* Info container strictly formatted per reference */}
-      <div className="pt-2.5 pb-2 flex flex-col space-y-1">
+      {/* Info container */}
+      <div className="pt-3 pb-2 flex flex-col space-y-1">
         {/* Row 1: Title on Left, Product Code on Right */}
         <div className="flex items-baseline justify-between gap-2">
           <h4 className="text-[13px] sm:text-sm font-semibold text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1">
             {product.name}
           </h4>
-          <span className="text-[11px] sm:text-xs font-mono text-neutral-500 shrink-0">
+          <span className="text-[11px] sm:text-xs font-mono tabular-nums text-neutral-500 shrink-0">
             {displaySku}
           </span>
         </div>
 
-        {/* Row 2: Color count dropdown line */}
+        {/* Row 2: Color count line */}
         <div className="flex items-center justify-between text-xs text-neutral-500">
           <div className="flex items-center gap-1 hover:text-black transition-colors">
             <span>{colorCount} {colorCount === 1 ? 'color' : 'colors'}</span>
@@ -161,8 +169,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
         </div>
 
-        {/* Row 3: Price line with BDT, strike-through original, and bold red discount percent */}
-        <div className="flex items-baseline flex-wrap gap-2 pt-0.5">
+        {/* Row 3: Price line */}
+        <div className="flex items-baseline flex-wrap gap-2 pt-0.5 tabular-nums">
           <span className="text-[13px] sm:text-sm font-bold text-neutral-900">
             BDT {currentPrice.toLocaleString('en-BD')}
           </span>

@@ -48,7 +48,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     items, 
     subtotal, 
     discount, 
+    coupons,
+    baseDeliveryCharge,
     deliveryCharge, 
+    isFreeDelivery,
+    activeFreeDeliveryCoupon,
     grandTotal, 
     appliedCoupon, 
     deliveryZones,
@@ -161,6 +165,27 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     );
   }
 
+  // Also check if entered phone/email unlocks a customer-targeted one-time free delivery pass
+  const phoneMatchedFreeDelivery =
+    !activeFreeDeliveryCoupon && coupons.length > 0
+      ? settingsService.getActiveFreeDeliveryForUser(coupons, {
+          uid: currentUser?.uid,
+          email: email.trim() || currentUser?.email,
+          phone: phone.trim() || customerProfile?.phone,
+        })
+      : null;
+
+  const effectiveFreeDeliveryCoupon =
+    activeFreeDeliveryCoupon ||
+    (phoneMatchedFreeDelivery && subtotal >= (phoneMatchedFreeDelivery.minOrderAmount || 0)
+      ? phoneMatchedFreeDelivery
+      : null);
+
+  const effectiveFreeDelivery = isFreeDelivery || Boolean(effectiveFreeDeliveryCoupon);
+  const effectiveDeliveryCharge = effectiveFreeDelivery ? 0 : (baseDeliveryCharge || deliveryCharge);
+  const effectiveGrandTotal = Math.max(0, subtotal - discount + effectiveDeliveryCharge);
+  const needsAdvancePayment = paymentMode === 'online' || (paymentMode === 'cod' && effectiveDeliveryCharge > 0);
+
   // Calculate Online Payment Discount
   const isOnlinePayment = paymentMode === 'online';
   let onlineDiscount = 0;
@@ -172,7 +197,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     }
   }
 
-  const finalPayableTotal = Math.max(0, grandTotal - onlineDiscount);
+  const finalPayableTotal = Math.max(0, effectiveGrandTotal - onlineDiscount);
 
   // Copy gateway number to clipboard
   const handleCopyNumber = (num: string) => {
@@ -209,25 +234,25 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
       return;
     }
 
-    // Require Sender Number and TrxID for payment verification
+    // Require Sender Number and TrxID when advance or full online payment is required
     const activeGwName = onlineGateway.toUpperCase();
-    const reqAmount = paymentMode === 'cod' ? deliveryCharge : finalPayableTotal;
-
-    if (!senderNumber.trim() || senderNumber.trim().length < 11) {
-      setErrorMessage(
-        paymentMode === 'cod'
-          ? `Please enter your ${activeGwName} number used to pay the ৳${deliveryCharge} advance delivery fee.`
-          : `Please enter the ${activeGwName} mobile number used to send payment.`
-      );
-      return;
-    }
-    if (!transactionId.trim() || transactionId.trim().length < 6) {
-      setErrorMessage(
-        paymentMode === 'cod'
-          ? `Please provide the Transaction ID (TrxID) for the ৳${deliveryCharge} advance delivery fee payment.`
-          : 'Please provide a valid Transaction ID (TrxID) received in your payment SMS/app.'
-      );
-      return;
+    if (needsAdvancePayment) {
+      if (!senderNumber.trim() || senderNumber.trim().length < 11) {
+        setErrorMessage(
+          paymentMode === 'cod'
+            ? `Please enter your ${activeGwName} number used to pay the ৳${effectiveDeliveryCharge} advance delivery fee.`
+            : `Please enter the ${activeGwName} mobile number used to send payment.`
+        );
+        return;
+      }
+      if (!transactionId.trim() || transactionId.trim().length < 6) {
+        setErrorMessage(
+          paymentMode === 'cod'
+            ? `Please provide the Transaction ID (TrxID) for the ৳${effectiveDeliveryCharge} advance delivery fee payment.`
+            : 'Please provide a valid Transaction ID (TrxID) received in your payment SMS/app.'
+        );
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -235,7 +260,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     try {
       // 1. Process payment proof if provided (compressed client-side, zero storage failure)
       let proofUrl = '';
-      if (proofFile) {
+      if (needsAdvancePayment && proofFile) {
         proofUrl = await orderService.uploadPaymentProof(proofFile);
       }
 
@@ -251,22 +276,25 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
       if (notes.trim()) shippingAddress.notes = notes.trim();
 
       // 3. Prepare payment details with advance delivery fee tracking
-      const paymentDetails: PaymentDetails = {
-        method: paymentMethod,
-        senderNumber: senderNumber.trim(),
-        transactionId: transactionId.trim().toUpperCase(),
-        ...(proofUrl ? { proofUrl } : {}),
-      };
+      let paymentDetails: PaymentDetails | undefined;
+      if (needsAdvancePayment) {
+        paymentDetails = {
+          method: paymentMethod,
+          senderNumber: senderNumber.trim(),
+          transactionId: transactionId.trim().toUpperCase(),
+          ...(proofUrl ? { proofUrl } : {}),
+        };
 
-      if (paymentMode === 'cod') {
-        paymentDetails.advanceDeliveryPaid = true;
-        paymentDetails.advanceGateway = onlineGateway;
-        paymentDetails.advanceAmount = deliveryCharge;
-        paymentDetails.dueOnDelivery = Math.max(0, subtotal - discount);
-      } else {
-        if (onlineDiscount > 0) paymentDetails.onlineDiscountApplied = onlineDiscount;
-        paymentDetails.advanceAmount = finalPayableTotal;
-        paymentDetails.dueOnDelivery = 0;
+        if (paymentMode === 'cod') {
+          paymentDetails.advanceDeliveryPaid = true;
+          paymentDetails.advanceGateway = onlineGateway;
+          paymentDetails.advanceAmount = effectiveDeliveryCharge;
+          paymentDetails.dueOnDelivery = Math.max(0, subtotal - discount);
+        } else {
+          if (onlineDiscount > 0) paymentDetails.onlineDiscountApplied = onlineDiscount;
+          paymentDetails.advanceAmount = finalPayableTotal;
+          paymentDetails.dueOnDelivery = 0;
+        }
       }
 
       // 4. Submit order
@@ -277,10 +305,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
         customerEmail: email.trim() || currentUser?.email || '',
         shippingAddress,
         items,
-        couponCode: appliedCoupon?.code || '',
+        couponCode: appliedCoupon?.code || effectiveFreeDeliveryCoupon?.code || '',
+        freeDeliveryApplied: effectiveFreeDelivery,
+        freeDeliveryCouponId: effectiveFreeDeliveryCoupon?.id || '',
         deliveryZoneId: selectedZone?.id || 'dhaka',
         paymentMethod,
-        paymentDetails,
+        ...(paymentDetails ? { paymentDetails } : {}),
       });
 
       if (!result.success || !result.orderId) {
@@ -476,10 +506,20 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
             {/* SECTION 3: Shipping Zone */}
             <div className="space-y-4 pt-5 border-t border-neutral-200">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">3</span>
-                <span>Shipping Zone</span>
-              </h2>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">3</span>
+                  <span>Shipping Zone</span>
+                </h2>
+                {effectiveFreeDelivery && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full">
+                    <Truck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>
+                      One-Time Free Delivery Applied! {effectiveFreeDeliveryCoupon?.code ? `(${effectiveFreeDeliveryCoupon.code})` : ''}
+                    </span>
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[...deliveryZones]
                   .sort((a, b) => {
@@ -528,9 +568,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                                 {timingBadge}
                               </span>
                             </div>
-                            <span className="font-black text-neutral-900 text-base font-mono shrink-0">
-                              ৳{zone.charge}
-                            </span>
+                            {effectiveFreeDelivery ? (
+                              <div className="text-right shrink-0">
+                                <span className="block text-[10px] text-neutral-400 line-through font-mono">৳{zone.charge}</span>
+                                <span className="font-black text-emerald-700 text-sm uppercase">FREE</span>
+                              </div>
+                            ) : (
+                              <span className="font-black text-neutral-900 text-base font-mono shrink-0">
+                                ৳{zone.charge}
+                              </span>
+                            )}
                           </div>
                           <p className="text-neutral-500 text-[11px] leading-relaxed mt-2.5 pt-2 border-t border-neutral-100">
                             {detailDesc}
@@ -560,7 +607,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
               {/* Two Primary Options: Cash on Delivery & Online Payment */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 
-                {/* 1. Cash on Delivery (COD with Advance Delivery Fee) */}
+                {/* 1. Cash on Delivery */}
                 <div
                   onClick={() => setPaymentMode('cod')}
                   className={`p-4 border rounded-xl cursor-pointer transition-all flex items-start gap-3 select-none ${
@@ -577,14 +624,22 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     className="mt-1 accent-black cursor-pointer"
                   />
                   <div className="text-xs flex-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="font-bold text-neutral-900 text-sm">Cash on Delivery</span>
-                      <span className="text-[10px] uppercase font-bold text-neutral-700 bg-neutral-200/90 px-2 py-0.5 rounded">
-                        ৳{deliveryCharge} Advance
-                      </span>
+                      {effectiveDeliveryCharge === 0 ? (
+                        <span className="text-[10px] uppercase font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                          ৳0 Advance
+                        </span>
+                      ) : (
+                        <span className="text-[10px] uppercase font-bold text-neutral-700 bg-neutral-200/90 px-2 py-0.5 rounded">
+                          ৳{effectiveDeliveryCharge} Advance
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-neutral-500 mt-1">
-                      Pay ৳{deliveryCharge} delivery fee in advance via bKash/Nagad/Rocket; pay garment total of ৳{Math.max(0, subtotal - discount)} upon parcel delivery.
+                      {effectiveDeliveryCharge === 0
+                        ? `One-Time Free Delivery applied! No advance payment needed—pay ৳${Math.max(0, subtotal - discount).toLocaleString('en-BD')} in cash upon parcel delivery.`
+                        : `Pay ৳${effectiveDeliveryCharge} delivery fee in advance via bKash/Nagad/Rocket; pay garment total of ৳${Math.max(0, subtotal - discount)} upon parcel delivery.`}
                     </p>
                   </div>
                 </div>
@@ -622,8 +677,23 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
               </div>
 
-              {/* Digital Gateway Payment Box (For both COD Advance Fee & Online Prepayment) */}
-              {activeGateway && (
+              {/* COD Free Delivery Confirmation Card (No advance MFS required!) */}
+              {paymentMode === 'cod' && effectiveDeliveryCharge === 0 && (
+                <div className="p-4 sm:p-5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3 text-xs text-emerald-900">
+                  <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-sm text-emerald-950">
+                      Cash on Delivery Ready — ৳0 Advance Required
+                    </p>
+                    <p className="text-[11px] text-emerald-800 mt-0.5 leading-relaxed">
+                      Your one-time Free Delivery reward{effectiveFreeDeliveryCoupon?.code ? ` (${effectiveFreeDeliveryCoupon.code})` : ''} covers the ৳{baseDeliveryCharge} courier fee. Simply click <b>"Confirm & Place Order"</b> and pay <b>৳{Math.max(0, subtotal - discount).toLocaleString('en-BD')}</b> to the courier when your parcel arrives.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Digital Gateway Payment Box (For COD with delivery fee > 0 OR Full Online Prepayment) */}
+              {activeGateway && needsAdvancePayment && (
                 <div className="p-5 sm:p-6 bg-neutral-50/90 border border-neutral-300 rounded-2xl shadow-xs space-y-5 animate-fade-in transition-all">
                   
                   {/* Mode Banner */}
@@ -635,7 +705,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     <div>
                       <p className="font-bold text-sm">
                         {paymentMode === 'cod'
-                          ? `Pay ৳${deliveryCharge} Delivery Charge to Confirm Order`
+                          ? `Pay ৳${effectiveDeliveryCharge} Delivery Charge to Confirm Order`
                           : `Pay Full Order: ৳${finalPayableTotal.toLocaleString('en-BD')}`}
                       </p>
                       <p className="text-[11px] mt-0.5 opacity-90">
@@ -738,7 +808,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                         {paymentMode === 'cod' ? 'Advance Delivery Charge to Send:' : 'Exact Total to Send:'}
                       </p>
                       <p className="text-xl font-black text-neutral-900">
-                        ৳{(paymentMode === 'cod' ? deliveryCharge : finalPayableTotal).toLocaleString('en-BD')}
+                        ৳{(paymentMode === 'cod' ? effectiveDeliveryCharge : finalPayableTotal).toLocaleString('en-BD')}
                       </p>
                     </div>
                     {paymentMode === 'cod' ? (
@@ -762,7 +832,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       <span>How to Send Payment:</span>
                     </p>
                     <div className="space-y-1 text-xs text-neutral-600 leading-relaxed font-sans whitespace-pre-line pl-1">
-                      {activeGateway.instructions || `1. Open your ${onlineGateway.toUpperCase()} app or dial the USSD code.\n2. Choose "Send Money".\n3. Enter the number shown above: ${activeGateway.number}\n4. Enter the exact Amount: ৳${paymentMode === 'cod' ? deliveryCharge : finalPayableTotal}\n5. Complete the payment, then enter your Sender Number & TrxID below.`}
+                      {activeGateway.instructions || `1. Open your ${onlineGateway.toUpperCase()} app or dial the USSD code.\n2. Choose "Send Money".\n3. Enter the number shown above: ${activeGateway.number}\n4. Enter the exact Amount: ৳${paymentMode === 'cod' ? effectiveDeliveryCharge : finalPayableTotal}\n5. Complete the payment, then enter your Sender Number & TrxID below.`}
                     </div>
                   </div>
 
@@ -900,23 +970,45 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
               <div className="flex justify-between text-neutral-600">
                 <span>Delivery Fee ({selectedZone?.name})</span>
-                <span>৳{deliveryCharge.toLocaleString('en-BD')}</span>
+                {effectiveFreeDelivery ? (
+                  <span className="font-bold text-emerald-700">
+                    <span className="line-through text-neutral-400 mr-1.5 font-normal">৳{baseDeliveryCharge}</span>
+                    FREE (৳0)
+                  </span>
+                ) : (
+                  <span>৳{effectiveDeliveryCharge.toLocaleString('en-BD')}</span>
+                )}
               </div>
+
+              {effectiveFreeDelivery && (
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span>One-Time Free Delivery ({effectiveFreeDeliveryCoupon?.code || 'VIP'})</span>
+                  <span>-৳{baseDeliveryCharge.toLocaleString('en-BD')}</span>
+                </div>
+              )}
 
               {/* Exact display per user specification for COD vs Online */}
               {paymentMode === 'cod' ? (
                 <div className="pt-2 border-t border-neutral-200 space-y-2">
-                  <div className="flex justify-between text-emerald-700 font-semibold">
-                    <span>Advance Delivery Fee Paid</span>
-                    <span>-৳{deliveryCharge.toLocaleString('en-BD')}</span>
-                  </div>
+                  {effectiveDeliveryCharge > 0 && (
+                    <div className="flex justify-between text-emerald-700 font-semibold">
+                      <span>Advance Delivery Fee Paid</span>
+                      <span>-৳{effectiveDeliveryCharge.toLocaleString('en-BD')}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-base font-extrabold text-neutral-900 pt-1 border-t border-neutral-100">
                     <span>Due on Delivery (Cash to Courier)</span>
                     <span className="text-black">৳{Math.max(0, subtotal - discount).toLocaleString('en-BD')}</span>
                   </div>
-                  <div className="flex justify-between text-xs font-bold text-neutral-600 bg-neutral-50 p-2.5 rounded-lg border border-neutral-200">
+                  <div className={`flex justify-between text-xs font-bold p-2.5 rounded-lg border ${
+                    effectiveDeliveryCharge === 0
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-neutral-50 text-neutral-600 border-neutral-200'
+                  }`}>
                     <span>Advance Payment Right Now</span>
-                    <span className="font-mono text-black font-extrabold">৳{deliveryCharge.toLocaleString('en-BD')}</span>
+                    <span className="font-mono font-extrabold">
+                      {effectiveDeliveryCharge === 0 ? '৳0 (Free Delivery)' : `৳${effectiveDeliveryCharge.toLocaleString('en-BD')}`}
+                    </span>
                   </div>
                 </div>
               ) : (
@@ -937,7 +1029,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
             <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs flex items-center justify-between">
               <span className="text-neutral-500">Selected Method:</span>
               <span className="font-bold text-neutral-900 uppercase">
-                {paymentMode === 'cod' ? `COD (Advance ৳${deliveryCharge} via ${onlineGateway})` : `${onlineGateway.toUpperCase()} (Online Full)`}
+                {paymentMode === 'cod'
+                  ? (effectiveDeliveryCharge === 0
+                      ? 'COD (৳0 Advance • Free Delivery)'
+                      : `COD (Advance ৳${effectiveDeliveryCharge} via ${onlineGateway})`)
+                  : `${onlineGateway.toUpperCase()} (Online Full)`}
               </span>
             </div>
 

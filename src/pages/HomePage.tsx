@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, ChevronRight, Sparkles, Shield, Award, Layers } from 'lucide-react';
+import { ArrowRight, ChevronRight, Shield, Award, Layers } from 'lucide-react';
 import { Product, Category, Banner, Review } from '../types';
 import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
@@ -95,10 +95,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
           /* Default Brand Hero when no banners exist in Firestore yet */
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 sm:py-32 w-full">
             <div className="max-w-3xl space-y-6">
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-neutral-900 border border-neutral-800 rounded-full text-xs text-neutral-300 font-medium">
-                <Sparkles className="w-3.5 h-3.5 text-neutral-400" />
-                <span>Elegance Defined • Contemporary Bangladeshi Menswear</span>
-              </div>
+              <p className="text-[11px] uppercase tracking-[0.22em] text-neutral-400 font-semibold">
+                Elegance Defined · Contemporary Bangladeshi Menswear
+              </p>
               <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-none">
                 SELVEE
               </h1>
@@ -153,7 +152,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                   <img
                     src={cat.image}
                     alt={cat.name}
-                    className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
+                    decoding="async"
+                    className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 ease-out will-change-transform"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-white p-6 text-center">

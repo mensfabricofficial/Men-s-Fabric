@@ -163,7 +163,7 @@ export const AdminProducts: React.FC = () => {
     setSlug(prod.slug);
     setSku(prod.sku);
     setCategory(prod.category);
-    setGender(prod.gender || 'men');
+    setGender(prod.gender === 'unisex' ? 'men' : (prod.gender || 'men'));
     setFabric(prod.fabric || '');
     setDescription(prod.description || '');
     setPrice(prod.price);
@@ -839,7 +839,6 @@ service cloud.firestore {
                     >
                       <option value="men">Men</option>
                       <option value="women">Women</option>
-                      <option value="unisex">Unisex</option>
                       <option value="kids">Kids</option>
                     </select>
                   </div>

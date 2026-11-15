@@ -30,6 +30,7 @@ import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { printElementById } from '../lib/printHelper';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
 
 export const AdminOrders: React.FC = () => {
   const { currentUser } = useAuth();
@@ -134,7 +135,7 @@ export const AdminOrders: React.FC = () => {
 
   const handlePrintInvoice = () => {
     if (selectedOrder) {
-      printElementById('printable-invoice-container', `Invoice-${selectedOrder.orderNumber}`);
+      printElementById('printable-invoice-container', getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id));
     } else {
       window.print();
     }
@@ -418,7 +419,7 @@ export const AdminOrders: React.FC = () => {
               <div className="flex items-center gap-2">
                 <ShoppingBag className="w-4 h-4 text-neutral-800" />
                 <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
-                  Invoice & Order: {selectedOrder.orderNumber}
+                  Invoice: {getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}
                 </h3>
               </div>
 
@@ -497,423 +498,297 @@ export const AdminOrders: React.FC = () => {
               }
             ` }} />
 
-            {/* Modal Body / Invoice Content */}
-            <div id="printable-invoice-container" className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+            {/* Modal Body */}
+            <div className="p-6 sm:p-8 overflow-y-auto space-y-6 flex-1 text-xs">
               
-              {invoiceFormat === 'thermal' ? (
-                /* ================= THERMAL POS RECEIPT LAYOUT (80mm) ================= */
-                <div className="max-w-[340px] mx-auto bg-white p-5 border border-dashed border-neutral-300 font-mono text-[11px] text-neutral-900 space-y-3 leading-tight print:border-none print:p-0 print:max-w-none">
-                  {/* Store Header */}
-                  <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
-                    <p className="font-extrabold text-sm tracking-wider uppercase">Selvee</p>
-                    <p className="text-[10px] text-neutral-600 font-sans italic">Clothing Brand • Premium Menswear</p>
-                    <p className="text-[10px] text-neutral-600">Dhaka, Bangladesh</p>
-                    <p className="text-[10px] text-neutral-600">Hotline: 01700-000000</p>
-                  </div>
+              {/* Printable Invoice Container */}
+              <div id="printable-invoice-container">
+                {invoiceFormat === 'thermal' ? (
+                  /* ================= THERMAL POS RECEIPT LAYOUT (80mm) ================= */
+                  <div className="max-w-[340px] mx-auto bg-white p-5 border border-dashed border-neutral-300 font-mono text-[11px] text-neutral-900 space-y-3 leading-tight print:border-none print:p-0 print:max-w-none">
+                    {/* Store Header (Logo only — no repeated brand name below) */}
+                    <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
+                      <BrandLogo variant="dark" imgClassName="h-6 mx-auto" />
+                      <p className="text-[10px] text-neutral-600">Dhaka, Bangladesh</p>
+                      <p className="text-[10px] text-neutral-600">Hotline: +880 1700-000000</p>
+                    </div>
 
-                  {/* Order & Customer Metadata */}
-                  <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
-                    <div className="flex justify-between">
-                      <span className="font-bold">INVOICE:</span>
-                      <span className="font-bold">{selectedOrder.orderNumber}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>DATE:</span>
-                      <span>{selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleString('en-BD') : new Date().toLocaleDateString('en-BD')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>CUSTOMER:</span>
-                      <span className="font-bold truncate max-w-[170px]">{selectedOrder.customerName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>PHONE:</span>
-                      <span className="font-bold">{selectedOrder.customerPhone}</span>
-                    </div>
-                    <div>
-                      <span>DESTINATION:</span>
-                      <p className="text-neutral-700 pl-1">{selectedOrder.shippingAddress.address}, {selectedOrder.shippingAddress.district}</p>
-                    </div>
-                  </div>
-
-                  {/* Itemized Table */}
-                  <div className="pb-2 border-b border-dashed border-neutral-400">
-                    <div className="flex justify-between font-bold border-b border-neutral-300 pb-1 mb-1 text-[10px]">
-                      <span>ITEM / VARIANT</span>
-                      <span>QTY x PRICE = TOTAL</span>
-                    </div>
-                    <div className="space-y-2">
-                      {selectedOrder.items.map((item, idx) => (
-                        <div key={idx} className="space-y-0.5">
-                          <p className="font-bold">{item.productName}</p>
-                          <div className="flex justify-between text-[10px] text-neutral-700">
-                            <span>{item.size} / {item.color}</span>
-                            <span>{item.quantity} x ৳{item.unitPrice} = <b>৳{item.totalPrice}</b></span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Summary Totals */}
-                  <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[11px]">
-                    <div className="flex justify-between">
-                      <span>Subtotal:</span>
-                      <span>৳{selectedOrder.subtotal.toLocaleString('en-BD')}</span>
-                    </div>
-                    {selectedOrder.discount > 0 && (
-                      <div className="flex justify-between text-emerald-800">
-                        <span>Coupon ({selectedOrder.couponCode}):</span>
-                        <span>-৳{selectedOrder.discount.toLocaleString('en-BD')}</span>
-                      </div>
-                    )}
-                    {selectedOrder.onlineDiscount && selectedOrder.onlineDiscount > 0 ? (
-                      <div className="flex justify-between text-emerald-800 font-bold">
-                        <span>Online Prepayment Discount:</span>
-                        <span>-৳{selectedOrder.onlineDiscount.toLocaleString('en-BD')}</span>
-                      </div>
-                    ) : null}
-                    <div className="flex justify-between">
-                      <span>Delivery Fee ({selectedOrder.deliveryZone}):</span>
-                      <span>৳{selectedOrder.deliveryCharge.toLocaleString('en-BD')}</span>
-                    </div>
-                    {selectedOrder.advanceDeliveryPaid && (
-                      <div className="flex justify-between text-emerald-800 font-bold">
-                        <span>Adv. Delivery Paid ({selectedOrder.advanceGateway?.toUpperCase() || 'MFS'}):</span>
-                        <span>-৳{(selectedOrder.advanceAmount || selectedOrder.deliveryCharge).toLocaleString('en-BD')}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-xs font-extrabold pt-1 border-t border-neutral-300">
-                      <span>ORDER TOTAL:</span>
-                      <span>৳{selectedOrder.total.toLocaleString('en-BD')}</span>
-                    </div>
-                    {selectedOrder.advanceDeliveryPaid && (
-                      <div className="flex justify-between text-xs font-black text-red-700 pt-0.5">
-                        <span>DUE ON ARRIVAL:</span>
-                        <span>৳{(selectedOrder.dueOnDelivery ?? (selectedOrder.total - (selectedOrder.advanceAmount || selectedOrder.deliveryCharge))).toLocaleString('en-BD')}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Payment Details */}
-                  <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
-                    <div className="flex justify-between">
-                      <span className="font-bold">PAYMENT METHOD:</span>
-                      <span className="font-extrabold uppercase">{selectedOrder.paymentMethod}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-bold">PAYMENT STATUS:</span>
-                      <span className="font-extrabold uppercase">{selectedOrder.paymentStatus}</span>
-                    </div>
-                    {selectedOrder.paymentDetails?.transactionId && (
+                    {/* Order & Customer Metadata */}
+                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
                       <div className="flex justify-between">
-                        <span>TrxID:</span>
-                        <span className="font-bold">{selectedOrder.paymentDetails.transactionId}</span>
+                        <span className="font-bold">INVOICE:</span>
+                        <span className="font-bold">{getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}</span>
                       </div>
-                    )}
-                    {selectedOrder.paymentDetails?.senderNumber && (
                       <div className="flex justify-between">
-                        <span>Sender No:</span>
-                        <span className="font-bold">{selectedOrder.paymentDetails.senderNumber}</span>
+                        <span>ORDER:</span>
+                        <span>{selectedOrder.orderNumber}</span>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Simulated Barcode & Footer */}
-                  <div className="text-center pt-2 space-y-1.5">
-                    <div className="tracking-[4px] font-bold text-xs">
-                      ||| | |||| | ||| || ||||| | |||
-                    </div>
-                    <p className="text-[9px] font-mono tracking-widest">{selectedOrder.orderNumber}</p>
-                    <p className="text-[10px] font-bold uppercase pt-1">Thank You For Choosing Selvee!</p>
-                    <p className="text-[9px] text-neutral-500">7-Day exchange with original invoice & parcel tag.</p>
-                  </div>
-                </div>
-              ) : (
-                /* ================= STANDARD A4 DETAILED INVOICE LAYOUT ================= */
-                <div className="space-y-6">
-                  {/* Printable Header */}
-                  <div className="flex justify-between items-start border-b border-neutral-200 pb-4">
-                    <div>
-                      <BrandLogo variant="dark" className="h-9 mb-1" />
-                      <p className="font-bold text-neutral-900 text-sm">Selvee (Clothing Brand)</p>
-                      <p className="text-neutral-500 text-[11px]">Dhaka, Bangladesh • Official Customer Tax Invoice</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-base font-extrabold text-black font-mono">{selectedOrder.orderNumber}</p>
-                      <p className="text-neutral-500">
-                        Date: {selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleDateString('en-BD') : 'N/A'}
-                      </p>
-                      <div className="mt-1 flex items-center justify-end gap-1.5">
-                        {getMethodBadge(selectedOrder)}
-                        {getPaymentStatusBadge(selectedOrder.paymentStatus)}
+                      <div className="flex justify-between">
+                        <span>DATE:</span>
+                        <span>{selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleString('en-BD') : new Date().toLocaleDateString('en-BD')}</span>
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Dedicated Payment Verification Box (bKash/Nagad/Rocket/COD) */}
-                  <div className="border border-neutral-200 rounded-xl p-4 bg-gradient-to-br from-neutral-50 to-white shadow-2xs">
-                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-neutral-200">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                        <h4 className="font-bold uppercase tracking-wider text-neutral-900">
-                          Payment Verification & Trx Details
-                        </h4>
+                      <div className="flex justify-between">
+                        <span>CUSTOMER:</span>
+                        <span className="font-bold truncate max-w-[170px]">{selectedOrder.customerName}</span>
                       </div>
-                      {getMethodBadge(selectedOrder)}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-neutral-400 block">Payment Method</span>
-                          <p className="font-bold text-neutral-900 uppercase">
-                            {selectedOrder.paymentMethod === 'cod' ? 'Cash on Delivery (COD)' : `${selectedOrder.paymentMethod.toUpperCase()} (Online Prepayment)`}
-                          </p>
-                        </div>
-
-                        {selectedOrder.paymentDetails?.transactionId && (
-                          <div>
-                            <span className="text-[10px] uppercase font-bold text-neutral-400 block">Transaction ID (TrxID)</span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-extrabold text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded">
-                                {selectedOrder.paymentDetails.transactionId}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => copyToClipboard(selectedOrder.paymentDetails?.transactionId || '', 'trx')}
-                                className="p-1 hover:bg-neutral-200 rounded text-neutral-600 cursor-pointer print:hidden"
-                                title="Copy TrxID"
-                              >
-                                {copiedKey === 'trx' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {selectedOrder.paymentDetails?.senderNumber && (
-                          <div>
-                            <span className="text-[10px] uppercase font-bold text-neutral-400 block">Sender Phone Number</span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-neutral-900">
-                                {selectedOrder.paymentDetails.senderNumber}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => copyToClipboard(selectedOrder.paymentDetails?.senderNumber || '', 'sender')}
-                                className="p-1 hover:bg-neutral-200 rounded text-neutral-600 cursor-pointer print:hidden"
-                                title="Copy Sender Number"
-                              >
-                                {copiedKey === 'sender' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {selectedOrder.onlineDiscount && selectedOrder.onlineDiscount > 0 ? (
-                          <div>
-                            <span className="text-[10px] uppercase font-bold text-emerald-600 block">Online Prepayment Discount</span>
-                            <p className="font-bold text-emerald-700">৳{selectedOrder.onlineDiscount} deducted</p>
-                          </div>
-                        ) : null}
+                      <div className="flex justify-between">
+                        <span>PHONE:</span>
+                        <span className="font-bold">{selectedOrder.customerPhone}</span>
                       </div>
-
-                      {/* Payment Screenshot Proof */}
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-1.5">
-                          Payment Proof Screenshot
-                        </span>
-                        {selectedOrder.paymentDetails?.proofUrl ? (
-                          <div className="relative group rounded-lg overflow-hidden border border-neutral-300 max-w-[220px] bg-neutral-100">
-                            <img
-                              src={selectedOrder.paymentDetails.proofUrl}
-                              alt="Payment Proof"
-                              className="w-full h-32 object-cover cursor-pointer group-hover:scale-105 transition-transform"
-                              onClick={() => setZoomedProofUrl(selectedOrder.paymentDetails?.proofUrl || null)}
-                            />
-                            <div 
-                              onClick={() => setZoomedProofUrl(selectedOrder.paymentDetails?.proofUrl || null)}
-                              className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer text-white text-[11px] font-semibold gap-1 print:hidden"
-                            >
-                              <Maximize2 className="w-4 h-4" />
-                              <span>Click to Zoom</span>
+                        <span>DESTINATION:</span>
+                        <p className="text-neutral-700 pl-1">{selectedOrder.shippingAddress.address}, {selectedOrder.shippingAddress.district}</p>
+                      </div>
+                    </div>
+
+                    {/* Itemized Table */}
+                    <div className="pb-2 border-b border-dashed border-neutral-400">
+                      <div className="flex justify-between font-bold border-b border-neutral-300 pb-1 mb-1 text-[10px]">
+                        <span>ITEM / VARIANT</span>
+                        <span>QTY x PRICE = TOTAL</span>
+                      </div>
+                      <div className="space-y-2">
+                        {selectedOrder.items.map((item, idx) => (
+                          <div key={idx} className="space-y-0.5">
+                            <p className="font-bold">{item.productName}</p>
+                            <div className="flex justify-between text-[10px] text-neutral-700">
+                              <span>{item.size} / {item.color}</span>
+                              <span>{item.quantity} x ৳{item.unitPrice} = <b>৳{item.totalPrice}</b></span>
                             </div>
                           </div>
-                        ) : (
-                          <div className="p-4 bg-neutral-100 rounded-lg text-center text-neutral-500 border border-dashed border-neutral-300">
-                            <ImageIcon className="w-6 h-6 mx-auto mb-1 text-neutral-400" />
-                            <p className="text-[11px]">No proof screenshot attached</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Quick Payment Status Actions in Admin */}
-                    <div className="mt-4 pt-3 border-t border-neutral-200 print:hidden">
-                      <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
-                        Update Payment Status:
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleUpdatePayment('paid')}
-                          className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                            selectedOrder.paymentStatus === 'paid'
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700'
-                          }`}
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          Mark as Paid / Verified
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdatePayment('pending')}
-                          className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                            selectedOrder.paymentStatus === 'pending'
-                              ? 'bg-amber-600 text-white shadow-xs'
-                              : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700'
-                          }`}
-                        >
-                          <Clock className="w-3.5 h-3.5" />
-                          Mark as Pending
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdatePayment('failed')}
-                          className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                            selectedOrder.paymentStatus === 'failed'
-                              ? 'bg-red-600 text-white shadow-xs'
-                              : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700'
-                          }`}
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          Mark as Failed / Invalid Trx
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdatePayment('refunded')}
-                          className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                            selectedOrder.paymentStatus === 'refunded'
-                              ? 'bg-purple-600 text-white shadow-xs'
-                              : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700'
-                          }`}
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          Mark as Refunded
-                        </button>
-                      </div>
-                    </div>
-
-                  </div>
-
-                  {/* Customer & Shipping info */}
-                  <div className="grid grid-cols-2 gap-4 bg-neutral-50 p-4 rounded-lg">
-                    <div>
-                      <span className="font-bold uppercase tracking-wider text-neutral-400 text-[10px] block mb-1">
-                        Customer Information
-                      </span>
-                      <p className="font-bold text-neutral-900 text-sm">{selectedOrder.customerName}</p>
-                      <p className="font-mono">{selectedOrder.customerPhone}</p>
-                      {selectedOrder.customerEmail && <p>{selectedOrder.customerEmail}</p>}
-                    </div>
-                    <div>
-                      <span className="font-bold uppercase tracking-wider text-neutral-400 text-[10px] block mb-1">
-                        Shipping Destination
-                      </span>
-                      <p className="font-medium text-neutral-900">{selectedOrder.shippingAddress.address}</p>
-                      <p>{selectedOrder.shippingAddress.district}, {selectedOrder.shippingAddress.division}</p>
-                      <p className="font-semibold text-neutral-700 mt-1">Zone: {selectedOrder.deliveryZone}</p>
-                      {selectedOrder.shippingAddress.notes && (
-                        <p className="text-neutral-500 mt-1 italic font-normal">Note: {selectedOrder.shippingAddress.notes}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Ordered Items Table */}
-                  <div>
-                    <table className="w-full text-left border-collapse border border-neutral-200">
-                      <thead className="bg-neutral-100 font-bold uppercase text-neutral-700 text-[10px]">
-                        <tr>
-                          <th className="p-2.5 border">Item & SKU</th>
-                          <th className="p-2.5 border">Size / Color</th>
-                          <th className="p-2.5 border text-center">Qty</th>
-                          <th className="p-2.5 border text-right">Unit Price</th>
-                          <th className="p-2.5 border text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-neutral-200">
-                        {selectedOrder.items.map((item, idx) => (
-                          <tr key={idx}>
-                            <td className="p-2.5 border font-medium text-neutral-900">
-                              <div>{item.productName}</div>
-                              {item.sku && <span className="font-mono text-[10px] text-neutral-400">SKU: {item.sku}</span>}
-                            </td>
-                            <td className="p-2.5 border text-neutral-600">{item.size} / {item.color}</td>
-                            <td className="p-2.5 border text-center font-bold">{item.quantity}</td>
-                            <td className="p-2.5 border text-right">৳{item.unitPrice.toLocaleString('en-BD')}</td>
-                            <td className="p-2.5 border text-right font-bold">৳{item.totalPrice.toLocaleString('en-BD')}</td>
-                          </tr>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      </div>
+                    </div>
 
-                  {/* Total Calculation */}
-                  <div className="flex justify-end">
-                    <div className="w-80 space-y-1.5 text-right">
-                      <div className="flex justify-between text-neutral-600">
+                    {/* Summary Totals */}
+                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[11px]">
+                      <div className="flex justify-between">
                         <span>Subtotal:</span>
                         <span>৳{selectedOrder.subtotal.toLocaleString('en-BD')}</span>
                       </div>
                       {selectedOrder.discount > 0 && (
-                        <div className="flex justify-between text-emerald-700 font-semibold">
-                          <span>Coupon Discount ({selectedOrder.couponCode}):</span>
+                        <div className="flex justify-between text-emerald-800">
+                          <span>Coupon ({selectedOrder.couponCode}):</span>
                           <span>-৳{selectedOrder.discount.toLocaleString('en-BD')}</span>
                         </div>
                       )}
                       {selectedOrder.onlineDiscount && selectedOrder.onlineDiscount > 0 ? (
-                        <div className="flex justify-between text-emerald-700 font-semibold">
+                        <div className="flex justify-between text-emerald-800 font-bold">
                           <span>Online Prepayment Discount:</span>
                           <span>-৳{selectedOrder.onlineDiscount.toLocaleString('en-BD')}</span>
                         </div>
                       ) : null}
-                      <div className="flex justify-between text-neutral-600">
-                        <span>Delivery Fee ({selectedOrder.deliveryZone}):</span>
-                        <span>৳{selectedOrder.deliveryCharge.toLocaleString('en-BD')}</span>
+                      <div className="flex justify-between">
+                        <span>Delivery Fee:</span>
+                        <span>{selectedOrder.deliveryCharge === 0 ? 'FREE (৳0)' : `৳${selectedOrder.deliveryCharge.toLocaleString('en-BD')}`}</span>
                       </div>
-                      {selectedOrder.advanceDeliveryPaid && (
-                        <div className="flex justify-between text-emerald-700 font-bold">
-                          <span>Adv. Delivery Fee Paid ({selectedOrder.advanceGateway?.toUpperCase() || 'MFS'}):</span>
+                      {selectedOrder.advanceDeliveryPaid && (selectedOrder.advanceAmount || 0) > 0 && (
+                        <div className="flex justify-between text-emerald-800 font-bold">
+                          <span>Adv. Delivery Paid ({selectedOrder.advanceGateway?.toUpperCase() || 'MFS'}):</span>
                           <span>-৳{(selectedOrder.advanceAmount || selectedOrder.deliveryCharge).toLocaleString('en-BD')}</span>
                         </div>
                       )}
-                      <div className="flex justify-between text-sm font-extrabold text-neutral-900 pt-1 border-t border-neutral-200">
-                        <span>Total Invoice Value:</span>
+                      <div className="flex justify-between text-xs font-extrabold pt-1 border-t border-neutral-300">
+                        <span>ORDER TOTAL:</span>
                         <span>৳{selectedOrder.total.toLocaleString('en-BD')}</span>
                       </div>
-                      {selectedOrder.advanceDeliveryPaid && (
-                        <div className="flex justify-between text-sm font-black text-red-700 pt-1.5 border-t border-dashed border-red-300 bg-red-50 p-2 rounded-lg">
-                          <span>Collectable Due on Delivery:</span>
-                          <span>৳{(selectedOrder.dueOnDelivery ?? (selectedOrder.total - (selectedOrder.advanceAmount || selectedOrder.deliveryCharge))).toLocaleString('en-BD')}</span>
+                      {selectedOrder.paymentMethod === 'cod' && (
+                        <div className="flex justify-between text-xs font-black text-red-700 pt-0.5">
+                          <span>DUE ON ARRIVAL:</span>
+                          <span>৳{(selectedOrder.dueOnDelivery ?? Math.max(0, selectedOrder.subtotal - selectedOrder.discount)).toLocaleString('en-BD')}</span>
                         </div>
                       )}
                     </div>
-                  </div>
 
-                  {/* Terms & Signature footer for A4 */}
-                  <div className="pt-4 border-t border-neutral-200 grid grid-cols-2 text-[10px] text-neutral-500">
-                    <div>
-                      <p className="font-bold text-neutral-700 mb-0.5">TERMS & EXCHANGE POLICY</p>
-                      <p>Exchange requests accepted within 7 days with original invoice & tag intact.</p>
-                      <p>Support: +880 1700-000000 • mensfabricofficial@gmail.com</p>
+                    {/* Payment Details */}
+                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
+                      <div className="flex justify-between">
+                        <span className="font-bold">PAYMENT METHOD:</span>
+                        <span className="font-extrabold uppercase">{selectedOrder.paymentMethod}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-bold">PAYMENT STATUS:</span>
+                        <span className="font-extrabold uppercase">{selectedOrder.paymentStatus}</span>
+                      </div>
+                      {selectedOrder.paymentDetails?.transactionId && (
+                        <div className="flex justify-between">
+                          <span>TrxID:</span>
+                          <span className="font-bold">{selectedOrder.paymentDetails.transactionId}</span>
+                        </div>
+                      )}
+                      {selectedOrder.paymentDetails?.senderNumber && (
+                        <div className="flex justify-between">
+                          <span>Sender No:</span>
+                          <span className="font-bold">{selectedOrder.paymentDetails.senderNumber}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-right flex flex-col justify-end">
-                      <div className="border-b border-neutral-300 w-36 ml-auto mb-1"></div>
-                      <p className="font-bold uppercase tracking-wider text-neutral-700">Authorized Signature</p>
+
+                    {/* Footer */}
+                    <div className="text-center pt-2 space-y-1.5">
+                      <div className="tracking-[4px] font-bold text-xs">
+                        ||| | |||| | ||| || ||||| | |||
+                      </div>
+                      <p className="text-[9px] font-mono tracking-widest">{getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}</p>
+                      <p className="text-[10px] font-bold uppercase pt-1">Thank You!</p>
+                      <p className="text-[9px] text-neutral-500">7-Day exchange with original invoice & parcel tag.</p>
                     </div>
+                  </div>
+                ) : (
+                  /* ================= MINIMAL UNIFIED A4 INVOICE LAYOUT ================= */
+                  <InvoiceSheet order={selectedOrder} />
+                )}
+              </div>
+
+              {/* Admin-Only Payment Verification & Trx Controls (Hidden in Print) */}
+              <div className="border border-neutral-200 rounded-xl p-4 bg-neutral-50/70 space-y-4 print:hidden">
+                <div className="flex items-center justify-between pb-2.5 border-b border-neutral-200">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    <h4 className="font-bold uppercase tracking-wider text-neutral-900">
+                      Admin Payment Verification &amp; Trx Details
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {getMethodBadge(selectedOrder)}
+                    {getPaymentStatusBadge(selectedOrder.paymentStatus)}
                   </div>
                 </div>
-              )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    {selectedOrder.paymentDetails?.transactionId && (
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-neutral-400 block">Transaction ID (TrxID)</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-extrabold text-sm text-neutral-900 bg-white px-2 py-0.5 rounded border border-neutral-200">
+                            {selectedOrder.paymentDetails.transactionId}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(selectedOrder.paymentDetails?.transactionId || '', 'trx')}
+                            className="p-1 hover:bg-neutral-200 rounded text-neutral-600 cursor-pointer"
+                            title="Copy TrxID"
+                          >
+                            {copiedKey === 'trx' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedOrder.paymentDetails?.senderNumber && (
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-neutral-400 block">Sender Phone Number</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-neutral-900">
+                            {selectedOrder.paymentDetails.senderNumber}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(selectedOrder.paymentDetails?.senderNumber || '', 'sender')}
+                            className="p-1 hover:bg-neutral-200 rounded text-neutral-600 cursor-pointer"
+                            title="Copy Sender Number"
+                          >
+                            {copiedKey === 'sender' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {!selectedOrder.paymentDetails?.transactionId && !selectedOrder.paymentDetails?.senderNumber && (
+                      <p className="text-[11px] text-neutral-500">
+                        No MFS transaction details attached for this order.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Payment Screenshot Proof */}
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-1.5">
+                      Payment Proof Screenshot
+                    </span>
+                    {selectedOrder.paymentDetails?.proofUrl ? (
+                      <div className="relative group rounded-lg overflow-hidden border border-neutral-300 max-w-[200px] bg-neutral-100">
+                        <img
+                          src={selectedOrder.paymentDetails.proofUrl}
+                          alt="Payment Proof"
+                          className="w-full h-28 object-cover cursor-pointer group-hover:scale-105 transition-transform"
+                          onClick={() => setZoomedProofUrl(selectedOrder.paymentDetails?.proofUrl || null)}
+                        />
+                        <div
+                          onClick={() => setZoomedProofUrl(selectedOrder.paymentDetails?.proofUrl || null)}
+                          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer text-white text-[11px] font-semibold gap-1"
+                        >
+                          <Maximize2 className="w-4 h-4" />
+                          <span>Click to Zoom</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-white rounded-lg text-center text-neutral-400 border border-dashed border-neutral-300">
+                        <ImageIcon className="w-5 h-5 mx-auto mb-1 text-neutral-300" />
+                        <p className="text-[11px]">No proof screenshot attached</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Payment Status Actions in Admin */}
+                <div className="pt-3 border-t border-neutral-200">
+                  <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
+                    Update Payment Status:
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdatePayment('paid')}
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedOrder.paymentStatus === 'paid'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700'
+                      }`}
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Mark as Paid / Verified
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdatePayment('pending')}
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedOrder.paymentStatus === 'pending'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700'
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      Mark as Pending
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdatePayment('failed')}
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedOrder.paymentStatus === 'failed'
+                          ? 'bg-red-600 text-white shadow-xs'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700'
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      Mark as Failed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdatePayment('refunded')}
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedOrder.paymentStatus === 'refunded'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700'
+                      }`}
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Mark as Refunded
+                    </button>
+                  </div>
+                </div>
+              </div>
 
               {/* Admin Actions Panel (Hidden in print) */}
               <div className="pt-4 border-t border-neutral-200 space-y-4 print:hidden">

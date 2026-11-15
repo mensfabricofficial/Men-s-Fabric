@@ -18,7 +18,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
     updateQuantity,
     subtotal,
     discount,
+    baseDeliveryCharge,
     deliveryCharge,
+    isFreeDelivery,
+    activeFreeDeliveryCoupon,
     grandTotal,
     appliedCoupon,
     applyCoupon,
@@ -76,7 +79,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
       />
 
       <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between">
+        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between animate-slide-in-right">
           
           {/* Header */}
           <div className="p-4 sm:p-5 border-b border-neutral-200 flex items-center justify-between bg-white">
@@ -193,7 +196,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                   <div className="flex items-center justify-between p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
                     <div className="flex items-center gap-1.5 font-medium">
                       <Tag className="w-3.5 h-3.5" />
-                      <span>Code <b>{appliedCoupon.code}</b> applied (-৳{discount})</span>
+                      <span>
+                        Code <b>{appliedCoupon.code}</b> applied{' '}
+                        {appliedCoupon.discountType === 'free_delivery' ? '(Free Delivery)' : `(-৳${discount})`}
+                      </span>
                     </div>
                     <button
                       onClick={removeCoupon}
@@ -220,6 +226,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                     </button>
                   </form>
                 )}
+                {!appliedCoupon && isFreeDelivery && activeFreeDeliveryCoupon && (
+                  <div className="mt-2 flex items-center gap-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>One-Time Free Delivery unlocked ({activeFreeDeliveryCoupon.code})!</span>
+                  </div>
+                )}
                 {couponError && <p className="text-[11px] text-red-600 mt-1">{couponError}</p>}
               </div>
 
@@ -237,7 +249,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                 )}
                 <div className="flex justify-between text-neutral-600">
                   <span>Shipping</span>
-                  <span className="text-neutral-500 font-medium">Calculated at checkout</span>
+                  {isFreeDelivery ? (
+                    <span className="font-bold text-emerald-700">
+                      <span className="line-through text-neutral-400 mr-1.5 font-normal">৳{baseDeliveryCharge}</span>
+                      FREE (৳0)
+                    </span>
+                  ) : (
+                    <span className="text-neutral-500 font-medium">Calculated at checkout</span>
+                  )}
                 </div>
                 <div className="flex justify-between text-sm font-bold text-neutral-900 pt-1.5 border-t border-neutral-200">
                   <span>Estimated Subtotal</span>

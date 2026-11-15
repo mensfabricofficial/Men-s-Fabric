@@ -6,38 +6,47 @@ import { settingsService } from '../services/settingsService';
 export const AdminReviews: React.FC = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const loadReviews = async () => {
-    setLoading(true);
+  const loadReviews = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
       const data = await settingsService.getAllReviewsAdmin();
       setReviews(data);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadReviews();
+    loadReviews(true);
   }, []);
 
   const handleToggleApproval = async (r: Review) => {
-    setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: !r.approved } : item)));
+    setErrorMsg('');
+    const nextApproved = !r.approved;
+    setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: nextApproved } : item)));
     try {
-      await settingsService.updateReviewApproval(r.id, !r.approved);
-      await loadReviews();
-    } catch {
-      // safe fallback
+      await settingsService.updateReviewApproval(r.id, nextApproved);
+      await loadReviews(false);
+    } catch (err) {
+      console.error('Failed to update review approval:', err);
+      setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: r.approved } : item)));
+      setErrorMsg('Failed to update review approval status. Please try again.');
     }
   };
 
   const handleDelete = async (id: string) => {
+    setErrorMsg('');
+    const prevList = reviews;
     setReviews((prev) => prev.filter((item) => item.id !== id));
     try {
       await settingsService.deleteReview(id);
-      await loadReviews();
-    } catch {
-      // safe fallback
+      await loadReviews(false);
+    } catch (err) {
+      console.error('Failed to delete review:', err);
+      setReviews(prevList);
+      setErrorMsg('Failed to delete review. Please try again.');
     }
   };
 
@@ -53,6 +62,12 @@ export const AdminReviews: React.FC = () => {
           Approve, review, or remove submitted customer testimonials and ratings.
         </p>
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg font-medium">
+          {errorMsg}
+        </div>
+      )}
 
       <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs">
         {loading ? (

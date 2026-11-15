@@ -277,7 +277,6 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
               <option value="all">Gender: All</option>
               <option value="men">Men</option>
               <option value="women">Women</option>
-              <option value="unisex">Unisex</option>
               <option value="kids">Kids</option>
             </select>
             <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />

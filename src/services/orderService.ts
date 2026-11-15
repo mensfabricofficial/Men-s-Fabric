@@ -16,7 +16,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { CartItem, Order, OrderStatus, PaymentStatus, ShippingAddress, PaymentMethod, PaymentDetails } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
-import { getLocalDeliveryZones } from './settingsService';
+import { getLocalDeliveryZones, settingsService } from './settingsService';
 import { productService } from './productService';
 
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
@@ -91,6 +91,8 @@ export const orderService = {
     shippingAddress: ShippingAddress;
     items: CartItem[];
     couponCode?: string;
+    freeDeliveryApplied?: boolean;
+    freeDeliveryCouponId?: string;
     deliveryZoneId: string;
     paymentMethod: PaymentMethod;
     paymentDetails?: PaymentDetails;
@@ -104,6 +106,8 @@ export const orderService = {
         shippingAddress,
         items,
         couponCode,
+        freeDeliveryApplied,
+        freeDeliveryCouponId,
         deliveryZoneId,
         paymentMethod,
         paymentDetails,
@@ -114,7 +118,7 @@ export const orderService = {
       }
 
       // 1. Pre-validate coupon before transaction if provided
-      let validCouponDocId: string | null = null;
+      let validCouponDocId: string | null = freeDeliveryCouponId || null;
       if (couponCode) {
         try {
           const couponQuery = query(
@@ -222,10 +226,14 @@ export const orderService = {
 
           // Validate coupon if exists
           let calculatedDiscount = 0;
+          let couponIsFreeDelivery = false;
           if (couponDoc && couponDoc.exists()) {
             const couponData = couponDoc.data();
-            if (calculatedSubtotal >= (couponData.minOrderAmount || 0)) {
-              if (couponData.discountType === 'percentage') {
+            const isValid = couponData.active !== false && (!couponData.usageLimit || (couponData.usedCount || 0) < couponData.usageLimit);
+            if (isValid && calculatedSubtotal >= (couponData.minOrderAmount || 0)) {
+              if (couponData.discountType === 'free_delivery') {
+                couponIsFreeDelivery = true;
+              } else if (couponData.discountType === 'percentage') {
                 const perc = Math.round((calculatedSubtotal * couponData.discountAmount) / 100);
                 calculatedDiscount = couponData.maxDiscount ? Math.min(perc, couponData.maxDiscount) : perc;
               } else {
@@ -243,6 +251,11 @@ export const orderService = {
             const zd = zoneDoc.data();
             if (typeof zd.charge === 'number') deliveryCharge = zd.charge;
             if (zd.name) deliveryZoneName = zd.name;
+          }
+
+          const hasFreeDelivery = Boolean(couponIsFreeDelivery || freeDeliveryApplied);
+          if (hasFreeDelivery) {
+            deliveryCharge = 0;
           }
 
           // Online Payment Prepayment Discount (bKash, Nagad, Rocket)
@@ -264,7 +277,7 @@ export const orderService = {
             notes: shippingAddress.notes || '',
           };
 
-          const isAdvanceCod = paymentMethod === 'cod' && Boolean(paymentDetails?.advanceDeliveryPaid);
+          const isAdvanceCod = paymentMethod === 'cod' && deliveryCharge > 0 && Boolean(paymentDetails?.advanceDeliveryPaid);
           const cleanPaymentDetails: PaymentDetails | undefined = (paymentMethod !== 'cod' || isAdvanceCod) ? {
             method: paymentMethod,
             senderNumber: paymentDetails?.senderNumber || '',
@@ -278,7 +291,9 @@ export const orderService = {
             dueOnDelivery: isAdvanceCod ? Math.max(0, calculatedSubtotal - calculatedDiscount) : (paymentMethod !== 'cod' ? 0 : grandTotal),
           } : undefined;
 
-          let initialTimelineNote = 'Order placed by customer via Cash on Delivery.';
+          let initialTimelineNote = deliveryCharge === 0
+            ? 'Order placed by customer via Cash on Delivery (One-Time Free Delivery Applied).'
+            : 'Order placed by customer via Cash on Delivery.';
           if (isAdvanceCod) {
             initialTimelineNote = `Order placed via COD with Advance Delivery Fee (৳${deliveryCharge}) paid via ${(paymentDetails?.advanceGateway || 'MFS').toUpperCase()}. Sender: ${paymentDetails?.senderNumber || 'N/A'}, TrxID: ${paymentDetails?.transactionId || 'N/A'}. Due on Delivery: ৳${Math.max(0, calculatedSubtotal - calculatedDiscount)}.`;
           } else if (paymentMethod !== 'cod') {
@@ -298,13 +313,14 @@ export const orderService = {
             discount: calculatedDiscount,
             onlineDiscount,
             couponCode: couponCode || '',
+            freeDeliveryApplied: hasFreeDelivery,
             deliveryCharge,
             deliveryZone: deliveryZoneName,
             total: grandTotal,
             paymentMethod,
             ...(cleanPaymentDetails ? { paymentDetails: cleanPaymentDetails } : {}),
             advanceDeliveryPaid: Boolean(paymentMethod !== 'cod' || isAdvanceCod),
-            advanceGateway: paymentDetails?.advanceGateway,
+            advanceGateway: isAdvanceCod ? paymentDetails?.advanceGateway : undefined,
             advanceAmount: isAdvanceCod ? deliveryCharge : (paymentMethod !== 'cod' ? grandTotal : 0),
             dueOnDelivery: isAdvanceCod ? Math.max(0, calculatedSubtotal - calculatedDiscount) : (paymentMethod !== 'cod' ? 0 : grandTotal),
             paymentStatus: 'pending',
@@ -330,11 +346,15 @@ export const orderService = {
             });
           }
 
-          // 2. Increment coupon usage
+          // 2. Increment coupon usage & auto-deactivate if usage limit reached
           if (couponDoc && couponDoc.exists() && validCouponDocId) {
             const couponRef = doc(db, 'coupons', validCouponDocId);
+            const cData = couponDoc.data();
+            const nextUsed = (cData?.usedCount || 0) + 1;
+            const exhausted = Boolean(cData?.usageLimit && nextUsed >= cData.usageLimit);
             transaction.update(couponRef, {
-              usedCount: (couponDoc.data()?.usedCount || 0) + 1,
+              usedCount: nextUsed,
+              ...(exhausted ? { active: false } : {}),
               updatedAt: serverTimestamp(),
             });
           }
@@ -344,6 +364,11 @@ export const orderService = {
           const sanitizedOrder = sanitizeForFirestore(newOrder);
           transaction.set(orderDocRef, sanitizedOrder);
         });
+
+        // Mark coupon consumed locally right away (0ms sync)
+        if (freeDeliveryCouponId || couponCode) {
+          await settingsService.markCouponUsed(freeDeliveryCouponId || couponCode || '', true);
+        }
 
         // Automatically decrement inventory across local catalog & broadcast to Admin Panel
         try {
@@ -390,8 +415,31 @@ export const orderService = {
         const matchedZone = localZones.find((z) => z.id === deliveryZoneId);
         let deliveryCharge = matchedZone ? matchedZone.charge : (deliveryZoneId === 'outside-dhaka' ? 130 : 70);
         let deliveryZoneName = matchedZone ? matchedZone.name : (deliveryZoneId === 'outside-dhaka' ? 'Outside Dhaka (Nationwide)' : 'Inside Dhaka City');
+
+        let fallbackDiscount = 0;
+        let fallbackFreeDelivery = Boolean(freeDeliveryApplied);
+        const localCoupons = settingsService.getLocalCoupons();
+        const matchedCoupon = localCoupons.find(
+          (c) => (freeDeliveryCouponId && c.id === freeDeliveryCouponId) || (couponCode && c.code.toUpperCase() === couponCode.toUpperCase().trim())
+        );
+        if (matchedCoupon && settingsService.isCouponValidForUse(matchedCoupon) && fallbackSubtotal >= (matchedCoupon.minOrderAmount || 0)) {
+          if (matchedCoupon.discountType === 'free_delivery') {
+            fallbackFreeDelivery = true;
+          } else if (matchedCoupon.discountType === 'percentage') {
+            const perc = Math.round((fallbackSubtotal * matchedCoupon.discountAmount) / 100);
+            fallbackDiscount = matchedCoupon.maxDiscount ? Math.min(perc, matchedCoupon.maxDiscount) : perc;
+          } else {
+            fallbackDiscount = Math.min(matchedCoupon.discountAmount, fallbackSubtotal);
+          }
+        }
+        if (fallbackFreeDelivery) {
+          deliveryCharge = 0;
+        }
+
         let onlineDiscount = (paymentMethod !== 'cod' && paymentDetails?.onlineDiscountApplied) ? paymentDetails.onlineDiscountApplied : 0;
-        let grandTotal = Math.max(0, fallbackSubtotal - onlineDiscount + deliveryCharge);
+        let grandTotal = Math.max(0, fallbackSubtotal - fallbackDiscount - onlineDiscount + deliveryCharge);
+
+        const isAdvanceCodFallback = paymentMethod === 'cod' && deliveryCharge > 0 && Boolean(paymentDetails?.advanceDeliveryPaid);
 
         const fallbackOrder: Order = {
           id: orderDocRef.id,
@@ -412,24 +460,27 @@ export const orderService = {
           },
           items: fallbackItems,
           subtotal: fallbackSubtotal,
-          discount: 0,
+          discount: fallbackDiscount,
           onlineDiscount,
           couponCode: couponCode || '',
+          freeDeliveryApplied: fallbackFreeDelivery,
           deliveryCharge,
-          deliveryZone: deliveryZoneId === 'outside-dhaka' ? 'Outside Dhaka (Nationwide)' : 'Inside Dhaka City',
+          deliveryZone: deliveryZoneName,
           total: grandTotal,
           paymentMethod,
-          ...(paymentDetails ? { paymentDetails } : {}),
-          advanceDeliveryPaid: Boolean(paymentMethod !== 'cod' || paymentDetails?.advanceDeliveryPaid),
-          advanceAmount: paymentMethod !== 'cod' ? grandTotal : (paymentDetails?.advanceDeliveryPaid ? deliveryCharge : 0),
-          dueOnDelivery: paymentMethod !== 'cod' ? 0 : fallbackSubtotal,
+          ...(paymentDetails && (paymentMethod !== 'cod' || isAdvanceCodFallback) ? { paymentDetails } : {}),
+          advanceDeliveryPaid: Boolean(paymentMethod !== 'cod' || isAdvanceCodFallback),
+          advanceAmount: paymentMethod !== 'cod' ? grandTotal : (isAdvanceCodFallback ? deliveryCharge : 0),
+          dueOnDelivery: paymentMethod !== 'cod' ? 0 : Math.max(0, fallbackSubtotal - fallbackDiscount),
           paymentStatus: 'pending',
           orderStatus: 'pending',
           timeline: [
             {
               status: 'pending',
               timestamp: new Date().toISOString(),
-              note: `Order placed via ${paymentMethod === 'cod' ? 'Cash on Delivery' : paymentMethod.toUpperCase()}.`,
+              note: paymentMethod === 'cod' && fallbackFreeDelivery
+                ? 'Order placed via Cash on Delivery (One-Time Free Delivery Applied).'
+                : `Order placed via ${paymentMethod === 'cod' ? 'Cash on Delivery' : paymentMethod.toUpperCase()}.`,
             },
           ],
           createdAt: serverTimestamp(),
@@ -443,6 +494,11 @@ export const orderService = {
           await setDoc(orderDocRef, sanitizedOrder);
         } catch (setDocErr) {
           console.warn('Remote setDoc notice, order preserved in persistent storage:', setDocErr);
+        }
+
+        // Consume one-time coupon / free delivery reward in fallback path too
+        if (freeDeliveryCouponId || couponCode) {
+          await settingsService.markCouponUsed(freeDeliveryCouponId || couponCode || '', false);
         }
 
         // Automatically decrement inventory across local catalog & broadcast to Admin Panel in fallback mode

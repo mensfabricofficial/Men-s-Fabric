@@ -103,57 +103,103 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                 <MapPin className="w-3.5 h-3.5 text-neutral-400" />
                 <span>{settings.address}</span>
               </div>
-              {settings.whatsapp && (
+              {settings.whatsapp && settings.whatsapp.trim() && (
                 <div className="flex items-center gap-2.5">
-                  <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                  <MessageCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <a 
                     href={`https://wa.me/${settings.whatsapp.replace(/[^0-9]/g, '')}`} 
                     target="_blank" 
                     rel="noreferrer"
                     className="hover:underline text-emerald-400"
                   >
-                    WhatsApp Order & Support
+                    WhatsApp: {settings.whatsapp.trim()}
                   </a>
                 </div>
               )}
             </div>
 
             {/* Social Links */}
-            <div className="flex items-center space-x-3 pt-3">
-              {settings.facebookUrl && (
-                <a
-                  href={settings.facebookUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Facebook"
-                  className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
-                >
-                  <Facebook className="w-4 h-4" />
-                </a>
-              )}
-              {settings.instagramUrl && (
-                <a
-                  href={settings.instagramUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Instagram"
-                  className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
-                >
-                  <Instagram className="w-4 h-4" />
-                </a>
-              )}
-              {settings.youtubeUrl && (
-                <a
-                  href={settings.youtubeUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="YouTube"
-                  className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
-                >
-                  <Youtube className="w-4 h-4" />
-                </a>
-              )}
-            </div>
+            {(() => {
+              const normalizeSocialUrl = (raw?: string) => {
+                const val = (raw || '').trim();
+                if (!val) return '';
+                return /^https?:\/\//i.test(val) ? val : `https://${val}`;
+              };
+              const fb = normalizeSocialUrl(settings.facebookUrl);
+              const ig = normalizeSocialUrl(settings.instagramUrl);
+              const tt = normalizeSocialUrl(settings.tiktokUrl);
+              const xLink = normalizeSocialUrl(settings.xUrl);
+              const yt = normalizeSocialUrl(settings.youtubeUrl);
+
+              return (
+                <div className="flex items-center space-x-3 pt-3">
+                  {fb && (
+                    <a
+                      href={fb}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Facebook"
+                      title="Facebook"
+                      className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+                    >
+                      <Facebook className="w-4 h-4" />
+                    </a>
+                  )}
+                  {ig && (
+                    <a
+                      href={ig}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Instagram"
+                      title="Instagram"
+                      className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+                    >
+                      <Instagram className="w-4 h-4" />
+                    </a>
+                  )}
+                  {tt && (
+                    <a
+                      href={tt}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="TikTok"
+                      title="TikTok"
+                      className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+                    >
+                      <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" />
+                      </svg>
+                    </a>
+                  )}
+                  {xLink && (
+                    <a
+                      href={xLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="X"
+                      title="X (Twitter)"
+                      className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                      </svg>
+                    </a>
+                  )}
+                  {yt && (
+                    <a
+                      href={yt}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="YouTube"
+                      title="YouTube"
+                      className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
+                    >
+                      <Youtube className="w-4 h-4" />
+                    </a>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Quick Shop Links */}

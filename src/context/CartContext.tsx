@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { CartItem, Coupon, DeliveryZone } from '../types';
 import { db } from '../lib/firebase';
-import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
-import { getLocalDeliveryZones, sortDeliveryZones } from '../services/settingsService';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { getLocalDeliveryZones, settingsService, sortDeliveryZones } from '../services/settingsService';
+import { useAuth } from './AuthContext';
 
 interface CartContextType {
   items: CartItem[];
@@ -10,6 +11,7 @@ interface CartContextType {
   removeItem: (productId: string, size: string, color: string) => void;
   updateQuantity: (productId: string, size: string, color: string, deltaOrValue: number, isAbsolute?: boolean) => void;
   clearCart: () => void;
+  coupons: Coupon[];
   appliedCoupon: Coupon | null;
   applyCoupon: (coupon: Coupon) => { success: boolean; message: string };
   removeCoupon: () => void;
@@ -18,7 +20,10 @@ interface CartContextType {
   setSelectedZone: (zone: DeliveryZone) => void;
   subtotal: number;
   discount: number;
+  baseDeliveryCharge: number;
   deliveryCharge: number;
+  isFreeDelivery: boolean;
+  activeFreeDeliveryCoupon: Coupon | null;
   grandTotal: number;
   totalItems: number;
   isCartDrawerOpen: boolean;
@@ -27,13 +32,9 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-// Default Bangladeshi delivery zones if database has not been seeded yet
-const DEFAULT_ZONES: DeliveryZone[] = [
-  { id: 'dhaka', name: 'Inside Dhaka City', charge: 70, estimatedDays: '1 - 2 Days', active: true },
-  { id: 'outside-dhaka', name: 'Outside Dhaka (Nationwide)', charge: 130, estimatedDays: '2 - 4 Days', active: true },
-];
-
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { currentUser, customerProfile } = useAuth();
+
   const [items, setItems] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem('mf_cart');
@@ -52,6 +53,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
+  const [coupons, setCoupons] = useState<Coupon[]>(() => settingsService.getLocalCoupons());
   const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(() => getLocalDeliveryZones());
   const [selectedZone, setSelectedZone] = useState<DeliveryZone | null>(() => {
     const initial = getLocalDeliveryZones();
@@ -59,9 +61,35 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
 
+  // Real-time synchronization of coupons (for auto free delivery & one-time voucher checks)
+  useEffect(() => {
+    const unsub = settingsService.subscribeToCoupons((list) => {
+      setCoupons(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Automatically invalidate stored appliedCoupon if exhausted/disabled or belongs to another user
+  useEffect(() => {
+    if (!appliedCoupon) return;
+    const latest = coupons.find((c) => c.id === appliedCoupon.id || c.code === appliedCoupon.code);
+    const identity = {
+      uid: currentUser?.uid,
+      email: currentUser?.email,
+      phone: customerProfile?.phone,
+    };
+    if (latest) {
+      if (
+        !settingsService.isCouponValidForUse(latest) ||
+        !settingsService.doesCouponMatchCustomer(latest, identity)
+      ) {
+        setAppliedCoupon(null);
+      }
+    }
+  }, [coupons, appliedCoupon, currentUser?.uid, currentUser?.email, customerProfile?.phone]);
+
   // Real-time synchronization of delivery zones from local event and Firestore
   useEffect(() => {
-    // 1. Initial load from persistent local store
     const initialZones = getLocalDeliveryZones();
     setDeliveryZones(initialZones);
     setSelectedZone((prev) => {
@@ -70,7 +98,6 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return match || initialZones[0] || null;
     });
 
-    // 2. Immediate local event listener (0ms responsiveness when admin updates fee)
     const handleLocalZones = (e: any) => {
       const updatedList = (e.detail as DeliveryZone[]) || getLocalDeliveryZones();
       setDeliveryZones(updatedList);
@@ -82,7 +109,6 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     window.addEventListener('mf_delivery_zones_updated', handleLocalZones);
 
-    // 3. Remote Firestore realtime listener
     let unsubscribe: (() => void) | null = null;
     try {
       const q = query(collection(db, 'deliveryZones'), where('active', '==', true));
@@ -205,11 +231,16 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return sum + itemPrice * item.quantity;
   }, 0);
 
+  const userIdentity = {
+    uid: currentUser?.uid,
+    email: currentUser?.email,
+    phone: customerProfile?.phone,
+  };
+
   // Validate and calculate coupon discount safely
   let discount = 0;
-  if (appliedCoupon && subtotal > 0) {
+  if (appliedCoupon && subtotal > 0 && appliedCoupon.discountType !== 'free_delivery') {
     if (subtotal < (appliedCoupon.minOrderAmount || 0)) {
-      // Not meeting minimum order amount
       discount = 0;
     } else {
       if (appliedCoupon.discountType === 'percentage') {
@@ -221,14 +252,32 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
+  // Check manual or auto-applied 1-time Free Delivery voucher
+  const autoFreeDeliveryCoupon = settingsService.getActiveFreeDeliveryForUser(coupons, userIdentity);
+  const activeFreeDeliveryCoupon =
+    appliedCoupon && appliedCoupon.discountType === 'free_delivery' && subtotal >= (appliedCoupon.minOrderAmount || 0)
+      ? appliedCoupon
+      : autoFreeDeliveryCoupon && subtotal >= (autoFreeDeliveryCoupon.minOrderAmount || 0)
+      ? autoFreeDeliveryCoupon
+      : null;
+  const isFreeDelivery = Boolean(activeFreeDeliveryCoupon);
+
   const applyCoupon = (coupon: Coupon): { success: boolean; message: string } => {
     if (!coupon.active) {
       return { success: false, message: 'This coupon is no longer active.' };
     }
-    if (coupon.expiryDate && new Date(coupon.expiryDate) < new Date()) {
-      return { success: false, message: 'This coupon has expired.' };
+    if (!settingsService.doesCouponMatchCustomer(coupon, userIdentity)) {
+      return { success: false, message: 'This coupon is assigned to a specific customer account.' };
     }
-    if (subtotal < coupon.minOrderAmount) {
+    if (coupon.expiryDate) {
+      const exp = coupon.expiryDate.includes('T')
+        ? new Date(coupon.expiryDate)
+        : new Date(`${coupon.expiryDate}T23:59:59`);
+      if (!isNaN(exp.getTime()) && exp < new Date()) {
+        return { success: false, message: 'This coupon has expired.' };
+      }
+    }
+    if (subtotal < (coupon.minOrderAmount || 0)) {
       return {
         success: false,
         message: `Minimum order amount of ৳${coupon.minOrderAmount} required for this coupon.`,
@@ -238,6 +287,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Coupon usage limit has been reached.' };
     }
     setAppliedCoupon(coupon);
+    if (coupon.discountType === 'free_delivery') {
+      return { success: true, message: `Free delivery coupon "${coupon.code}" applied!` };
+    }
     return { success: true, message: `Coupon "${coupon.code}" applied successfully!` };
   };
 
@@ -245,7 +297,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAppliedCoupon(null);
   };
 
-  const deliveryCharge = selectedZone ? selectedZone.charge : 70;
+  const baseDeliveryCharge = selectedZone ? selectedZone.charge : 70;
+  const deliveryCharge = isFreeDelivery ? 0 : baseDeliveryCharge;
   const grandTotal = Math.max(0, subtotal - discount + deliveryCharge);
   const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
 
@@ -257,6 +310,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         removeItem,
         updateQuantity,
         clearCart,
+        coupons,
         appliedCoupon,
         applyCoupon,
         removeCoupon,
@@ -265,7 +319,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedZone,
         subtotal,
         discount,
+        baseDeliveryCharge,
         deliveryCharge,
+        isFreeDelivery,
+        activeFreeDeliveryCoupon,
         grandTotal,
         totalItems,
         isCartDrawerOpen,

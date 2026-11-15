@@ -55,6 +55,7 @@ export const defaultSettings: SiteSettings = {
   instagramUrl: 'https://instagram.com',
   youtubeUrl: '',
   tiktokUrl: '',
+  xUrl: '',
   announcementText: 'Welcome to Selvee — Save 5% on online payment!',
   announcementActive: true,
   freeDeliveryThreshold: 2500,
@@ -504,24 +505,32 @@ export const settingsService = {
       firestoreUnsub = onSnapshot(
         collection(db, 'coupons'),
         (snap) => {
-          if (!snap.empty) {
-            const remoteList: Coupon[] = [];
-            snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
-            const local = this.getLocalCoupons();
-            const mergedMap = new Map<string, Coupon>();
-            remoteList.forEach((c) => mergedMap.set(c.id, c));
-            local.forEach((c) => {
-              if (!mergedMap.has(c.id)) {
-                mergedMap.set(c.id, c);
-              } else {
-                const remoteItem = mergedMap.get(c.id)!;
-                mergedMap.set(c.id, { ...remoteItem, ...c });
-              }
-            });
-            const combined = Array.from(mergedMap.values());
-            this.saveLocalCoupons(combined);
-            callback(combined);
-          }
+          const remoteList: Coupon[] = [];
+          snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
+          const local = this.getLocalCoupons();
+          const mergedMap = new Map<string, Coupon>();
+          remoteList.forEach((c) => mergedMap.set(c.id, c));
+          local.forEach((c) => {
+            if (!mergedMap.has(c.id)) {
+              mergedMap.set(c.id, c);
+            } else {
+              const remoteItem = mergedMap.get(c.id)!;
+              const maxUsed = Math.max(remoteItem.usedCount || 0, c.usedCount || 0);
+              const reachedLimit = Boolean(
+                (remoteItem.usageLimit || c.usageLimit) &&
+                maxUsed >= (remoteItem.usageLimit || c.usageLimit || 0)
+              );
+              mergedMap.set(c.id, {
+                ...c,
+                ...remoteItem,
+                usedCount: maxUsed,
+                active: reachedLimit ? false : remoteItem.active,
+              });
+            }
+          });
+          const combined = Array.from(mergedMap.values());
+          this.saveLocalCoupons(combined);
+          callback(combined);
         },
         () => {
           // ignore
@@ -543,29 +552,170 @@ export const settingsService = {
     const local = this.getLocalCoupons();
     try {
       const snap = await getDocs(collection(db, 'coupons'));
-      if (!snap.empty) {
-        const remoteList: Coupon[] = [];
-        snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
+      const remoteList: Coupon[] = [];
+      snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
 
-        // Intelligent merge: keep local additions if not yet indexed in remote
-        const mergedMap = new Map<string, Coupon>();
-        remoteList.forEach((c) => mergedMap.set(c.id, c));
-        local.forEach((c) => {
-          if (!mergedMap.has(c.id)) {
-            mergedMap.set(c.id, c);
-          } else {
-            const remoteItem = mergedMap.get(c.id)!;
-            mergedMap.set(c.id, { ...remoteItem, ...c });
-          }
-        });
-        const combined = Array.from(mergedMap.values());
-        this.saveLocalCoupons(combined);
-        return combined;
-      }
+      const mergedMap = new Map<string, Coupon>();
+      remoteList.forEach((c) => mergedMap.set(c.id, c));
+      local.forEach((c) => {
+        if (!mergedMap.has(c.id)) {
+          mergedMap.set(c.id, c);
+        } else {
+          const remoteItem = mergedMap.get(c.id)!;
+          const maxUsed = Math.max(remoteItem.usedCount || 0, c.usedCount || 0);
+          const reachedLimit = Boolean(
+            (remoteItem.usageLimit || c.usageLimit) &&
+            maxUsed >= (remoteItem.usageLimit || c.usageLimit || 0)
+          );
+          mergedMap.set(c.id, {
+            ...c,
+            ...remoteItem,
+            usedCount: maxUsed,
+            active: reachedLimit ? false : remoteItem.active,
+          });
+        }
+      });
+      const combined = Array.from(mergedMap.values());
+      this.saveLocalCoupons(combined);
+      return combined;
     } catch {
       // ignore
     }
     return local;
+  },
+
+  doesCouponMatchCustomer(
+    coupon: Coupon,
+    user?: { uid?: string; email?: string | null; phone?: string | null }
+  ): boolean {
+    const targetUid = coupon.targetCustomerUid && !coupon.targetCustomerUid.startsWith('guest-')
+      ? coupon.targetCustomerUid.trim()
+      : '';
+    const targetEmail = coupon.targetCustomerEmail?.trim().toLowerCase() || '';
+    const targetPhoneDigits = coupon.targetCustomerPhone
+      ? coupon.targetCustomerPhone.replace(/[^0-9]/g, '').slice(-10)
+      : '';
+
+    // Public coupon (no user restriction)
+    if (!targetUid && !targetEmail && !targetPhoneDigits) {
+      return true;
+    }
+
+    if (!user) return false;
+
+    const userUid = user.uid && user.uid !== 'guest' ? user.uid.trim() : '';
+    const userEmail = user.email?.trim().toLowerCase() || '';
+    const userPhoneDigits = user.phone ? user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+
+    if (targetUid && userUid && targetUid === userUid) return true;
+    if (targetEmail && userEmail && targetEmail === userEmail) return true;
+    if (targetPhoneDigits && targetPhoneDigits.length >= 10 && userPhoneDigits === targetPhoneDigits) {
+      return true;
+    }
+
+    return false;
+  },
+
+  isCouponValidForUse(coupon: Coupon): boolean {
+    if (!coupon.active) return false;
+    if (coupon.expiryDate) {
+      const exp = coupon.expiryDate.includes('T')
+        ? new Date(coupon.expiryDate)
+        : new Date(`${coupon.expiryDate}T23:59:59`);
+      if (!isNaN(exp.getTime()) && exp < new Date()) return false;
+    }
+    if (coupon.usageLimit && (coupon.usedCount || 0) >= coupon.usageLimit) {
+      return false;
+    }
+    return true;
+  },
+
+  getActiveFreeDeliveryForUser(
+    coupons: Coupon[],
+    user?: { uid?: string; email?: string | null; phone?: string | null }
+  ): Coupon | null {
+    if (!user) return null;
+    for (const c of coupons) {
+      if (c.discountType !== 'free_delivery') continue;
+      if (c.autoApply === false) continue;
+      const hasTarget = Boolean(
+        (c.targetCustomerUid && !c.targetCustomerUid.startsWith('guest-')) ||
+        c.targetCustomerEmail ||
+        c.targetCustomerPhone
+      );
+      if (!hasTarget) continue;
+      if (this.isCouponValidForUse(c) && this.doesCouponMatchCustomer(c, user)) {
+        return c;
+      }
+    }
+    return null;
+  },
+
+  async markCouponUsed(couponIdOrCode: string, syncLocalOnly = false) {
+    if (!couponIdOrCode) return;
+    const needle = couponIdOrCode.trim().toUpperCase();
+    const current = this.getLocalCoupons();
+    let matchedId = '';
+    let nextUsedCount = 1;
+    let shouldDeactivate = false;
+
+    const updated = current.map((c) => {
+      if (c.id === couponIdOrCode || c.code.toUpperCase() === needle) {
+        matchedId = c.id;
+        nextUsedCount = (c.usedCount || 0) + 1;
+        shouldDeactivate = Boolean(c.usageLimit && nextUsedCount >= c.usageLimit);
+        return {
+          ...c,
+          usedCount: nextUsedCount,
+          ...(shouldDeactivate ? { active: false } : {}),
+        };
+      }
+      return c;
+    });
+
+    if (matchedId) {
+      this.saveLocalCoupons(updated);
+      if (syncLocalOnly) return;
+      try {
+        await setDoc(
+          doc(db, 'coupons', matchedId),
+          {
+            usedCount: nextUsedCount,
+            ...(shouldDeactivate ? { active: false } : {}),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('Remote markCouponUsed notice:', e);
+      }
+      return;
+    }
+
+    if (syncLocalOnly) return;
+
+    // Also try remote lookup by code if not cached locally
+    try {
+      const q = query(collection(db, 'coupons'), where('code', '==', needle), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        const data = d.data() as Coupon;
+        const used = (data.usedCount || 0) + 1;
+        const limitReached = Boolean(data.usageLimit && used >= data.usageLimit);
+        await setDoc(
+          doc(db, 'coupons', d.id),
+          {
+            usedCount: used,
+            ...(limitReached ? { active: false } : {}),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+    } catch {
+      // ignore
+    }
   },
 
   async createCoupon(coupon: Omit<Coupon, 'id' | 'usedCount'>) {
@@ -718,40 +868,107 @@ export const settingsService = {
 
   // Reviews
   async getProductReviews(productId: string): Promise<Review[]> {
+    if (!productId) return [];
+    const getMillis = (val: any): number => {
+      if (!val) return 0;
+      if (typeof val.toMillis === 'function') return val.toMillis();
+      if (typeof val.seconds === 'number') return val.seconds * 1000;
+      if (typeof val === 'number') return val;
+      const parsed = Date.parse(String(val));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
     try {
       const q = query(
         collection(db, 'reviews'),
-        where('productId', '==', productId),
-        where('approved', '==', true),
-        orderBy('createdAt', 'desc')
+        where('productId', '==', productId)
       );
       const snap = await getDocs(q);
       const list: Review[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Review));
-      return list;
-    } catch {
+      snap.forEach((d) => {
+        const data = d.data() as Omit<Review, 'id'>;
+        if (data.approved === true) {
+          list.push({ id: d.id, ...data } as Review);
+        }
+      });
+      return list.sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+    } catch (err) {
+      console.warn('Could not load product reviews:', err);
       return [];
     }
   },
 
+  subscribeToProductReviews(productId: string, onUpdate: (reviews: Review[]) => void): Unsubscribe {
+    if (!productId) {
+      onUpdate([]);
+      return () => {};
+    }
+
+    const getMillis = (val: any): number => {
+      if (!val) return 0;
+      if (typeof val.toMillis === 'function') return val.toMillis();
+      if (typeof val.seconds === 'number') return val.seconds * 1000;
+      if (typeof val === 'number') return val;
+      const parsed = Date.parse(String(val));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    const q = query(
+      collection(db, 'reviews'),
+      where('productId', '==', productId)
+    );
+
+    return onSnapshot(
+      q,
+      (snap) => {
+        const list: Review[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as Omit<Review, 'id'>;
+          if (data.approved === true) {
+            list.push({ id: d.id, ...data } as Review);
+          }
+        });
+        list.sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+        onUpdate(list);
+      },
+      async (err) => {
+        console.warn('Real-time reviews listener notice, falling back to one-time fetch:', err);
+        const fallback = await this.getProductReviews(productId);
+        onUpdate(fallback);
+      }
+    );
+  },
+
   async getAllReviewsAdmin(): Promise<Review[]> {
+    const getMillis = (val: any): number => {
+      if (!val) return 0;
+      if (typeof val.toMillis === 'function') return val.toMillis();
+      if (typeof val.seconds === 'number') return val.seconds * 1000;
+      if (typeof val === 'number') return val;
+      const parsed = Date.parse(String(val));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
     try {
-      const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
+      const snap = await getDocs(collection(db, 'reviews'));
       const list: Review[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Review));
-      return list;
-    } catch {
+      return list.sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+    } catch (err) {
+      console.warn('Could not load admin reviews:', err);
       return [];
     }
   },
 
   async submitReview(review: Omit<Review, 'id' | 'createdAt' | 'approved'>) {
-    await addDoc(collection(db, 'reviews'), {
-      ...review,
-      approved: false, // Requires admin approval
-      createdAt: serverTimestamp(),
-    });
+    await addDoc(
+      collection(db, 'reviews'),
+      sanitizeForFirestore({
+        ...review,
+        approved: false, // Requires admin approval
+        createdAt: serverTimestamp(),
+      })
+    );
   },
 
   async updateReviewApproval(id: string, approved: boolean) {

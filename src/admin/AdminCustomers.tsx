@@ -5,18 +5,20 @@ import {
   Phone, 
   ShoppingBag, 
   Search, 
-  Calendar, 
   DollarSign, 
   MapPin, 
-  ShieldCheck, 
   UserCheck, 
   RefreshCw,
-  ExternalLink
+  Truck,
+  X,
+  CheckCircle2
 } from 'lucide-react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { CustomerProfile, Order } from '../types';
+import { Coupon, CustomerProfile, Order } from '../types';
 import { orderService } from '../services/orderService';
+import { settingsService } from '../services/settingsService';
+import { useAuth } from '../context/AuthContext';
 
 interface AggregatedCustomer {
   uid: string;
@@ -33,10 +35,26 @@ interface AggregatedCustomer {
 }
 
 export const AdminCustomers: React.FC = () => {
+  const { currentUser } = useAuth();
   const [customers, setCustomers] = useState<AggregatedCustomer[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<AggregatedCustomer | null>(null);
+
+  // One-Time Free Delivery Modal State
+  const [giftCustomer, setGiftCustomer] = useState<AggregatedCustomer | null>(null);
+  const [giftCode, setGiftCode] = useState('');
+  const [giftMinOrder, setGiftMinOrder] = useState(0);
+  const [giftExpiry, setGiftExpiry] = useState('2028-12-31');
+  const [giftAutoApply, setGiftAutoApply] = useState(true);
+  const [grantingGift, setGrantingGift] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3500);
+  };
 
   const fetchCustomerDirectory = async () => {
     setLoading(true);
@@ -200,7 +218,87 @@ export const AdminCustomers: React.FC = () => {
 
   useEffect(() => {
     fetchCustomerDirectory();
+    const unsub = settingsService.subscribeToCoupons((list) => setCoupons(list));
+    return () => unsub();
   }, []);
+
+  const getCustomerFreeDeliveryCoupon = (c: AggregatedCustomer): Coupon | undefined => {
+    return coupons.find((cpn) => {
+      if (cpn.discountType !== 'free_delivery') return false;
+      const hasTarget = Boolean(
+        (cpn.targetCustomerUid && !cpn.targetCustomerUid.startsWith('guest-')) ||
+        cpn.targetCustomerEmail ||
+        cpn.targetCustomerPhone
+      );
+      if (!hasTarget) return false;
+      return (
+        settingsService.isCouponValidForUse(cpn) &&
+        settingsService.doesCouponMatchCustomer(cpn, {
+          uid: c.uid,
+          email: c.email,
+          phone: c.phone,
+        })
+      );
+    });
+  };
+
+  const openFreeDeliveryModal = (customer: AggregatedCustomer) => {
+    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+    setGiftCustomer(customer);
+    setGiftCode(`FREEDEL-${rand}`);
+    setGiftMinOrder(0);
+    setGiftExpiry('2028-12-31');
+    setGiftAutoApply(true);
+  };
+
+  const handleGrantFreeDelivery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!giftCustomer) return;
+    const cleanCode = giftCode.trim().toUpperCase();
+    if (!cleanCode) return;
+
+    setGrantingGift(true);
+    try {
+      await settingsService.createCoupon({
+        code: cleanCode,
+        discountType: 'free_delivery',
+        discountAmount: 0,
+        minOrderAmount: Number(giftMinOrder) || 0,
+        expiryDate: giftExpiry,
+        usageLimit: 1,
+        active: true,
+        targetCustomerUid:
+          giftCustomer.uid && !giftCustomer.uid.startsWith('guest-') ? giftCustomer.uid : undefined,
+        targetCustomerEmail: giftCustomer.email || undefined,
+        targetCustomerPhone: giftCustomer.phone || undefined,
+        targetCustomerName: giftCustomer.name || 'Customer',
+        autoApply: giftAutoApply,
+      });
+
+      if (currentUser) {
+        await settingsService.logAdminAction(
+          currentUser.uid,
+          currentUser.email || 'admin',
+          'GRANT_FREE_DELIVERY',
+          giftCustomer.name,
+          `Granted 1-time Free Delivery (${cleanCode}) to ${giftCustomer.email || giftCustomer.phone}`
+        );
+      }
+
+      showToast(`1x Free Delivery (${cleanCode}) granted to ${giftCustomer.name}!`);
+      setGiftCustomer(null);
+    } catch (err) {
+      console.error('Failed to grant free delivery:', err);
+      showToast('Failed to assign Free Delivery pass.');
+    } finally {
+      setGrantingGift(false);
+    }
+  };
+
+  const handleRevokeFreeDelivery = async (coupon: Coupon, customerName: string) => {
+    await settingsService.deleteCoupon(coupon.id);
+    showToast(`Revoked Free Delivery (${coupon.code}) from ${customerName}.`);
+  };
 
   // Filter customers by search term
   const filteredCustomers = customers.filter((c) => {
@@ -334,138 +432,193 @@ export const AdminCustomers: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 font-medium">
-                  {filteredCustomers.map((c, idx) => (
-                    <tr key={`${c.uid}-${c.phone}-${idx}`} className="hover:bg-neutral-50/50 transition-colors">
-                      <td className="p-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                            {c.name ? c.name.charAt(0) : 'C'}
+                  {filteredCustomers.map((c, idx) => {
+                    const activeFreeDelivery = getCustomerFreeDeliveryCoupon(c);
+                    return (
+                      <tr key={`${c.uid}-${c.phone}-${idx}`} className="hover:bg-neutral-50/50 transition-colors">
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                              {c.name ? c.name.charAt(0) : 'C'}
+                            </div>
+                            <div>
+                              <p className="font-bold text-neutral-900">{c.name}</p>
+                              <p className="text-[11px] text-neutral-400">{c.joinedDate || 'Customer'}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-neutral-900">{c.name}</p>
-                            <p className="text-[11px] text-neutral-400">{c.joinedDate || 'Customer'}</p>
+                        </td>
+                        <td className="p-3.5">
+                          {c.phone && (
+                            <a
+                              href={`tel:${c.phone}`}
+                              className="font-mono text-neutral-900 font-semibold hover:underline block"
+                            >
+                              {c.phone}
+                            </a>
+                          )}
+                          {c.email && (
+                            <a
+                              href={`mailto:${c.email}`}
+                              className="text-neutral-500 text-[11px] hover:underline block"
+                            >
+                              {c.email}
+                            </a>
+                          )}
+                        </td>
+                        <td className="p-3.5">
+                          {c.isRegisteredUser ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-900 text-white uppercase tracking-wider">
+                              <UserCheck className="w-3 h-3" />
+                              <span>Registered</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-600 uppercase tracking-wider">
+                              <span>Guest Buyer</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3.5">
+                          <span className="font-bold text-neutral-900">{c.orderCount}</span>
+                          <span className="text-neutral-500 ml-1">orders</span>
+                        </td>
+                        <td className="p-3.5 font-bold text-neutral-900 font-mono">
+                          ৳{c.totalSpent.toLocaleString('en-BD')}
+                        </td>
+                        <td className="p-3.5 text-neutral-600 max-w-xs truncate">
+                          {c.city || c.address || '—'}
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <div className="inline-flex items-center justify-end gap-1.5 flex-wrap">
+                            {activeFreeDelivery ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold uppercase tracking-wider">
+                                <Truck className="w-3 h-3 text-emerald-600" />
+                                <span>{activeFreeDelivery.code}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRevokeFreeDelivery(activeFreeDelivery, c.name)}
+                                  title="Revoke 1-time Free Delivery"
+                                  className="ml-1 text-red-600 hover:text-red-800 cursor-pointer"
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openFreeDeliveryModal(c)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider bg-black text-white rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+                              >
+                                <Truck className="w-3 h-3" />
+                                <span>Free Delivery</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setSelectedCustomer(c)}
+                              className="px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider border border-neutral-300 rounded hover:bg-neutral-100 transition-colors cursor-pointer"
+                            >
+                              Details
+                            </button>
                           </div>
-                        </div>
-                      </td>
-                      <td className="p-3.5">
-                        {c.phone && (
-                          <a
-                            href={`tel:${c.phone}`}
-                            className="font-mono text-neutral-900 font-semibold hover:underline block"
-                          >
-                            {c.phone}
-                          </a>
-                        )}
-                        {c.email && (
-                          <a
-                            href={`mailto:${c.email}`}
-                            className="text-neutral-500 text-[11px] hover:underline block"
-                          >
-                            {c.email}
-                          </a>
-                        )}
-                      </td>
-                      <td className="p-3.5">
-                        {c.isRegisteredUser ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-900 text-white uppercase tracking-wider">
-                            <UserCheck className="w-3 h-3" />
-                            <span>Registered</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-600 uppercase tracking-wider">
-                            <span>Guest Buyer</span>
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-3.5">
-                        <span className="font-bold text-neutral-900">{c.orderCount}</span>
-                        <span className="text-neutral-500 ml-1">orders</span>
-                      </td>
-                      <td className="p-3.5 font-bold text-neutral-900 font-mono">
-                        ৳{c.totalSpent.toLocaleString('en-BD')}
-                      </td>
-                      <td className="p-3.5 text-neutral-600 max-w-xs truncate">
-                        {c.city || c.address || '—'}
-                      </td>
-                      <td className="p-3.5 text-right">
-                        <button
-                          onClick={() => setSelectedCustomer(c)}
-                          className="px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider border border-neutral-300 rounded hover:bg-neutral-100 transition-colors cursor-pointer"
-                        >
-                          Details
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Mobile Card View (100% Mobile Responsive) */}
             <div className="md:hidden divide-y divide-neutral-100">
-              {filteredCustomers.map((c, idx) => (
-                <div key={`m-${c.uid}-${c.phone}-${idx}`} className="p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-full bg-neutral-900 text-white flex items-center justify-center font-bold text-xs uppercase shrink-0">
-                        {c.name ? c.name.charAt(0) : 'C'}
+              {filteredCustomers.map((c, idx) => {
+                const activeFreeDelivery = getCustomerFreeDeliveryCoupon(c);
+                return (
+                  <div key={`m-${c.uid}-${c.phone}-${idx}`} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-full bg-neutral-900 text-white flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                          {c.name ? c.name.charAt(0) : 'C'}
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-neutral-900 text-sm leading-tight">{c.name}</h4>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full mt-1 inline-block ${
+                            c.isRegisteredUser ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                          }`}>
+                            {c.isRegisteredUser ? 'Registered User' : 'Buyer'}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-neutral-900 text-sm leading-tight">{c.name}</h4>
-                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full mt-1 inline-block ${
-                          c.isRegisteredUser ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-                        }`}>
-                          {c.isRegisteredUser ? 'Registered User' : 'Buyer'}
+
+                      <div className="text-right">
+                        <span className="text-xs font-extrabold text-neutral-900 font-mono block">
+                          ৳{c.totalSpent.toLocaleString('en-BD')}
+                        </span>
+                        <span className="text-[10px] text-neutral-500 font-medium">
+                          {c.orderCount} {c.orderCount === 1 ? 'order' : 'orders'}
                         </span>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <span className="text-xs font-extrabold text-neutral-900 font-mono block">
-                        ৳{c.totalSpent.toLocaleString('en-BD')}
+                    <div className="bg-neutral-50 rounded-lg p-2.5 text-xs space-y-1">
+                      {c.phone && (
+                        <div className="flex items-center gap-2 text-neutral-700">
+                          <Phone className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          <a href={`tel:${c.phone}`} className="font-mono font-semibold text-neutral-900 hover:underline">
+                            {c.phone}
+                          </a>
+                        </div>
+                      )}
+                      {c.email && (
+                        <div className="flex items-center gap-2 text-neutral-700">
+                          <Mail className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          <span className="text-neutral-600 truncate">{c.email}</span>
+                        </div>
+                      )}
+                      {(c.address || c.city) && (
+                        <div className="flex items-center gap-2 text-neutral-700">
+                          <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          <span className="text-neutral-600 truncate">{c.address || c.city}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                      <span className="text-[10px] text-neutral-400 font-medium">
+                        Joined: {c.joinedDate || 'Recently'}
                       </span>
-                      <span className="text-[10px] text-neutral-500 font-medium">
-                        {c.orderCount} {c.orderCount === 1 ? 'order' : 'orders'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {activeFreeDelivery ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold uppercase">
+                            <Truck className="w-3 h-3 text-emerald-600" />
+                            <span>{activeFreeDelivery.code}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeFreeDelivery(activeFreeDelivery, c.name)}
+                              className="ml-1 text-red-600 font-bold cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openFreeDeliveryModal(c)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-700 text-white text-[11px] font-bold uppercase tracking-wider rounded-lg cursor-pointer"
+                          >
+                            <Truck className="w-3 h-3" />
+                            <span>Free Delivery</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setSelectedCustomer(c)}
+                          className="px-3 py-1.5 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg cursor-pointer"
+                        >
+                          Details
+                        </button>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="bg-neutral-50 rounded-lg p-2.5 text-xs space-y-1">
-                    {c.phone && (
-                      <div className="flex items-center gap-2 text-neutral-700">
-                        <Phone className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <a href={`tel:${c.phone}`} className="font-mono font-semibold text-neutral-900 hover:underline">
-                          {c.phone}
-                        </a>
-                      </div>
-                    )}
-                    {c.email && (
-                      <div className="flex items-center gap-2 text-neutral-700">
-                        <Mail className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span className="text-neutral-600 truncate">{c.email}</span>
-                      </div>
-                    )}
-                    {(c.address || c.city) && (
-                      <div className="flex items-center gap-2 text-neutral-700">
-                        <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span className="text-neutral-600 truncate">{c.address || c.city}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] text-neutral-400 font-medium">
-                      Joined: {c.joinedDate || 'Recently'}
-                    </span>
-                    <button
-                      onClick={() => setSelectedCustomer(c)}
-                      className="px-3 py-1.5 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg cursor-pointer"
-                    >
-                      View Details
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
@@ -568,6 +721,55 @@ export const AdminCustomers: React.FC = () => {
               )}
             </div>
 
+            {/* One-Time Free Delivery Action Bar in Detail Modal */}
+            <div className="p-3.5 rounded-xl border border-neutral-200 bg-white flex items-center justify-between gap-3">
+              {(() => {
+                const activePass = getCustomerFreeDeliveryCoupon(selectedCustomer);
+                if (activePass) {
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 text-emerald-800">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <div>
+                          <p className="font-bold text-xs">Active 1x Free Delivery Pass: <span className="font-mono">{activePass.code}</span></p>
+                          <p className="text-[10px] text-emerald-700">
+                            {activePass.autoApply !== false ? 'Auto-applies on next checkout' : 'Requires coupon code'} • Single use
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRevokeFreeDelivery(activePass, selectedCustomer.name)}
+                        className="px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-[11px] font-bold uppercase cursor-pointer hover:bg-red-100"
+                      >
+                        Revoke
+                      </button>
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <div>
+                      <p className="font-bold text-neutral-900">One-Time Free Delivery</p>
+                      <p className="text-[10px] text-neutral-500">Grant this user 1 free delivery order</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = selectedCustomer;
+                        setSelectedCustomer(null);
+                        openFreeDeliveryModal(target);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 bg-black text-white rounded-lg text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-neutral-800"
+                    >
+                      <Truck className="w-3.5 h-3.5" />
+                      <span>Give Free Delivery</span>
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+
             <div className="pt-2 flex justify-end">
               <button
                 type="button"
@@ -578,6 +780,112 @@ export const AdminCustomers: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Grant One-Time Free Delivery Modal */}
+      {giftCustomer && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 text-xs animate-fade-in">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+              <div className="flex items-center gap-2">
+                <Truck className="w-4 h-4 text-black" />
+                <h3 className="text-sm font-extrabold uppercase tracking-tight text-neutral-900">
+                  Grant 1x Free Delivery
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGiftCustomer(null)}
+                className="text-neutral-400 hover:text-black cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-xl space-y-1">
+              <p className="font-bold text-neutral-900 text-sm">{giftCustomer.name}</p>
+              {giftCustomer.email && <p className="text-neutral-600">{giftCustomer.email}</p>}
+              {giftCustomer.phone && <p className="font-mono text-neutral-700">{giftCustomer.phone}</p>}
+            </div>
+
+            <form onSubmit={handleGrantFreeDelivery} className="space-y-4">
+              <div>
+                <label className="block font-bold text-neutral-700 uppercase mb-1">One-Time Voucher Code *</label>
+                <input
+                  type="text"
+                  required
+                  value={giftCode}
+                  onChange={(e) => setGiftCode(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded font-mono uppercase"
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">
+                  Locked exclusively to this customer with usage limit = 1.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">Min Order (৳)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={giftMinOrder}
+                    onChange={(e) => setGiftMinOrder(Number(e.target.value))}
+                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">Expiry Date</label>
+                  <input
+                    type="date"
+                    value={giftExpiry}
+                    onChange={(e) => setGiftExpiry(e.target.value)}
+                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2.5 p-3 bg-emerald-50 border border-emerald-200 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={giftAutoApply}
+                  onChange={(e) => setGiftAutoApply(e.target.checked)}
+                  className="accent-black w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <span className="font-bold text-emerald-950 block">Auto-apply at Checkout (Recommended)</span>
+                  <span className="text-[10px] text-emerald-800">
+                    When checked, delivery fee becomes ৳0 automatically when this user checks out—once used, it expires immediately.
+                  </span>
+                </div>
+              </label>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-neutral-200">
+                <button
+                  type="button"
+                  onClick={() => setGiftCustomer(null)}
+                  className="px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={grantingGift}
+                  className="px-5 py-2 bg-black text-white font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer"
+                >
+                  {grantingGift ? 'Granting...' : 'Activate 1x Free Delivery'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-70 bg-neutral-950 text-white text-xs font-medium py-3 px-4 rounded-xl shadow-2xl flex items-center gap-2 border border-neutral-800 animate-slide-up">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMsg}</span>
         </div>
       )}
 

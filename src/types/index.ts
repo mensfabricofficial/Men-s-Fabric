@@ -159,6 +159,7 @@ export interface Order {
   couponCode?: string;
   deliveryCharge: number;
   deliveryZone: string;
+  freeDeliveryApplied?: boolean;
   total: number;
   paymentMethod: PaymentMethod;
   paymentDetails?: PaymentDetails;
@@ -177,7 +178,7 @@ export interface Order {
 export interface Coupon {
   id: string;
   code: string;
-  discountType: 'percentage' | 'fixed';
+  discountType: 'percentage' | 'fixed' | 'free_delivery';
   discountAmount: number;
   minOrderAmount: number;
   maxDiscount?: number;
@@ -185,6 +186,12 @@ export interface Coupon {
   usageLimit?: number;
   usedCount: number;
   active: boolean;
+  targetCustomerUid?: string;
+  targetCustomerEmail?: string;
+  targetCustomerPhone?: string;
+  targetCustomerName?: string;
+  autoApply?: boolean;
+  createdAt?: any;
 }
 
 export interface DeliveryZone {
@@ -238,6 +245,7 @@ export interface SiteSettings {
   instagramUrl?: string;
   youtubeUrl?: string;
   tiktokUrl?: string;
+  xUrl?: string;
   announcementText?: string;
   announcementActive: boolean;
   freeDeliveryThreshold?: number;

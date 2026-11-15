@@ -66,7 +66,9 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   useEffect(() => {
     let isMounted = true;
     let unsubLive: (() => void) | null = null;
+    let unsubReviews: (() => void) | null = null;
     setLoading(true);
+    setReviews([]);
 
     const initProduct = async () => {
       try {
@@ -97,6 +99,13 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 setProduct((prev) => ({ ...(prev || prod), ...updated }));
               }
             }, (err) => console.warn('Product live sync notice:', err));
+
+            // Real-time approved reviews subscription
+            unsubReviews = settingsService.subscribeToProductReviews(prod.id, (revs) => {
+              if (isMounted) {
+                setReviews(revs || []);
+              }
+            });
           }
 
           // Fetch related products in background
@@ -112,15 +121,6 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               console.warn('Could not load related garments:', relErr);
             });
           }
-
-          // Fetch reviews in background
-          settingsService.getProductReviews(prod.id).then((revs) => {
-            if (isMounted) {
-              setReviews(revs || []);
-            }
-          }).catch((revErr) => {
-            console.warn('Could not load reviews:', revErr);
-          });
 
           // Fetch dynamic size guides in background
           sizeGuideService.getSizeGuides().then((guides) => {
@@ -152,6 +152,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     return () => {
       isMounted = false;
       if (unsubLive) unsubLive();
+      if (unsubReviews) unsubReviews();
     };
   }, [productIdOrSlug]);
 
@@ -159,7 +160,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 animate-pulse">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <div className="aspect-[3/4] bg-neutral-200 rounded-lg" />
+          <div className="aspect-square bg-neutral-200 rounded-lg" />
           <div className="space-y-4">
             <div className="h-4 w-1/4 bg-neutral-200 rounded" />
             <div className="h-8 w-3/4 bg-neutral-200 rounded" />
@@ -270,18 +271,18 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
         {/* Left: Image Gallery (7 cols on lg) */}
         <div className="lg:col-span-7 flex flex-col-reverse md:flex-row gap-4">
           
-          {/* Thumbnails vertical strip */}
+          {/* Thumbnails strip (square like main image) */}
           {product.images && product.images.length > 1 && (
             <div className="flex md:flex-col gap-3 overflow-x-auto md:overflow-y-auto shrink-0 pb-2 md:pb-0">
               {product.images.map((img, idx) => (
                 <button
                   key={idx}
                   onClick={() => setSelectedImage(img)}
-                  className={`w-16 h-20 sm:w-20 sm:h-24 rounded border overflow-hidden shrink-0 transition-all cursor-pointer ${
-                    selectedImage === img ? 'border-black ring-1 ring-black' : 'border-neutral-200 opacity-70 hover:opacity-100'
+                  className={`w-16 h-16 sm:w-20 sm:h-20 aspect-square rounded-md border overflow-hidden shrink-0 transition-all cursor-pointer bg-neutral-100 ${
+                    selectedImage === img ? 'border-black ring-1 ring-black' : 'border-neutral-200 opacity-75 hover:opacity-100'
                   }`}
                 >
-                  <img src={img} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
+                  <img src={img} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover object-center" />
                 </button>
               ))}
             </div>
@@ -292,7 +293,9 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             <img
               src={selectedImage || product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
               alt={product.name}
-              className="w-full h-full object-cover object-center"
+              decoding="async"
+              fetchPriority="high"
+              className="w-full h-full object-cover object-center transition-opacity duration-200"
             />
             {/* Badges */}
             {isSale && (

@@ -250,6 +250,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logOut = async () => {
     await signOut(auth);
+    try {
+      const { adminDeviceService } = await import('../services/adminDeviceService');
+      adminDeviceService.clearSessionAccessKeyVerified();
+    } catch {
+      // ignore
+    }
     setCurrentUser(null);
     setCustomerProfile(null);
     setIsAdmin(false);

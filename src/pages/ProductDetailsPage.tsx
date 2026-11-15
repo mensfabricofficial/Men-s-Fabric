@@ -11,6 +11,8 @@ import {
   ChevronRight, 
   ChevronDown, 
   ChevronUp,
+  Plus,
+  Minus,
   Share2,
   AlertCircle
 } from 'lucide-react';
@@ -53,6 +55,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   
   // Accordion states
   const [activeTab, setActiveTab] = useState<'desc' | 'specs' | 'delivery' | 'reviews'>('desc');
+  const [mobileOpenAccordion, setMobileOpenAccordion] = useState<'desc' | 'specs' | 'delivery' | 'reviews' | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
   // Review submission state
@@ -481,7 +484,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               </div>
               <div className="flex items-center gap-2.5">
                 <RotateCcw className="w-4 h-4 text-black shrink-0" />
-                <span>7-Day standard exchange for sizing adjustments</span>
+                <span>3-Day standard exchange for sizing adjustments</span>
               </div>
             </div>
 
@@ -490,144 +493,307 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
       </div>
 
-      {/* Tabs & Additional Details Accordion */}
-      <div className="border-t border-neutral-200 pt-8 mb-16">
-        <div className="flex border-b border-neutral-200 gap-6 overflow-x-auto">
+      {/* Tabs & Additional Details Section */}
+      <div className="mb-16">
+        {/* Mobile View: Clean Stacked Hairline Accordion */}
+        <div className="md:hidden border-b border-neutral-200">
           {[
-            { id: 'desc', label: 'Description' },
-            { id: 'specs', label: 'Fabric & Specifications' },
-            { id: 'delivery', label: 'Delivery & Returns' },
-            { id: 'reviews', label: `Reviews (${reviews.length})` },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`pb-3 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-                activeTab === tab.id
-                  ? 'border-black text-black'
-                  : 'border-transparent text-neutral-400 hover:text-black'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+            {
+              id: 'desc' as const,
+              label: 'Description',
+              content: (
+                <p className="whitespace-pre-line text-xs text-neutral-700 leading-relaxed">
+                  {product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}
+                </p>
+              ),
+            },
+            {
+              id: 'specs' as const,
+              label: 'Fabric & Specifications',
+              content: (
+                <div className="divide-y divide-neutral-100 text-xs">
+                  <div className="py-2.5 flex justify-between gap-4">
+                    <span className="font-medium text-neutral-500">Fabric / Composition</span>
+                    <span className="font-semibold text-neutral-900 text-right">{product.fabric || '100% Premium Cotton'}</span>
+                  </div>
+                  <div className="py-2.5 flex justify-between gap-4">
+                    <span className="font-medium text-neutral-500">Gender / Fit</span>
+                    <span className="font-semibold text-neutral-900 capitalize text-right">{product.gender}</span>
+                  </div>
+                  <div className="py-2.5 flex justify-between gap-4">
+                    <span className="font-medium text-neutral-500">Care Instructions</span>
+                    <span className="font-semibold text-neutral-900 text-right">Machine wash cold with like colors; iron warm.</span>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: 'delivery' as const,
+              label: 'Delivery & Returns',
+              content: (
+                <div className="space-y-2.5 text-xs text-neutral-700 leading-relaxed">
+                  <p><b>Inside Dhaka:</b> ৳70 (Delivered within 24–48 hours)</p>
+                  <p><b>Outside Dhaka:</b> ৳130 (Delivered via courier within 2–4 business days)</p>
+                  <p><b>Exchange Policy:</b> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
+                  <p><b>Payment:</b> Cash on Delivery available nationwide. You may inspect the seal before accepting delivery.</p>
+                </div>
+              ),
+            },
+            {
+              id: 'reviews' as const,
+              label: `Reviews (${reviews.length})`,
+              content: (
+                <div className="space-y-5">
+                  {reviews.length === 0 ? (
+                    <p className="text-xs text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {reviews.map((r) => (
+                        <div key={r.id} className="p-3.5 bg-neutral-50 rounded-lg space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-xs text-neutral-900">{r.customerName}</span>
+                            <div className="flex text-amber-400">
+                              {Array.from({ length: 5 }).map((_, i) => (
+                                <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                              ))}
+                            </div>
+                          </div>
+                          <p className="text-xs text-neutral-600">{r.comment}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Submit Review Form */}
+                  <div className="border-t border-neutral-200 pt-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Write a Customer Review</h4>
+                    {reviewSuccess ? (
+                      <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded">
+                        Thank you! Your review has been submitted and will appear upon moderation.
+                      </div>
+                    ) : (
+                      <form onSubmit={handleReviewSubmit} className="space-y-3">
+                        {reviewError && (
+                          <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
+                            {reviewError}
+                          </div>
+                        )}
+                        <div>
+                          <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
+                          <div className="flex gap-1">
+                            {[1, 2, 3, 4, 5].map((num) => (
+                              <button
+                                key={num}
+                                type="button"
+                                onClick={() => setReviewRating(num)}
+                                className="p-1 cursor-pointer text-amber-400"
+                              >
+                                <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <input
+                            type="text"
+                            value={reviewAuthor}
+                            onChange={(e) => setReviewAuthor(e.target.value)}
+                            placeholder="Your Name (Optional)"
+                            className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
+                          />
+                        </div>
+                        <div>
+                          <textarea
+                            required
+                            rows={3}
+                            value={reviewComment}
+                            onChange={(e) => setReviewComment(e.target.value)}
+                            placeholder="Share your experience regarding the fabric, fit, and finish..."
+                            className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={reviewSubmitting}
+                          className="w-full py-2.5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
+                        >
+                          {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+              ),
+            },
+          ].map((section) => {
+            const isOpen = mobileOpenAccordion === section.id;
+            return (
+              <div key={section.id} className="border-t border-neutral-200">
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => setMobileOpenAccordion(isOpen ? null : section.id)}
+                  className="w-full py-4 flex items-center justify-between text-left cursor-pointer group"
+                >
+                  <span className="text-sm font-medium text-neutral-900 tracking-tight">
+                    {section.label}
+                  </span>
+                  {isOpen ? (
+                    <Minus className="w-4 h-4 text-neutral-600 shrink-0" strokeWidth={1.75} />
+                  ) : (
+                    <Plus className="w-4 h-4 text-neutral-600 shrink-0" strokeWidth={1.75} />
+                  )}
+                </button>
+                {isOpen && (
+                  <div className="pb-5 animate-fade-in">
+                    {section.content}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
-        <div className="py-6 text-sm text-neutral-700 leading-relaxed max-w-3xl">
-          {activeTab === 'desc' && (
-            <div className="space-y-4">
-              <p className="whitespace-pre-line">{product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}</p>
-            </div>
-          )}
+        {/* Desktop View: Horizontal Tabs */}
+        <div className="hidden md:block border-t border-neutral-200 pt-8">
+          <div className="flex border-b border-neutral-200 gap-6 overflow-x-auto">
+            {[
+              { id: 'desc', label: 'Description' },
+              { id: 'specs', label: 'Fabric & Specifications' },
+              { id: 'delivery', label: 'Delivery & Returns' },
+              { id: 'reviews', label: `Reviews (${reviews.length})` },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`pb-3 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
+                  activeTab === tab.id
+                    ? 'border-black text-black'
+                    : 'border-transparent text-neutral-400 hover:text-black'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-          {activeTab === 'specs' && (
-            <div className="divide-y divide-neutral-100 text-xs">
-              <div className="py-2.5 flex justify-between">
-                <span className="font-semibold text-neutral-500">Fabric / Composition</span>
-                <span className="font-bold text-neutral-900">{product.fabric || '100% Premium Cotton'}</span>
+          <div className="py-6 text-sm text-neutral-700 leading-relaxed max-w-3xl">
+            {activeTab === 'desc' && (
+              <div className="space-y-4">
+                <p className="whitespace-pre-line">{product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}</p>
               </div>
-              <div className="py-2.5 flex justify-between">
-                <span className="font-semibold text-neutral-500">Gender / Fit</span>
-                <span className="font-bold text-neutral-900 capitalize">{product.gender}</span>
-              </div>
-              <div className="py-2.5 flex justify-between">
-                <span className="font-semibold text-neutral-500">Care Instructions</span>
-                <span className="font-bold text-neutral-900">Machine wash cold with like colors; iron warm.</span>
-              </div>
-            </div>
-          )}
+            )}
 
-          {activeTab === 'delivery' && (
-            <div className="space-y-3 text-xs">
-              <p><b>Inside Dhaka:</b> ৳70 (Delivered within 24–48 hours)</p>
-              <p><b>Outside Dhaka:</b> ৳130 (Delivered via courier within 2–4 business days)</p>
-              <p><b>Payment:</b> Cash on Delivery available nationwide. You may inspect the seal before accepting the delivery.</p>
-            </div>
-          )}
+            {activeTab === 'specs' && (
+              <div className="divide-y divide-neutral-100 text-xs">
+                <div className="py-2.5 flex justify-between">
+                  <span className="font-semibold text-neutral-500">Fabric / Composition</span>
+                  <span className="font-bold text-neutral-900">{product.fabric || '100% Premium Cotton'}</span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="font-semibold text-neutral-500">Gender / Fit</span>
+                  <span className="font-bold text-neutral-900 capitalize">{product.gender}</span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="font-semibold text-neutral-500">Care Instructions</span>
+                  <span className="font-bold text-neutral-900">Machine wash cold with like colors; iron warm.</span>
+                </div>
+              </div>
+            )}
 
-          {activeTab === 'reviews' && (
-            <div className="space-y-6">
-              {/* Review list */}
-              {reviews.length === 0 ? (
-                <p className="text-xs text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
-              ) : (
-                <div className="space-y-4">
-                  {reviews.map((r) => (
-                    <div key={r.id} className="p-4 bg-neutral-50 rounded-lg space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs text-neutral-900">{r.customerName}</span>
-                        <div className="flex text-amber-400">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+            {activeTab === 'delivery' && (
+              <div className="space-y-3 text-xs">
+                <p><b>Inside Dhaka:</b> ৳70 (Delivered within 24–48 hours)</p>
+                <p><b>Outside Dhaka:</b> ৳130 (Delivered via courier within 2–4 business days)</p>
+                <p><b>Exchange Policy:</b> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
+                <p><b>Payment:</b> Cash on Delivery available nationwide. You may inspect the seal before accepting the delivery.</p>
+              </div>
+            )}
+
+            {activeTab === 'reviews' && (
+              <div className="space-y-6">
+                {/* Review list */}
+                {reviews.length === 0 ? (
+                  <p className="text-xs text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
+                ) : (
+                  <div className="space-y-4">
+                    {reviews.map((r) => (
+                      <div key={r.id} className="p-4 bg-neutral-50 rounded-lg space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs text-neutral-900">{r.customerName}</span>
+                          <div className="flex text-amber-400">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-xs text-neutral-600">{r.comment}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Submit Review Form */}
+                <div className="border-t border-neutral-200 pt-6">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Write a Customer Review</h4>
+                  {reviewSuccess ? (
+                    <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded">
+                      Thank you! Your review has been submitted and will appear upon moderation.
+                    </div>
+                  ) : (
+                    <form onSubmit={handleReviewSubmit} className="space-y-3">
+                      {reviewError && (
+                        <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
+                          {reviewError}
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
+                        <div className="flex gap-1">
+                          {[1, 2, 3, 4, 5].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setReviewRating(num)}
+                              className="p-1 cursor-pointer text-amber-400"
+                            >
+                              <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                            </button>
                           ))}
                         </div>
                       </div>
-                      <p className="text-xs text-neutral-600">{r.comment}</p>
-                    </div>
-                  ))}
+                      <div>
+                        <input
+                          type="text"
+                          value={reviewAuthor}
+                          onChange={(e) => setReviewAuthor(e.target.value)}
+                          placeholder="Your Name (Optional)"
+                          className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
+                        />
+                      </div>
+                      <div>
+                        <textarea
+                          required
+                          rows={3}
+                          value={reviewComment}
+                          onChange={(e) => setReviewComment(e.target.value)}
+                          placeholder="Share your experience regarding the fabric, fit, and finish..."
+                          className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={reviewSubmitting}
+                        className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
+                      >
+                        {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                      </button>
+                    </form>
+                  )}
                 </div>
-              )}
-
-              {/* Submit Review Form */}
-              <div className="border-t border-neutral-200 pt-6">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Write a Customer Review</h4>
-                {reviewSuccess ? (
-                  <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded">
-                    Thank you! Your review has been submitted and will appear upon moderation.
-                  </div>
-                ) : (
-                  <form onSubmit={handleReviewSubmit} className="space-y-3">
-                    {reviewError && (
-                      <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
-                        {reviewError}
-                      </div>
-                    )}
-                    <div>
-                      <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
-                      <div className="flex gap-1">
-                        {[1, 2, 3, 4, 5].map((num) => (
-                          <button
-                            key={num}
-                            type="button"
-                            onClick={() => setReviewRating(num)}
-                            className="p-1 cursor-pointer text-amber-400"
-                          >
-                            <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <input
-                        type="text"
-                        value={reviewAuthor}
-                        onChange={(e) => setReviewAuthor(e.target.value)}
-                        placeholder="Your Name (Optional)"
-                        className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                      />
-                    </div>
-                    <div>
-                      <textarea
-                        required
-                        rows={3}
-                        value={reviewComment}
-                        onChange={(e) => setReviewComment(e.target.value)}
-                        placeholder="Share your experience regarding the fabric, fit, and finish..."
-                        className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={reviewSubmitting}
-                      className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
-                    >
-                      {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
-                    </button>
-                  </form>
-                )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

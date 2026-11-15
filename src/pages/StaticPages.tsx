@@ -139,7 +139,7 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
             </div>
             <div className="pt-4">
               <h3 className="font-bold text-neutral-900 mb-1">What if the garment does not fit me properly?</h3>
-              <p className="text-neutral-600">We offer a 7-day easy exchange window. Simply contact our support team via WhatsApp or phone with your Order ID, and we will arrange a replacement size.</p>
+              <p className="text-neutral-600">We offer a 3-day easy exchange window. Simply contact our support team via WhatsApp or phone with your Order ID, and we will arrange a replacement size.</p>
             </div>
             <div className="pt-4">
               <h3 className="font-bold text-neutral-900 mb-1">How can I track my parcel?</h3>
@@ -247,11 +247,11 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <h1 className="text-2xl sm:text-4xl font-extrabold text-neutral-900 tracking-tight mb-4">
             Return & Exchange Policy
           </h1>
-          <p>Your satisfaction is our priority. If an item does not fit or arrives with a defect, we provide a 7-day exchange window.</p>
+          <p>Your satisfaction is our priority. If an item does not fit or arrives with a defect, we provide a 3-day exchange window.</p>
           <h3 className="font-bold text-neutral-900 pt-2">Conditions for Exchange:</h3>
           <ul className="list-disc pl-5 space-y-1 text-neutral-600">
             <li>Items must be unworn, unwashed, and with all original tags attached.</li>
-            <li>Requests must be initiated within 7 days of package receipt.</li>
+            <li>Requests must be initiated within 3 days of package receipt.</li>
             <li>Exchange is subject to stock availability of the requested size/color.</li>
           </ul>
         </div>

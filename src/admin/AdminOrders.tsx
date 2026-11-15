@@ -411,11 +411,11 @@ export const AdminOrders: React.FC = () => {
 
       {/* Order Details & Invoice Modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full my-6 max-h-[92vh] flex flex-col justify-between overflow-hidden animate-fade-in print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-3xl w-full my-2 sm:my-6 max-h-[94vh] flex flex-col justify-between overflow-hidden animate-fade-in print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none">
             
             {/* Modal Header & Dual Format Switcher */}
-            <div className="p-4 sm:p-5 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-neutral-50 print:hidden">
+            <div className="p-3 sm:p-5 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 bg-neutral-50 print:hidden">
               <div className="flex items-center gap-2">
                 <ShoppingBag className="w-4 h-4 text-neutral-800" />
                 <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
@@ -499,7 +499,7 @@ export const AdminOrders: React.FC = () => {
             ` }} />
 
             {/* Modal Body */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-6 flex-1 text-xs">
+            <div className="p-3.5 sm:p-8 overflow-y-auto overflow-x-hidden space-y-6 flex-1 text-xs">
               
               {/* Printable Invoice Container */}
               <div id="printable-invoice-container">
@@ -631,7 +631,7 @@ export const AdminOrders: React.FC = () => {
                       </div>
                       <p className="text-[9px] font-mono tracking-widest">{getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}</p>
                       <p className="text-[10px] font-bold uppercase pt-1">Thank You!</p>
-                      <p className="text-[9px] text-neutral-500">7-Day exchange with original invoice & parcel tag.</p>
+                      <p className="text-[9px] text-neutral-500">3-Day exchange with original invoice &amp; parcel tag.</p>
                     </div>
                   </div>
                 ) : (

@@ -1,6 +1,7 @@
 import {
   doc,
   getDoc,
+  getDocFromCache,
   setDoc,
   updateDoc,
   deleteField,
@@ -9,6 +10,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { firebaseConfig } from '../lib/firebaseConfig';
 
 export type DeviceStatus = 'approved' | 'pending' | 'rejected';
 
@@ -31,6 +33,64 @@ const SESSION_KEY_PREFIX = 'selvee_admin_key_verified_';
 export const DEFAULT_ADMIN_ACCESS_KEY = 'SELVEE-ADMIN-2026';
 
 const getRegistryDocRef = () => doc(db, 'settings', 'adminDeviceRegistry');
+
+function parseFirestoreValue(val: any): any {
+  if (!val || typeof val !== 'object') return undefined;
+  if ('stringValue' in val) return val.stringValue;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return Number(val.integerValue);
+  if ('doubleValue' in val) return Number(val.doubleValue);
+  if ('nullValue' in val) return null;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('mapValue' in val) {
+    const out: Record<string, any> = {};
+    const fields = val.mapValue?.fields || {};
+    for (const k of Object.keys(fields)) {
+      out[k] = parseFirestoreValue(fields[k]);
+    }
+    return out;
+  }
+  if ('arrayValue' in val) {
+    return (val.arrayValue?.values || []).map(parseFirestoreValue);
+  }
+  return undefined;
+}
+
+async function readRegistryDataResilient(): Promise<Record<string, any>> {
+  const docRef = getRegistryDocRef();
+  try {
+    const snap = await Promise.race([
+      getDoc(docRef),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+    ]);
+    return snap.exists() ? (snap.data() as Record<string, any>) : {};
+  } catch {
+    try {
+      const restUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/settings/adminDeviceRegistry`;
+      const res = await fetch(restUrl);
+      if (res.ok) {
+        const json = await res.json();
+        const fields = json?.fields || {};
+        const parsed: Record<string, any> = {};
+        for (const k of Object.keys(fields)) {
+          parsed[k] = parseFirestoreValue(fields[k]);
+        }
+        return parsed;
+      }
+      if (res.status === 404) {
+        return {};
+      }
+    } catch {
+      // Fallback to local SDK cache
+    }
+    try {
+      const cached = await getDocFromCache(docRef);
+      return cached.exists() ? (cached.data() as Record<string, any>) : {};
+    } catch {
+      throw new Error('Could not reach Firestore registry');
+    }
+  }
+}
 
 function generateDeviceId(): string {
   const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -126,12 +186,10 @@ export const adminDeviceService = {
   // Fetch authoritative Admin Access Key from Firestore
   async getAccessKey(): Promise<string> {
     try {
-      const snap = await getDoc(getRegistryDocRef());
-      if (snap.exists()) {
-        const remoteKey = snap.data()?.accessKey;
-        if (typeof remoteKey === 'string' && remoteKey.trim()) {
-          return remoteKey.trim();
-        }
+      const data = await readRegistryDataResilient();
+      const remoteKey = data?.accessKey;
+      if (typeof remoteKey === 'string' && remoteKey.trim()) {
+        return remoteKey.trim();
       }
     } catch (err) {
       console.warn('Could not read remote access key:', err);
@@ -174,8 +232,7 @@ export const adminDeviceService = {
     const nowIso = new Date().toISOString();
     const docRef = getRegistryDocRef();
 
-    const snap = await getDoc(docRef);
-    const data = snap.exists() ? snap.data() : {};
+    const data = await readRegistryDataResilient();
     const devicesMap: Record<string, AdminDevice> = (data?.devices as Record<string, AdminDevice>) || {};
     const existing = devicesMap[deviceId];
 

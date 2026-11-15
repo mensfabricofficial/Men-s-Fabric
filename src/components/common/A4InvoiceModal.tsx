@@ -20,13 +20,13 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white">
       
       {/* Container (Same compact A4 proportions as Admin Panel) */}
-      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full my-6 max-h-[92vh] flex flex-col justify-between overflow-hidden animate-fade-in print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none print:max-h-none">
+      <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-3xl w-full my-2 sm:my-6 max-h-[94vh] flex flex-col justify-between overflow-hidden animate-fade-in print:m-0 print:p-0 print:max-w-none print:shadow-none print:rounded-none print:max-h-none">
         
         {/* Top Control Bar (Hidden in Print) */}
-        <div className="p-4 sm:p-5 border-b border-neutral-200 flex items-center justify-between bg-neutral-50 print:hidden">
+        <div className="p-3 sm:p-5 border-b border-neutral-200 flex items-center justify-between gap-2 bg-neutral-50 print:hidden">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
               Invoice
@@ -80,7 +80,7 @@ export const A4InvoiceModal: React.FC<A4InvoiceModalProps> = ({ order, isOpen, o
         ` }} />
 
         {/* Printable A4 Content */}
-        <div id="printable-customer-invoice" className="p-6 sm:p-8 overflow-y-auto flex-1">
+        <div id="printable-customer-invoice" className="p-3.5 sm:p-8 overflow-y-auto overflow-x-hidden flex-1">
           <InvoiceSheet order={order} />
         </div>
 

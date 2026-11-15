@@ -59,7 +59,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               <RotateCcw className="w-5 h-5 text-neutral-300" />
             </div>
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-white">Easy 7-Day Exchange</h4>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-white">Easy 3-Day Exchange</h4>
               <p className="text-[11px] text-neutral-400">Hassle-free replacement policy</p>
             </div>
           </div>

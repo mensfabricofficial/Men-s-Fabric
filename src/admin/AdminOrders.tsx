@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { printElementById } from '../lib/printHelper';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
+import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
 
 export const AdminOrders: React.FC = () => {
   const { currentUser } = useAuth();
@@ -308,7 +309,7 @@ export const AdminOrders: React.FC = () => {
               <thead className="bg-neutral-50 text-neutral-500 uppercase tracking-wider font-bold border-b border-neutral-200">
                 <tr>
                   <th className="p-3.5">Order Number</th>
-                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Date &amp; Time</th>
                   <th className="p-3.5">Customer & Phone</th>
                   <th className="p-3.5">Amount</th>
                   <th className="p-3.5">Payment Method</th>
@@ -325,8 +326,15 @@ export const AdminOrders: React.FC = () => {
                       <span className="font-mono font-bold text-neutral-900">{ord.orderNumber}</span>
                       <span className="block text-[10px] text-neutral-400 font-normal">{ord.deliveryZone}</span>
                     </td>
-                    <td className="p-3.5 text-neutral-500 whitespace-nowrap">
-                      {ord.createdAt?.toDate ? ord.createdAt.toDate().toLocaleDateString('en-BD') : 'Recent'}
+                    <td className="p-3.5 whitespace-nowrap">
+                      <span className="block text-neutral-800 font-semibold text-xs tabular-nums">
+                        {formatDatePart(ord.createdAt, 'Recent')}
+                      </span>
+                      {formatTimePart(ord.createdAt) && (
+                        <span className="block text-[10px] text-neutral-400 font-mono tabular-nums mt-0.5">
+                          {formatTimePart(ord.createdAt)}
+                        </span>
+                      )}
                     </td>
                     <td className="p-3.5">
                       <p className="font-semibold text-neutral-900">{ord.customerName}</p>
@@ -525,7 +533,7 @@ export const AdminOrders: React.FC = () => {
                       </div>
                       <div className="flex justify-between">
                         <span>DATE:</span>
-                        <span>{selectedOrder.createdAt?.toDate ? selectedOrder.createdAt.toDate().toLocaleString('en-BD') : new Date().toLocaleDateString('en-BD')}</span>
+                        <span>{formatDateTime(selectedOrder.createdAt, formatDateTime(new Date()))}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>CUSTOMER:</span>

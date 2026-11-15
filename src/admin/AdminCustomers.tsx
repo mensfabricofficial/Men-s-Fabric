@@ -19,6 +19,7 @@ import { Coupon, CustomerProfile, Order } from '../types';
 import { orderService } from '../services/orderService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
+import { formatDateTime } from '../lib/dateFormat';
 
 interface AggregatedCustomer {
   uid: string;
@@ -119,7 +120,7 @@ export const AdminCustomers: React.FC = () => {
           phone,
           address: user.address,
           city: user.city,
-          joinedDate: (user as any).createdAt?.toDate ? (user as any).createdAt.toDate().toLocaleDateString('en-BD') : 'Registered User',
+          joinedDate: formatDateTime((user as any).createdAt, 'Registered User'),
           isRegisteredUser: true,
           orderCount: 0,
           totalSpent: 0,
@@ -142,6 +143,9 @@ export const AdminCustomers: React.FC = () => {
           existing.phone = existing.phone || phone;
           existing.address = existing.address || user.address;
           existing.city = existing.city || user.city;
+          if ((!existing.joinedDate || existing.joinedDate === 'Registered User') && (user as any).createdAt) {
+            existing.joinedDate = formatDateTime((user as any).createdAt, existing.joinedDate);
+          }
         } else {
           customerMap.set(identifier, {
             uid,
@@ -150,7 +154,7 @@ export const AdminCustomers: React.FC = () => {
             phone,
             address: user.address,
             city: user.city,
-            joinedDate: (user as any).createdAt?.toDate ? (user as any).createdAt.toDate().toLocaleDateString('en-BD') : 'Registered User',
+            joinedDate: formatDateTime((user as any).createdAt, 'Registered User'),
             isRegisteredUser: true,
             orderCount: 0,
             totalSpent: 0,
@@ -197,7 +201,7 @@ export const AdminCustomers: React.FC = () => {
             phone,
             address: o.shippingAddress?.address,
             city: `${o.shippingAddress?.district || ''}, ${o.shippingAddress?.division || ''}`,
-            joinedDate: o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString('en-BD') : 'First Order',
+            joinedDate: formatDateTime(o.createdAt, 'First Order'),
             isRegisteredUser: Boolean(uid && uid !== 'guest'),
             orderCount: 1,
             totalSpent: o.total || 0,
@@ -670,6 +674,12 @@ export const AdminCustomers: React.FC = () => {
                 <span className="text-neutral-500 font-medium">Location:</span>
                 <span className="font-medium text-neutral-800">{selectedCustomer.city || selectedCustomer.address || 'N/A'}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500 font-medium">Account Created:</span>
+                <span className="font-mono font-medium text-neutral-800 tabular-nums">
+                  {selectedCustomer.joinedDate || 'N/A'}
+                </span>
+              </div>
               <div className="flex justify-between pt-2 border-t border-neutral-200">
                 <span className="text-neutral-700 font-bold">Total Lifetime Spend:</span>
                 <span className="font-mono font-extrabold text-neutral-900">৳{selectedCustomer.totalSpent.toLocaleString('en-BD')}</span>
@@ -708,8 +718,8 @@ export const AdminCustomers: React.FC = () => {
                             {ord.orderStatus}
                           </span>
                         </div>
-                        <p className="text-[10px] text-neutral-400 mt-0.5">
-                          {ord.createdAt?.toDate ? ord.createdAt.toDate().toLocaleDateString('en-BD') : 'Order'} • {ord.items?.length || 0} items
+                        <p className="text-[10px] text-neutral-400 mt-0.5 tabular-nums">
+                          {formatDateTime(ord.createdAt, 'Order')} • {ord.items?.length || 0} items
                         </p>
                       </div>
                       <span className="font-mono font-bold text-neutral-900">

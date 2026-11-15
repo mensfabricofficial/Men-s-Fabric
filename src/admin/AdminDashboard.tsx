@@ -27,6 +27,7 @@ import { Order, Product, CustomerProfile } from '../types';
 import { AdminTab } from './AdminLayout';
 import { orderService } from '../services/orderService';
 import { productService } from '../services/productService';
+import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
 
 interface AdminDashboardProps {
   onNavigateTab: (tab: AdminTab) => void;
@@ -559,6 +560,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                 <thead className="bg-neutral-50 text-neutral-500 uppercase tracking-wider font-bold border-b border-neutral-200">
                   <tr>
                     <th className="p-3.5">Order #</th>
+                    <th className="p-3.5">Date &amp; Time</th>
                     <th className="p-3.5">Customer</th>
                     <th className="p-3.5">Phone</th>
                     <th className="p-3.5">Destination</th>
@@ -572,6 +574,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                   {orders.slice(0, 6).map((ord) => (
                     <tr key={ord.id} className="hover:bg-neutral-50/50">
                       <td className="p-3.5 font-mono font-bold text-neutral-900">{ord.orderNumber || ord.id}</td>
+                      <td className="p-3.5 whitespace-nowrap">
+                        <span className="block text-neutral-800 font-semibold text-xs tabular-nums">
+                          {formatDatePart(ord.createdAt, 'Recent')}
+                        </span>
+                        {formatTimePart(ord.createdAt) && (
+                          <span className="block text-[10px] text-neutral-400 font-mono tabular-nums">
+                            {formatTimePart(ord.createdAt)}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3.5 text-neutral-800">{ord.customerName || 'Customer'}</td>
                       <td className="p-3.5 text-neutral-600 font-mono">{ord.customerPhone || 'N/A'}</td>
                       <td className="p-3.5 text-neutral-600">{ord.shippingAddress?.district || ord.deliveryZone || 'N/A'}</td>
@@ -628,6 +640,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                         </span>
                       </div>
                       <p className="text-xs font-semibold text-neutral-800 mt-0.5">{ord.customerName || 'Customer'}</p>
+                      <p className="text-[10px] text-neutral-400 font-mono tabular-nums mt-0.5">
+                        {formatDateTime(ord.createdAt, 'Recent')}
+                      </p>
                     </div>
 
                     <div className="text-right">

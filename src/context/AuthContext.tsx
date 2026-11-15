@@ -171,8 +171,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       disabled: false
     };
     
-    setCustomerProfile(profileData);
-    saveLocalCustomer(profileData);
+    const localProfileData: CustomerProfile = {
+      ...profileData,
+      createdAt: new Date().toISOString(),
+    };
+    setCustomerProfile(localProfileData);
+    saveLocalCustomer(localProfileData);
 
     try {
       await setDoc(doc(db, 'users', cred.user.uid), profileData);

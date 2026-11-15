@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Star, Check, X, Trash2, MessageSquare } from 'lucide-react';
 import { Review } from '../types';
 import { settingsService } from '../services/settingsService';
+import { formatDateTime } from '../lib/dateFormat';
 
 export const AdminReviews: React.FC = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -93,7 +94,14 @@ export const AdminReviews: React.FC = () => {
             <tbody className="divide-y divide-neutral-100 font-medium">
               {reviews.map((r) => (
                 <tr key={r.id} className="hover:bg-neutral-50/50">
-                  <td className="p-3.5 font-bold text-neutral-900">{r.customerName}</td>
+                  <td className="p-3.5">
+                    <span className="block font-bold text-neutral-900">{r.customerName}</span>
+                    {r.createdAt && (
+                      <span className="block text-[10px] text-neutral-400 font-mono tabular-nums mt-0.5">
+                        {formatDateTime(r.createdAt)}
+                      </span>
+                    )}
+                  </td>
                   <td className="p-3.5 text-neutral-700">{r.productName || r.productId}</td>
                   <td className="p-3.5">
                     <div className="flex text-amber-500">

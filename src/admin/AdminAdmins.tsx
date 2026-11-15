@@ -22,6 +22,7 @@ import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp } from 'fi
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { settingsService } from '../services/settingsService';
+import { formatDatePart, formatTimePart } from '../lib/dateFormat';
 
 export interface AdminUser {
   id: string;
@@ -341,7 +342,7 @@ export const AdminAdmins: React.FC = () => {
                   <th className="p-3.5">Assigned Role</th>
                   <th className="p-3.5">Contact</th>
                   <th className="p-3.5">Status</th>
-                  <th className="p-3.5">Added Date</th>
+                  <th className="p-3.5">Added Date &amp; Time</th>
                   <th className="p-3.5 text-right">Actions</th>
                 </tr>
               </thead>
@@ -386,8 +387,15 @@ export const AdminAdmins: React.FC = () => {
                           )}
                         </button>
                       </td>
-                      <td className="p-3.5 text-neutral-400 whitespace-nowrap text-[11px]">
-                        {new Date(adm.createdAt).toLocaleDateString('en-BD')}
+                      <td className="p-3.5 whitespace-nowrap text-[11px]">
+                        <span className="block text-neutral-700 font-medium tabular-nums">
+                          {formatDatePart(adm.createdAt)}
+                        </span>
+                        {formatTimePart(adm.createdAt) && (
+                          <span className="block text-[10px] text-neutral-400 font-mono tabular-nums">
+                            {formatTimePart(adm.createdAt)}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">

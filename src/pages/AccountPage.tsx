@@ -11,7 +11,10 @@ import {
   AlertCircle, 
   CheckCircle, 
   Clock, 
-  Eye, 
+  Eye,
+  EyeOff,
+  X,
+  ChevronLeft,
   ShieldCheck,
   RefreshCw,
   Save,
@@ -26,6 +29,7 @@ import { orderService } from '../services/orderService';
 import { EmptyState } from '../components/common/EmptyState';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
 import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
 
 interface AccountPageProps {
@@ -50,6 +54,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     isAdmin, 
     signIn, 
     signUp, 
+    signInWithGoogle,
+    signInWithFacebook,
     logOut, 
     resetPassword,
     sendVerificationEmail,
@@ -59,12 +65,15 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   } = useAuth();
 
   // Auth Form State
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [socialLoading, setSocialLoading] = useState<'google' | 'facebook' | null>(null);
   const [authError, setAuthError] = useState('');
   const [resetSent, setResetSent] = useState(false);
 
@@ -74,10 +83,18 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const [verificationFeedback, setVerificationFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Authenticated State
-  const [activeTab, setActiveTab] = useState<'orders' | 'profile'>('orders');
+  const [activeTab, setActiveTab] = useState<'profile' | 'orders' | 'addresses'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get('tab');
+    if (t === 'orders' || t === 'addresses' || t === 'profile') return t;
+    return 'profile';
+  });
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersPage, setOrdersPage] = useState(1);
   const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<Order | null>(null);
+  const [isEditingPersonal, setIsEditingPersonal] = useState(false);
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
 
   // Profile Edit Form State
   const [profileName, setProfileName] = useState('');
@@ -187,20 +204,47 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     }
   };
 
-  const handlePasswordReset = async () => {
-    if (!email.trim()) {
-      setAuthError('Please enter your email address to receive password reset instructions.');
-      return;
-    }
+  const openForgotPassword = () => {
+    setForgotIdentifier(email);
+    setAuthError('');
+    setResetSent(false);
+    setAuthMode('forgot');
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotIdentifier.trim()) return;
     setAuthLoading(true);
     setAuthError('');
+    setResetSent(false);
     try {
-      await resetPassword(email);
+      await resetPassword(forgotIdentifier);
       setResetSent(true);
     } catch (err: any) {
       setAuthError(getCleanAuthErrorMessage(err));
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  const handleSocialSignIn = async (provider: 'google' | 'facebook') => {
+    setAuthError('');
+    setResetSent(false);
+    setSocialLoading(provider);
+    try {
+      const user = provider === 'google' ? await signInWithGoogle() : await signInWithFacebook();
+      const adminEmails = ['mensfabricofficial@gmail.com', 'me@admin.com'];
+      if (user.email && adminEmails.includes(user.email.toLowerCase())) {
+        onNavigate('/admin');
+        return;
+      }
+      if (window.location.search.includes('redirect=checkout')) {
+        onNavigate('/checkout');
+      }
+    } catch (err: any) {
+      setAuthError(getCleanAuthErrorMessage(err));
+    } finally {
+      setSocialLoading(null);
     }
   };
 
@@ -251,7 +295,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     }
   };
 
-  // Save Customer Profile updates
+  // Save Customer Profile / Delivery Address updates
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileStatus(null);
@@ -282,9 +326,11 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
         city: profileDistrict.trim(),
         postalCode: profilePostalCode.trim()
       });
+      setIsEditingPersonal(false);
+      setIsEditingAddress(false);
       setProfileStatus({
         type: 'success',
-        message: 'Your profile and delivery details have been saved successfully!'
+        message: 'Your details have been saved successfully!'
       });
     } catch (err: any) {
       setProfileStatus({
@@ -340,168 +386,363 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     }
   };
 
-  // 1. Unauthenticated Screen
+  // 1. Unauthenticated Screen — Standalone Full-Page White Editorial Auth (Login / Register / Forgot Password)
   if (!currentUser) {
-    return (
-      <div className="max-w-md mx-auto px-4 py-16 sm:py-24">
-        <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-sm">
-          
-          {/* Logo / Header */}
-          <div className="text-center mb-6 space-y-3">
-            <div className="flex justify-center pb-1">
-              <BrandLogo variant="dark" size="lg" />
-            </div>
-            <h1 className="text-lg font-extrabold uppercase tracking-tight text-neutral-900">
-              {authMode === 'login' ? 'Customer Sign In' : 'Create Customer Account'}
-            </h1>
-            <p className="text-xs text-neutral-500">
-              Access your order history, track deliveries, and manage your wishlist.
-            </p>
-          </div>
+    // Dedicated Forgot Password Screen
+    if (authMode === 'forgot') {
+      const canReset = Boolean(forgotIdentifier.trim()) && !authLoading;
+      return (
+        <div className="min-h-screen bg-white text-neutral-900 flex flex-col relative px-4 sm:px-6 selection:bg-black selection:text-white">
+          {/* Top-left Back Arrow */}
+          <button
+            type="button"
+            onClick={() => { setAuthMode('login'); setAuthError(''); setResetSent(false); }}
+            aria-label="Return to sign in"
+            className="fixed top-4 left-4 sm:top-6 sm:left-7 p-2 text-neutral-800 hover:text-black hover:bg-neutral-100 rounded-full transition-colors cursor-pointer z-20"
+          >
+            <ChevronLeft className="w-5 h-5" strokeWidth={1.75} />
+          </button>
 
-          {window.location.search.includes('redirect=checkout') && (
-            <div className="p-3 mb-5 bg-neutral-900 text-white rounded-xl text-xs flex items-center gap-2.5">
+          {/* Top Centered Brand Logo + Centered Reset Form */}
+          <div className="w-full max-w-[400px] mx-auto pt-8 sm:pt-10 pb-12 flex-1 flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => onNavigate('/')}
+              className="cursor-pointer focus:outline-none"
+              aria-label="Go to Selvee home"
+            >
+              <BrandLogo variant="dark" imgClassName="h-10 sm:h-11 w-auto" />
+            </button>
+
+            <div className="w-full my-auto py-12 flex flex-col items-center">
+              {/* Minimalist Padlock Icon with Keyhole */}
+              <div className="mb-6 text-neutral-900">
+                <svg className="w-14 h-14" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="10" y="20" width="28" height="21" rx="3" />
+                  <path d="M16 20v-6a8 8 0 0 1 16 0v6" />
+                  <circle cx="24" cy="29.5" r="2.2" fill="currentColor" stroke="none" />
+                  <path d="M24 31.5v3.5" strokeWidth="2.4" />
+                </svg>
+              </div>
+
+              <h1 className="text-[22px] sm:text-2xl font-bold text-neutral-900 tracking-tight text-center">
+                Forgot your password?
+              </h1>
+
+              <p className="mt-2.5 mb-7 text-[13px] text-neutral-600 text-center leading-relaxed max-w-[360px]">
+                Please enter the <strong className="font-semibold text-neutral-900">Phone number or Email address</strong> associated with your account, and we&apos;ll send you a link to reset your password
+              </p>
+
+              {authError && (
+                <div className="w-full p-3 mb-4 bg-red-50 border border-red-200 rounded-[6px] text-xs text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              {resetSent && (
+                <div className="w-full p-3 mb-4 bg-emerald-50 border border-emerald-200 rounded-[6px] text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 shrink-0" />
+                  <span>Password reset link sent! Please check your email inbox and spam folder.</span>
+                </div>
+              )}
+
+              <form onSubmit={handleForgotSubmit} className="w-full space-y-4">
+                <FloatingInput
+                  label="Phone number or email"
+                  type="text"
+                  required
+                  value={forgotIdentifier}
+                  onChange={(e) => setForgotIdentifier(e.target.value)}
+                  autoComplete="username"
+                />
+
+                <button
+                  type="submit"
+                  disabled={!canReset}
+                  className={`w-full h-11 sm:h-12 text-sm font-medium rounded-[6px] transition-colors ${
+                    canReset
+                      ? 'bg-black text-white hover:bg-neutral-900 cursor-pointer'
+                      : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                  }`}
+                >
+                  {authLoading ? 'Sending...' : 'Reset Password'}
+                </button>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => { setAuthMode('login'); setAuthError(''); setResetSent(false); }}
+                className="mt-5 inline-flex items-center justify-center gap-1 text-xs font-semibold text-neutral-900 hover:text-black cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" strokeWidth={2} />
+                <span>Return to sign in</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const isRedirectCheckout = window.location.search.includes('redirect=checkout');
+    const googleButtonLabel =
+      socialLoading === 'google'
+        ? 'Connecting...'
+        : authMode === 'login'
+        ? 'Continue with Google'
+        : 'Sign with Google';
+    const facebookButtonLabel =
+      socialLoading === 'facebook'
+        ? 'Connecting...'
+        : authMode === 'login'
+        ? 'Continue with Facebook'
+        : 'Sign with Facebook';
+
+    const passwordEyeToggle = (
+      <button
+        type="button"
+        onClick={() => setShowPassword((prev) => !prev)}
+        aria-label={showPassword ? 'Hide password' : 'Show password'}
+        className="text-neutral-600 hover:text-neutral-900 p-0.5 cursor-pointer transition-colors"
+      >
+        {showPassword ? <EyeOff className="w-[18px] h-[18px]" /> : <Eye className="w-[18px] h-[18px]" />}
+      </button>
+    );
+
+    return (
+      <div className="min-h-screen bg-white text-neutral-900 flex flex-col relative px-4 sm:px-6 selection:bg-black selection:text-white">
+        {/* Top-right Close Button */}
+        <button
+          type="button"
+          onClick={() => onNavigate('/')}
+          aria-label="Close sign in"
+          className="fixed top-4 right-4 sm:top-6 sm:right-7 p-2 text-neutral-800 hover:text-black hover:bg-neutral-100 rounded-full transition-colors cursor-pointer z-20"
+        >
+          <X className="w-5 h-5" strokeWidth={1.75} />
+        </button>
+
+        {/* Centered Container */}
+        <div className="w-full max-w-[380px] mx-auto my-auto py-12 flex flex-col items-center">
+          {/* Centered Official Brand Logo */}
+          <button
+            type="button"
+            onClick={() => onNavigate('/')}
+            className="mb-9 sm:mb-11 cursor-pointer focus:outline-none"
+            aria-label="Go to Selvee home"
+          >
+            <BrandLogo variant="dark" imgClassName="h-10 sm:h-11 w-auto" />
+          </button>
+
+          {/* Heading */}
+          <h1 className="text-[22px] sm:text-2xl font-bold text-neutral-900 tracking-tight text-center">
+            {authMode === 'login' ? 'Sign in to your account' : 'Create your account'}
+          </h1>
+
+          {/* Subline Switcher */}
+          <p className="mt-2 mb-7 text-[13px] text-neutral-900 text-center">
+            {authMode === 'login' ? (
+              <>
+                New user?{' '}
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('register'); setAuthError(''); setResetSent(false); }}
+                  className="text-[#1a73e8] underline underline-offset-2 hover:text-blue-700 font-medium cursor-pointer"
+                >
+                  Create an account
+                </button>
+              </>
+            ) : (
+              <>
+                Already have an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(''); setResetSent(false); }}
+                  className="text-[#1a73e8] underline underline-offset-2 hover:text-blue-700 font-medium cursor-pointer"
+                >
+                  Sign in
+                </button>
+              </>
+            )}
+          </p>
+
+          {isRedirectCheckout && (
+            <div className="w-full p-3 mb-4 bg-neutral-900 text-white rounded-[6px] text-xs flex items-center gap-2.5">
               <Package className="w-4 h-4 shrink-0 text-emerald-400" />
-              <span>Please sign in or create an account to proceed with your order checkout.</span>
+              <span>Please sign in or create an account to complete checkout.</span>
             </div>
           )}
 
-          {/* Tab Switcher */}
-          <div className="grid grid-cols-2 p-1 bg-neutral-100 rounded-lg mb-6 text-xs font-semibold uppercase tracking-wider">
-            <button
-              onClick={() => { setAuthMode('login'); setAuthError(''); setResetSent(false); }}
-              className={`py-2 rounded-md transition-all cursor-pointer ${
-                authMode === 'login' ? 'bg-white text-black shadow-xs' : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => { setAuthMode('register'); setAuthError(''); setResetSent(false); }}
-              className={`py-2 rounded-md transition-all cursor-pointer ${
-                authMode === 'register' ? 'bg-white text-black shadow-xs' : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              Register
-            </button>
-          </div>
-
           {authError && (
-            <div className="p-3 mb-4 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+            <div className="w-full p-3 mb-4 bg-red-50 border border-red-200 rounded-[6px] text-xs text-red-700 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{authError}</span>
             </div>
           )}
 
           {resetSent && (
-            <div className="p-3 mb-4 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+            <div className="w-full p-3 mb-4 bg-emerald-50 border border-emerald-200 rounded-[6px] text-xs text-emerald-800 flex items-center gap-2">
               <CheckCircle className="w-4 h-4 shrink-0" />
               <span>Password reset link sent to your email!</span>
             </div>
           )}
 
-          <form onSubmit={handleAuthSubmit} className="space-y-4">
-            {authMode === 'register' && (
+          {/* Auth Form */}
+          <form onSubmit={handleAuthSubmit} className="w-full space-y-4">
+            {authMode === 'register' ? (
               <>
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                    Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Tanvir Ahmed"
-                    className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-                  />
-                </div>
+                <FloatingInput
+                  label="Full name"
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                />
 
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                    Phone Number (Mandatory) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-neutral-400">
-                      +88
-                    </span>
-                    <input
-                      type="tel"
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="017XXXXXXXX"
-                      className="w-full pl-12 pr-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-medium"
-                    />
-                  </div>
-                  <p className="text-[10px] text-neutral-400 mt-1">
-                    Required for courier delivery updates and verification.
-                  </p>
+                <FloatingInput
+                  label="Phone number"
+                  type="tel"
+                  required
+                  prefixText="+88"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="017XXXXXXXX"
+                  autoComplete="tel"
+                />
+
+                <FloatingInput
+                  label="Email address"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                />
+
+                <FloatingInput
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  rightElement={passwordEyeToggle}
+                />
+              </>
+            ) : (
+              <>
+                <FloatingInput
+                  label="Phone number or email"
+                  type="text"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
+                />
+
+                <FloatingInput
+                  label="Password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  rightElement={passwordEyeToggle}
+                />
+
+                <div className="flex justify-end pt-0.5">
+                  <button
+                    type="button"
+                    onClick={openForgotPassword}
+                    className="text-xs font-medium text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
                 </div>
               </>
             )}
 
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                Email Address *
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@example.com"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-              />
-              {authMode === 'register' && (
-                <p className="text-[10px] text-neutral-400 mt-1">
-                  A verification link will be sent to this email upon registration.
-                </p>
-              )}
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700">
-                  Password *
-                </label>
-                {authMode === 'login' && (
-                  <button
-                    type="button"
-                    onClick={handlePasswordReset}
-                    className="text-[11px] text-neutral-500 hover:text-black hover:underline cursor-pointer"
-                  >
-                    Forgot Password?
-                  </button>
-                )}
-              </div>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-              />
-            </div>
-
             <button
               type="submit"
-              disabled={authLoading}
-              className="w-full py-3 bg-black text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-800 transition-colors shadow-md disabled:bg-neutral-400 cursor-pointer"
+              disabled={authLoading || Boolean(socialLoading)}
+              className="w-full h-11 sm:h-12 bg-black text-white text-sm font-medium rounded-[6px] hover:bg-neutral-900 transition-colors disabled:bg-neutral-400 cursor-pointer mt-1"
             >
-              {authLoading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Create Account'}
+              {authLoading ? 'Please wait...' : authMode === 'login' ? 'Sign in' : 'Create account'}
             </button>
           </form>
 
+          {/* OR Divider */}
+          <div className="w-full flex items-center gap-3 my-5">
+            <div className="flex-1 border-t border-dashed border-neutral-300" />
+            <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">OR</span>
+            <div className="flex-1 border-t border-dashed border-neutral-300" />
+          </div>
+
+          {/* Social Auth Buttons */}
+          <div className="w-full space-y-3">
+            <button
+              type="button"
+              disabled={authLoading || Boolean(socialLoading)}
+              onClick={() => handleSocialSignIn('google')}
+              className="w-full h-11 bg-white border border-neutral-400 hover:border-black rounded-[6px] flex items-center justify-center gap-3 px-4 text-sm font-medium text-neutral-900 tracking-[0.01em] [word-spacing:0.12em] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+                <path fill="#34A853" d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.1.74-2.51 1.18-4.22 1.18-3.24 0-5.99-2.19-6.97-5.13H1.03v3.14C3.05 21.18 7.21 24 12 24Z" />
+                <path fill="#FBBC05" d="M5.03 14.04c-.25-.74-.39-1.54-.39-2.36 0-.82.14-1.62.39-2.36V6.18H1.03C.37 7.49 0 8.97 0 10.68c0 1.71.37 3.19 1.03 4.5l4-3.14Z" />
+                <path fill="#EA4335" d="M12 4.75c1.8 0 3.41.62 4.68 1.84l3.51-3.51C18.07 1.19 15.3 0 12 0 7.21 0 3.05 2.82 1.03 6.82l4 3.14C6.01 6.94 8.76 4.75 12 4.75Z" />
+              </svg>
+              <span>{googleButtonLabel}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={authLoading || Boolean(socialLoading)}
+              onClick={() => handleSocialSignIn('facebook')}
+              className="w-full h-11 bg-white border border-neutral-400 hover:border-black rounded-[6px] flex items-center justify-center gap-3 px-4 text-sm font-medium text-neutral-900 tracking-[0.01em] [word-spacing:0.12em] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="11" fill="#1877F2" />
+                <path
+                  fill="#FFFFFF"
+                  d="M15.12 13.06l.48-3.12h-2.99V7.92c0-.85.42-1.68 1.76-1.68h1.36V3.58s-1.24-.21-2.42-.21c-2.47 0-4.08 1.5-4.08 4.21v2.36H6.51v3.12h2.72v7.54a10.9 10.9 0 0 0 3.38 0v-7.54h2.51Z"
+                />
+              </svg>
+              <span>{facebookButtonLabel}</span>
+            </button>
+          </div>
+
+          {/* reCAPTCHA & Policies Notice */}
+          <p className="mt-7 text-[11px] text-neutral-500 text-center leading-relaxed max-w-[320px]">
+            This site is protected by reCAPTCHA and the Google{' '}
+            <button
+              type="button"
+              onClick={() => onNavigate('/privacy-policy')}
+              className="text-[#1a73e8] underline underline-offset-2 hover:text-blue-700 cursor-pointer"
+            >
+              Privacy Policy
+            </button>{' '}
+            and{' '}
+            <button
+              type="button"
+              onClick={() => onNavigate('/terms')}
+              className="text-[#1a73e8] underline underline-offset-2 hover:text-blue-700 cursor-pointer"
+            >
+              Terms of Service
+            </button>{' '}
+            apply.
+          </p>
         </div>
       </div>
     );
   }
 
-  // 2. Email Verification Pending Screen (Enforced for customers until verified)
+  // 2. Email Verification Pending Screen (Enforced for email/password signups; Google & Facebook OAuth bypass this)
   const isPrimaryAdmin = ['mensfabricofficial@gmail.com', 'me@admin.com'].includes(currentUser.email?.toLowerCase() || '');
-  if (!currentUser.emailVerified && !isAdmin && !isPrimaryAdmin) {
+  const isSocialAccount = currentUser.providerData?.some(
+    (p) => p.providerId === 'google.com' || p.providerId === 'facebook.com'
+  );
+  if (!currentUser.emailVerified && !isSocialAccount && !isAdmin && !isPrimaryAdmin) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 sm:py-24">
         <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-sm text-center">
@@ -575,194 +816,82 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     );
   }
 
-  // 3. Authenticated Customer Dashboard
+  // 3. Authenticated Customer Dashboard (Minimal Editorial 3-Tab Layout: Profile, Order History, Addresses)
+  const displayCustomerName = profileName || currentUser.displayName || customerProfile?.name || 'Customer';
+  const ORDERS_PER_PAGE = 8;
+  const totalOrderPages = Math.max(1, Math.ceil(orders.length / ORDERS_PER_PAGE));
+  const safeOrderPage = Math.min(ordersPage, totalOrderPages);
+  const startOrderIdx = (safeOrderPage - 1) * ORDERS_PER_PAGE;
+  const paginatedOrders = orders.slice(startOrderIdx, startOrderIdx + ORDERS_PER_PAGE);
+
+  const formatOrderDate = (createdAt: any) => {
+    try {
+      const date = createdAt?.toDate ? createdAt.toDate() : createdAt ? new Date(createdAt) : null;
+      if (!date || Number.isNaN(date.getTime())) return 'Recently';
+      return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+    } catch {
+      return 'Recently';
+    }
+  };
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16">
-      
-      {/* Account Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-8 border-b border-neutral-200 gap-4 mb-8">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-widest text-neutral-400">Customer Account</span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-              <CheckCircle className="w-3 h-3 text-emerald-600" />
-              Verified
-            </span>
+    <div className="bg-[#f4f4f6] min-h-[75vh] py-12 sm:py-16 px-4 sm:px-6">
+      <div className="max-w-4xl mx-auto">
+
+        {/* Centered Greeting Header */}
+        <div className="text-center mb-8 sm:mb-9">
+          <p className="text-2xl sm:text-[32px] font-medium text-neutral-900 tracking-tight leading-snug">
+            Welcome Back,
+          </p>
+          <div className="mt-0.5 flex flex-wrap items-baseline justify-center gap-2.5">
+            <h1 className="text-2xl sm:text-[32px] font-semibold text-neutral-900 tracking-tight leading-snug">
+              {displayCustomerName}
+            </h1>
+            <button
+              type="button"
+              onClick={() => logOut()}
+              className="text-xs font-medium text-neutral-800 underline underline-offset-2 hover:text-black cursor-pointer"
+            >
+              Sign Out
+            </button>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-neutral-900 tracking-tight">
-            Welcome, {profileName || currentUser.displayName || customerProfile?.name || 'Customer'}
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">{currentUser.email}</p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onNavigate('/wishlist')}
-            className="px-4 py-2 border border-neutral-300 text-neutral-700 text-xs font-semibold uppercase tracking-wider rounded-lg hover:border-black transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <Heart className="w-3.5 h-3.5" />
-            <span>Wishlist</span>
-          </button>
-          <button
-            onClick={() => logOut()}
-            className="px-4 py-2 border border-red-200 text-red-600 text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Logout</span>
-          </button>
+        {/* Centered 3 Navigation Tabs (Profile, Order History, Addresses) */}
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 mb-9 sm:mb-10">
+          {[
+            { id: 'profile' as const, label: 'Profile' },
+            { id: 'orders' as const, label: 'Order History' },
+            { id: 'addresses' as const, label: 'Addresses' },
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setProfileStatus(null);
+                }}
+                className={`px-6 py-2 rounded-full text-xs sm:text-[13px] font-medium transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-neutral-900 text-white shadow-xs'
+                    : 'text-neutral-700 hover:text-black'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex gap-6 border-b border-neutral-200 mb-8">
-        <button
-          onClick={() => setActiveTab('orders')}
-          className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 -mb-px transition-colors cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'orders' ? 'border-black text-black' : 'border-transparent text-neutral-400 hover:text-black'
-          }`}
-        >
-          <Package className="w-4 h-4" />
-          <span>My Orders ({orders.length})</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('profile')}
-          className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 -mb-px transition-colors cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'profile' ? 'border-black text-black' : 'border-transparent text-neutral-400 hover:text-black'
-          }`}
-        >
-          <User className="w-4 h-4" />
-          <span>Profile & Delivery Settings</span>
-        </button>
-      </div>
-
-      {/* Orders Tab */}
-      {activeTab === 'orders' && (
-        <div>
-          {ordersLoading ? (
-            <p className="text-xs text-neutral-500 py-8">Loading your order history...</p>
-          ) : orders.length === 0 ? (
-            <EmptyState
-              icon={<Package className="w-8 h-8 text-neutral-400" />}
-              title="No orders found"
-              description="You haven't placed any orders yet. Discover our premium menswear collection today."
-              actionText="Shop Now"
-              onAction={() => onNavigate('/shop')}
-            />
-          ) : (
-            <div className="space-y-4">
-              {orders.map((o) => (
-                <div
-                  key={o.id}
-                  className="bg-white border border-neutral-200 rounded-xl p-5 hover:border-neutral-400 transition-all shadow-xs"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-neutral-100 gap-2 text-xs">
-                    <div>
-                      <span className="font-mono font-bold text-sm text-neutral-900">{o.orderNumber}</span>
-                      <span className="text-neutral-400 ml-3">
-                        {o.createdAt?.toDate ? o.createdAt.toDate().toLocaleDateString('en-BD') : 'Recently'}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-1 sm:pt-0">
-                      <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
-                        o.orderStatus === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
-                        o.orderStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
-                        'bg-neutral-100 text-neutral-800'
-                      }`}>
-                        {o.orderStatus}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedInvoiceOrder(o)}
-                        className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[11px] font-semibold rounded flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <FileText className="w-3 h-3 text-neutral-600" />
-                        <span>A4 Invoice</span>
-                      </button>
-                      <button
-                        onClick={() => onNavigate(`/track-order?number=${o.orderNumber}&phone=${o.customerPhone}`)}
-                        className="px-3 py-1 bg-black text-white text-[11px] font-semibold rounded hover:bg-neutral-800 cursor-pointer"
-                      >
-                        Track Status
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Items preview */}
-                  <div className="py-3 divide-y divide-neutral-50">
-                    {o.items.map((item, idx) => (
-                      <div key={idx} className="py-2 flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
-                            alt={item.productName}
-                            className="w-10 h-12 object-cover rounded bg-neutral-100"
-                          />
-                          <div>
-                            <p className="font-semibold text-neutral-900">{item.productName}</p>
-                            <p className="text-[11px] text-neutral-500">
-                              Size: {item.size} • Color: {item.color} • Qty: {item.quantity}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="font-bold text-neutral-900">
-                          ৳{item.totalPrice.toLocaleString('en-BD')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Summary row */}
-                  <div className="pt-3 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-neutral-500">Payment:</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                        o.paymentMethod === 'bkash' ? 'bg-[#D12053]/10 text-[#D12053]' :
-                        o.paymentMethod === 'nagad' ? 'bg-[#F7941D]/10 text-[#D97706]' :
-                        o.paymentMethod === 'rocket' ? 'bg-[#8C3494]/10 text-[#8C3494]' :
-                        'bg-neutral-100 text-neutral-700'
-                      }`}>
-                        {o.paymentMethod === 'cod' ? 'Cash On Delivery' : o.paymentMethod.toUpperCase()}
-                      </span>
-                      {o.paymentDetails?.transactionId && (
-                        <span className="font-mono text-[10px] text-neutral-600 bg-neutral-100 px-1.5 py-0.5 rounded">
-                          Trx: {o.paymentDetails.transactionId}
-                        </span>
-                      )}
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        o.paymentStatus === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {o.paymentStatus}
-                      </span>
-                    </div>
-                    <span className="text-sm font-bold text-neutral-900">
-                      Total: ৳{o.total.toLocaleString('en-BD')}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Profile & Settings Tab */}
-      {activeTab === 'profile' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Main Profile Form */}
-          <div className="lg:col-span-2 bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-xs">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900 mb-1 flex items-center gap-2">
-              <User className="w-4 h-4" />
-              <span>Customer Profile & Default Shipping</span>
-            </h3>
-            <p className="text-xs text-neutral-500 mb-6">
-              Keep your contact and address details up to date for fast order placement and doorstep delivery.
-            </p>
-
+        {/* TAB 1: PROFILE */}
+        {activeTab === 'profile' && (
+          <div className="max-w-[660px] mx-auto space-y-5">
             {profileStatus && (
-              <div className={`p-3.5 mb-6 rounded-xl text-xs flex items-center gap-2.5 ${
-                profileStatus.type === 'success' 
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+              <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2.5 ${
+                profileStatus.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   : 'bg-red-50 text-red-700 border border-red-200'
               }`}>
                 {profileStatus.type === 'success' ? (
@@ -774,177 +903,439 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               </div>
             )}
 
-            <form onSubmit={handleProfileSubmit} className="space-y-5 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                    Full Name *
-                  </label>
-                  <input
+            {/* Card 1: Personal Details */}
+            <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
+                  Personal Details
+                </h2>
+                {!isEditingPersonal ? (
+                  <button
+                    type="button"
+                    onClick={() => { setIsEditingPersonal(true); setProfileStatus(null); }}
+                    className="text-xs font-medium text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer"
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPersonal(false)}
+                    className="text-xs font-medium text-neutral-500 underline underline-offset-2 hover:text-black cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+
+              {!isEditingPersonal ? (
+                <div className="space-y-3 text-[13px] text-neutral-700">
+                  <p>
+                    <span className="text-neutral-600">Name: </span>
+                    <span className="text-neutral-900 font-medium">{displayCustomerName}</span>
+                  </p>
+                  <p>
+                    <span className="text-neutral-600">Email: </span>
+                    <span className="text-neutral-900">{currentUser.email || 'Not linked'}</span>
+                  </p>
+                  {profilePhone && (
+                    <p>
+                      <span className="text-neutral-600">Phone: </span>
+                      <span className="text-neutral-900">+88{profilePhone.replace(/^(\+88|88)/, '')}</span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <form onSubmit={handleProfileSubmit} className="space-y-4">
+                  <FloatingInput
+                    label="Full Name *"
                     type="text"
                     required
                     value={profileName}
                     onChange={(e) => setProfileName(e.target.value)}
                     placeholder="Your Full Name"
-                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-medium"
                   />
-                </div>
 
-                <div>
-                  <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                    Phone Number (Mandatory) *
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-neutral-400">
-                      +88
-                    </span>
-                    <input
-                      type="tel"
-                      required
-                      value={profilePhone}
-                      onChange={(e) => setProfilePhone(e.target.value)}
-                      placeholder="01XXXXXXXXX"
-                      className="w-full pl-12 pr-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-medium"
-                    />
+                  <FloatingInput
+                    label="Phone Number *"
+                    type="tel"
+                    required
+                    prefixText="+88"
+                    value={profilePhone}
+                    onChange={(e) => setProfilePhone(e.target.value)}
+                    placeholder="01XXXXXXXXX"
+                  />
+
+                  <div className="flex items-center justify-between pt-1 text-xs text-neutral-600">
+                    <span>Email: <strong className="text-neutral-900 font-medium">{currentUser.email || 'Not linked'}</strong></span>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmailChangeModal(true)}
+                      className="text-neutral-900 underline underline-offset-2 hover:text-black font-medium cursor-pointer"
+                    >
+                      Change Email
+                    </button>
                   </div>
-                </div>
-              </div>
 
-              <div>
-                <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                  Delivery Address (Street, House, Road, Sector)
-                </label>
-                <textarea
-                  rows={2}
-                  value={profileAddress}
-                  onChange={(e) => setProfileAddress(e.target.value)}
-                  placeholder="e.g. House 24, Road 7, Block B, Banani"
-                  className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-                />
-              </div>
+                  <div className="flex items-center gap-2.5 pt-2">
+                    <button
+                      type="submit"
+                      disabled={profileSaving}
+                      className="px-5 py-2.5 bg-black text-white text-xs font-medium rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:bg-neutral-400"
+                    >
+                      {profileSaving ? 'Saving...' : 'Save Details'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingPersonal(false)}
+                      className="px-4 py-2.5 border border-neutral-300 text-neutral-700 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                    Division
-                  </label>
-                  <select
-                    value={profileDivision}
-                    onChange={(e) => setProfileDivision(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-medium"
-                  >
-                    {BD_DIVISIONS.map((div) => (
-                      <option key={div} value={div}>{div}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                    District / City
-                  </label>
-                  <input
-                    type="text"
-                    value={profileDistrict}
-                    onChange={(e) => setProfileDistrict(e.target.value)}
-                    placeholder="e.g. Dhaka"
-                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold uppercase text-[11px] text-neutral-700 mb-1.5">
-                    Postal Code
-                  </label>
-                  <input
-                    type="text"
-                    value={profilePostalCode}
-                    onChange={(e) => setProfilePostalCode(e.target.value)}
-                    placeholder="e.g. 1213"
-                    className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-3">
+            {/* Card 2: Email */}
+            <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
+                  Email
+                </h2>
                 <button
-                  type="submit"
-                  disabled={profileSaving}
-                  className="px-6 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-xs disabled:bg-neutral-400"
+                  type="button"
+                  onClick={() => setShowEmailChangeModal(true)}
+                  className="text-xs font-medium text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>{profileSaving ? 'Saving Changes...' : 'Save Profile Changes'}</span>
+                  Change Email
                 </button>
               </div>
-            </form>
+
+              <p className="text-[13px] text-neutral-700">
+                <span className="text-neutral-600">Current Email: </span>
+                <span className="text-neutral-900">{currentUser.email || 'Not linked'}</span>
+              </p>
+            </div>
+
+            {/* Card 3: Password */}
+            <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
+                  Password
+                </h2>
+                <button
+                  type="button"
+                  disabled={passResetLoading || !currentUser.email}
+                  onClick={handleProfilePasswordReset}
+                  className="text-xs font-medium text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer disabled:opacity-40"
+                >
+                  {passResetLoading ? 'Sending...' : 'Change Password'}
+                </button>
+              </div>
+
+              <p className="text-[13px] text-neutral-700">
+                <span className="text-neutral-600">Current Password: </span>
+                <span className="text-neutral-900 tracking-widest">********</span>
+              </p>
+
+              {passResetStatus && (
+                <p className={`mt-4 text-xs p-3 rounded-[6px] ${
+                  passResetStatus.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  {passResetStatus.message}
+                </p>
+              )}
+            </div>
           </div>
+        )}
 
-          {/* Account Security & Email Verification Card */}
-          <div className="space-y-6">
-            <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Account Security</span>
-              </h3>
+        {/* TAB 2: ORDER HISTORY */}
+        {activeTab === 'orders' && (
+          <div className="max-w-[860px] mx-auto">
+            <div className="bg-white rounded-xl border border-neutral-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.03)] overflow-hidden">
+              {/* Top Order History Header Strip */}
+              <div className="bg-[#f0f0f2] border-b border-neutral-200 flex justify-center">
+                <div className="px-6 sm:px-10 py-3.5 text-xs sm:text-[13px] font-medium text-neutral-900 border-b-2 border-neutral-900">
+                  Order History
+                </div>
+              </div>
 
-              <div className="space-y-3 text-xs">
-                <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200">
-                  <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-0.5">Primary Email</span>
-                  <p className="font-semibold text-neutral-900">{currentUser.email}</p>
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      <CheckCircle className="w-3 h-3 text-emerald-600" />
-                      Email Verified
-                    </span>
+              {/* Orders Table */}
+              <div className="p-5 sm:p-7">
+                {ordersLoading ? (
+                  <p className="text-xs text-neutral-500 py-8 text-center">Loading your order history...</p>
+                ) : orders.length === 0 ? (
+                  <EmptyState
+                    icon={<Package className="w-8 h-8 text-neutral-400" />}
+                    title="No orders found"
+                    description="You haven't placed any orders yet. Explore our latest menswear collection."
+                    actionText="Shop Now"
+                    onAction={() => onNavigate('/shop')}
+                  />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[620px]">
+                      <thead>
+                        <tr className="border-b border-neutral-200 text-xs sm:text-[13px] font-medium text-neutral-800">
+                          <th className="pb-3.5 pr-4 font-medium">Order ID</th>
+                          <th className="pb-3.5 px-3 font-medium">Order Date</th>
+                          <th className="pb-3.5 px-3 font-medium">Amount</th>
+                          <th className="pb-3.5 px-3 font-medium">Payment Status</th>
+                          <th className="pb-3.5 px-3 font-medium">Order Status</th>
+                          <th className="pb-3.5 pl-3 font-medium text-right">Invoice</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-100 text-xs sm:text-[13px]">
+                        {paginatedOrders.map((o) => {
+                          const paymentColor =
+                            o.paymentStatus === 'paid'
+                              ? 'text-emerald-600'
+                              : o.paymentStatus === 'failed'
+                              ? 'text-red-600'
+                              : o.paymentStatus === 'refunded'
+                              ? 'text-neutral-600'
+                              : 'text-amber-500';
+
+                          const orderStatusColor =
+                            o.orderStatus === 'delivered'
+                              ? 'text-emerald-600'
+                              : o.orderStatus === 'cancelled' || o.orderStatus === 'returned'
+                              ? 'text-red-600'
+                              : o.orderStatus === 'pending'
+                              ? 'text-amber-500'
+                              : 'text-neutral-900';
+
+                          return (
+                            <tr key={o.id} className="hover:bg-neutral-50/70 transition-colors">
+                              <td className="py-4 pr-4 font-mono text-neutral-900">
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigate(`/track-order?number=${o.orderNumber}&phone=${o.customerPhone}`)}
+                                  className="hover:underline cursor-pointer"
+                                  title="Track Order Status"
+                                >
+                                  {o.orderNumber}
+                                </button>
+                              </td>
+                              <td className="py-4 px-3 text-neutral-700 whitespace-nowrap">
+                                {formatOrderDate(o.createdAt)}
+                              </td>
+                              <td className="py-4 px-3 text-neutral-900 font-medium whitespace-nowrap">
+                                ৳{o.total.toLocaleString('en-BD')}
+                              </td>
+                              <td className={`py-4 px-3 font-semibold uppercase tracking-wide whitespace-nowrap ${paymentColor}`}>
+                                {o.paymentStatus}
+                              </td>
+                              <td className={`py-4 px-3 font-semibold uppercase tracking-wide whitespace-nowrap ${orderStatusColor}`}>
+                                {o.orderStatus}
+                              </td>
+                              <td className="py-4 pl-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedInvoiceOrder(o)}
+                                  className="text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer font-medium"
+                                >
+                                  View
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-
-                {/* Password reset button */}
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    disabled={passResetLoading}
-                    onClick={handleProfilePasswordReset}
-                    className="w-full py-2 px-3 border border-neutral-300 hover:border-black rounded-lg text-xs font-semibold text-neutral-800 flex items-center justify-center gap-2 cursor-pointer transition-colors"
-                  >
-                    <Key className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>{passResetLoading ? 'Sending...' : 'Send Password Reset Link'}</span>
-                  </button>
-                  {passResetStatus && (
-                    <p className={`mt-2 text-[11px] p-2 rounded ${
-                      passResetStatus.type === 'success' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'
-                    }`}>
-                      {passResetStatus.message}
-                    </p>
-                  )}
-                </div>
-
-                {/* Change Email Trigger */}
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowEmailChangeModal(true)}
-                    className="w-full py-2 px-3 bg-neutral-100 hover:bg-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 flex items-center justify-center gap-2 cursor-pointer transition-colors"
-                  >
-                    <Mail className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>Update Email Address</span>
-                  </button>
-                </div>
-
+                )}
               </div>
             </div>
 
-            {/* Support Note */}
-            <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 text-xs space-y-1.5 text-neutral-600">
-              <p className="font-bold text-neutral-900 uppercase text-[11px]">Need Assistance?</p>
-              <p className="text-[11px] leading-relaxed">
-                For order inquiries or custom garment tailoring adjustments, reach out to our concierge via WhatsApp or phone.
-              </p>
+            {!ordersLoading && orders.length > 0 && (
+              <div className="mt-4 flex flex-col items-center gap-2 text-xs text-neutral-500">
+                <p>
+                  Showing {startOrderIdx + 1}-{Math.min(startOrderIdx + ORDERS_PER_PAGE, orders.length)} of {orders.length} on page {safeOrderPage}/{totalOrderPages}
+                </p>
+                {totalOrderPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={safeOrderPage <= 1}
+                      onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 border border-neutral-300 bg-white rounded text-neutral-700 hover:border-black disabled:opacity-40 cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={safeOrderPage >= totalOrderPages}
+                      onClick={() => setOrdersPage((p) => Math.min(totalOrderPages, p + 1))}
+                      className="px-2.5 py-1 border border-neutral-300 bg-white rounded text-neutral-700 hover:border-black disabled:opacity-40 cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: ADDRESSES / DELIVERY SETTINGS */}
+        {activeTab === 'addresses' && (
+          <div className="max-w-[660px] mx-auto space-y-5">
+            {profileStatus && (
+              <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2.5 ${
+                profileStatus.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              }`}>
+                {profileStatus.type === 'success' ? (
+                  <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                )}
+                <span>{profileStatus.message}</span>
+              </div>
+            )}
+
+            <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
+                  Delivery Address
+                </h2>
+                {!isEditingAddress ? (
+                  <button
+                    type="button"
+                    onClick={() => { setIsEditingAddress(true); setProfileStatus(null); }}
+                    className="text-xs font-medium text-neutral-900 underline underline-offset-2 hover:text-black cursor-pointer"
+                  >
+                    {profileAddress ? 'Edit' : 'Add Address'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingAddress(false)}
+                    className="text-xs font-medium text-neutral-500 underline underline-offset-2 hover:text-black cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+
+              {!isEditingAddress ? (
+                profileAddress || profileDistrict || profilePhone ? (
+                  <div className="space-y-3 text-[13px] text-neutral-700">
+                    {profileAddress && (
+                      <p>
+                        <span className="text-neutral-600">Street Address: </span>
+                        <span className="text-neutral-900">{profileAddress}</span>
+                      </p>
+                    )}
+                    <p>
+                      <span className="text-neutral-600">District / City: </span>
+                      <span className="text-neutral-900">{profileDistrict || 'Not set'}</span>
+                    </p>
+                    <p>
+                      <span className="text-neutral-600">Division: </span>
+                      <span className="text-neutral-900">{profileDivision}</span>
+                    </p>
+                    {profilePostalCode && (
+                      <p>
+                        <span className="text-neutral-600">Postal Code: </span>
+                        <span className="text-neutral-900">{profilePostalCode}</span>
+                      </p>
+                    )}
+                    {profilePhone && (
+                      <p>
+                        <span className="text-neutral-600">Contact Phone: </span>
+                        <span className="text-neutral-900">+88{profilePhone.replace(/^(\+88|88)/, '')}</span>
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-neutral-500">
+                    No default delivery address saved yet. Click{' '}
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingAddress(true)}
+                      className="text-neutral-900 underline cursor-pointer font-medium"
+                    >
+                      Add Address
+                    </button>{' '}
+                    to save your doorstep shipping details.
+                  </p>
+                )
+              ) : (
+                <form onSubmit={handleProfileSubmit} className="space-y-4">
+                  <FloatingTextarea
+                    label="Delivery Address (Street, House, Road, Sector)"
+                    rows={2}
+                    value={profileAddress}
+                    onChange={(e) => setProfileAddress(e.target.value)}
+                    placeholder="e.g. House 24, Road 7, Block B, Banani"
+                  />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <FloatingSelect
+                      label="Division"
+                      value={profileDivision}
+                      onChange={(e) => setProfileDivision(e.target.value)}
+                    >
+                      {BD_DIVISIONS.map((div) => (
+                        <option key={div} value={div}>{div}</option>
+                      ))}
+                    </FloatingSelect>
+
+                    <FloatingInput
+                      label="District / City"
+                      type="text"
+                      value={profileDistrict}
+                      onChange={(e) => setProfileDistrict(e.target.value)}
+                      placeholder="e.g. Dhaka"
+                    />
+
+                    <FloatingInput
+                      label="Postal Code"
+                      type="text"
+                      value={profilePostalCode}
+                      onChange={(e) => setProfilePostalCode(e.target.value)}
+                      placeholder="e.g. 1213"
+                    />
+                  </div>
+
+                  <FloatingInput
+                    label="Contact Phone *"
+                    type="tel"
+                    required
+                    prefixText="+88"
+                    value={profilePhone}
+                    onChange={(e) => setProfilePhone(e.target.value)}
+                    placeholder="01XXXXXXXXX"
+                  />
+
+                  <div className="flex items-center gap-2.5 pt-2">
+                    <button
+                      type="submit"
+                      disabled={profileSaving}
+                      className="px-5 py-2.5 bg-black text-white text-xs font-medium rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:bg-neutral-400"
+                    >
+                      {profileSaving ? 'Saving...' : 'Save Address'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingAddress(false)}
+                      className="px-4 py-2.5 border border-neutral-300 text-neutral-700 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
-
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Modal: Change Email with Verification */}
       {showEmailChangeModal && (
@@ -976,20 +1367,15 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               </div>
             )}
 
-            <form onSubmit={handleEmailChangeRequest} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold uppercase text-neutral-700 mb-1">
-                  New Email Address *
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={newEmailInput}
-                  onChange={(e) => setNewEmailInput(e.target.value)}
-                  placeholder="newemail@example.com"
-                  className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black"
-                />
-              </div>
+            <form onSubmit={handleEmailChangeRequest} className="space-y-4 pt-1">
+              <FloatingInput
+                label="New Email Address *"
+                type="email"
+                required
+                value={newEmailInput}
+                onChange={(e) => setNewEmailInput(e.target.value)}
+                placeholder="newemail@example.com"
+              />
 
               <div className="flex gap-2 pt-2">
                 <button

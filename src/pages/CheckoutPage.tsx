@@ -27,6 +27,7 @@ import { useAuth } from '../context/AuthContext';
 import { orderService } from '../services/orderService';
 import { settingsService, defaultPaymentSettings } from '../services/settingsService';
 import { ShippingAddress, PaymentMethod, PaymentSettings, PaymentDetails } from '../types';
+import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
 
 interface CheckoutPageProps {
   onNavigate: (route: string) => void;
@@ -386,47 +387,33 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
               </h2>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                    Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Enter your full name"
-                    className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
-                  />
-                </div>
+                <FloatingInput
+                  label="Full Name *"
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Enter your full name"
+                />
 
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                    Mobile Phone <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="01XXXXXXXXX"
-                    className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black font-mono transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                  Email Address (For invoice & delivery updates)
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@example.com"
-                  className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
+                <FloatingInput
+                  label="Mobile Phone *"
+                  type="tel"
+                  required
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="01XXXXXXXXX"
+                  className="font-mono"
                 />
               </div>
+
+              <FloatingInput
+                label="Email Address (For invoice & updates)"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@example.com"
+              />
             </div>
 
             {/* SECTION 2: Shipping Address */}
@@ -437,71 +424,51 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
               </h2>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                    Division <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={division}
-                    onChange={(e) => {
-                      setDivision(e.target.value);
-                      if (e.target.value === 'Dhaka') {
-                        const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
-                        if (dhakaZone) setSelectedZone(dhakaZone);
-                      } else {
-                        const outsideZone = deliveryZones.find((z) => z.id === 'outside-dhaka') || deliveryZones[1] || deliveryZones[0];
-                        if (outsideZone) setSelectedZone(outsideZone);
-                      }
-                    }}
-                    className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black cursor-pointer transition-all font-medium"
-                  >
-                    {BD_DIVISIONS.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </div>
+                <FloatingSelect
+                  label="Division *"
+                  value={division}
+                  onChange={(e) => {
+                    setDivision(e.target.value);
+                    if (e.target.value === 'Dhaka') {
+                      const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
+                      if (dhakaZone) setSelectedZone(dhakaZone);
+                    } else {
+                      const outsideZone = deliveryZones.find((z) => z.id === 'outside-dhaka') || deliveryZones[1] || deliveryZones[0];
+                      if (outsideZone) setSelectedZone(outsideZone);
+                    }
+                  }}
+                >
+                  {BD_DIVISIONS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </FloatingSelect>
 
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                    District / City <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={district}
-                    onChange={(e) => setDistrict(e.target.value)}
-                    placeholder="e.g. Dhaka North / Mirpur / Chattogram"
-                    className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                  Full Street Address & Apartment / House No. <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  required
-                  rows={2}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="House #, Road #, Sector / Area, Landmark..."
-                  className="w-full p-3.5 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all leading-relaxed"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                  Delivery Notes / Special Instructions (Optional)
-                </label>
-                <input
+                <FloatingInput
+                  label="District / City *"
                   type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Call before arrival, leave with concierge"
-                  className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
+                  required
+                  value={district}
+                  onChange={(e) => setDistrict(e.target.value)}
+                  placeholder="e.g. Dhaka North / Mirpur / Chattogram"
                 />
               </div>
+
+              <FloatingTextarea
+                label="Full Street Address & House No. *"
+                required
+                rows={2}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="House #, Road #, Sector / Area, Landmark..."
+              />
+
+              <FloatingInput
+                label="Delivery Notes (Optional)"
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. Call before arrival, leave with concierge"
+              />
             </div>
 
             {/* SECTION 3: Shipping Zone */}
@@ -837,34 +804,28 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   </div>
 
                   {/* Sender Number & Transaction ID Inputs */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                        Sender Mobile Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="tel"
-                        required
-                        value={senderNumber}
-                        onChange={(e) => setSenderNumber(e.target.value)}
-                        placeholder="01XXXXXXXXX (Used to send money)"
-                        className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl text-neutral-900 font-mono focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
-                      />
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                    <FloatingInput
+                      label="Sender Mobile Number *"
+                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
+                      type="tel"
+                      required
+                      value={senderNumber}
+                      onChange={(e) => setSenderNumber(e.target.value)}
+                      placeholder="01XXXXXXXXX"
+                      className="font-mono"
+                    />
 
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                        Transaction ID (TrxID) <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={transactionId}
-                        onChange={(e) => setTransactionId(e.target.value.toUpperCase())}
-                        placeholder="e.g. BKL7829XQ"
-                        className="w-full h-12 px-4 text-xs bg-white border border-neutral-300 rounded-xl text-neutral-900 font-mono uppercase focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
-                      />
-                    </div>
+                    <FloatingInput
+                      label="Transaction ID (TrxID) *"
+                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
+                      type="text"
+                      required
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value.toUpperCase())}
+                      placeholder="e.g. BKL7829XQ"
+                      className="font-mono uppercase"
+                    />
                   </div>
 
                   {/* Payment Proof Screenshot Upload (Safe Client Compression - 0 Storage Error) */}

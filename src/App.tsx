@@ -95,6 +95,18 @@ const AppContent: React.FC = () => {
     );
   }
 
+  // ================= STANDALONE AUTH PAGE (UNAUTHENTICATED) =================
+  if (pathname === '/account' && !currentUser) {
+    if (authLoading) {
+      return (
+        <div className="min-h-screen bg-white flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-neutral-200 border-t-black rounded-full animate-spin" />
+        </div>
+      );
+    }
+    return <AccountPage onNavigate={navigate} />;
+  }
+
   // ================= CUSTOMER ROUTES =================
   let PageComponent: React.ReactNode = null;
 

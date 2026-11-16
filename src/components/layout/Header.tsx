@@ -20,6 +20,7 @@ import { productService } from '../../services/productService';
 import { settingsService, getLocalSettings } from '../../services/settingsService';
 
 import { BrandLogo } from '../common/BrandLogo';
+import { FloatingInput } from '../common/FloatingInput';
 
 interface HeaderProps {
   currentRoute: string;
@@ -262,20 +263,21 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
         {searchOpen && (
           <div className="bg-neutral-50 border-t border-neutral-200 p-4 animate-fade-in">
             <form onSubmit={handleSearchSubmit} className="max-w-3xl mx-auto flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-                <input
+              <div className="flex-1">
+                <FloatingInput
+                  compact
+                  label="Search products by name, fabric, or SKU"
+                  labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search products by name, fabric, or SKU..."
                   autoFocus
-                  className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-300 rounded-lg text-sm focus:outline-none focus:border-black"
+                  leftIcon={<Search className="w-4 h-4" />}
                 />
               </div>
               <button
                 type="submit"
-                className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+                className="h-10 px-5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
               >
                 Search
               </button>
@@ -317,16 +319,14 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
             {/* Mobile Search */}
             <form onSubmit={handleSearchSubmit} className="p-4 border-b border-neutral-100 shrink-0 bg-white">
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search catalog..."
-                  className="w-full pl-9 pr-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black"
-                />
-              </div>
+              <FloatingInput
+                compact
+                label="Search catalog"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="w-4 h-4" />}
+              />
             </form>
 
             {/* Scrollable Navigation Links */}

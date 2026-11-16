@@ -26,6 +26,7 @@ import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import { useAuth } from '../context/AuthContext';
 import { ProductGrid } from '../components/product/ProductGrid';
+import { FloatingInput, FloatingTextarea } from '../components/common/FloatingInput';
 
 interface ProductDetailsPageProps {
   productIdOrSlug: string;
@@ -593,25 +594,21 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                             ))}
                           </div>
                         </div>
-                        <div>
-                          <input
-                            type="text"
-                            value={reviewAuthor}
-                            onChange={(e) => setReviewAuthor(e.target.value)}
-                            placeholder="Your Name (Optional)"
-                            className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                          />
-                        </div>
-                        <div>
-                          <textarea
-                            required
-                            rows={3}
-                            value={reviewComment}
-                            onChange={(e) => setReviewComment(e.target.value)}
-                            placeholder="Share your experience regarding the fabric, fit, and finish..."
-                            className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                          />
-                        </div>
+                        <FloatingInput
+                          compact
+                          label="Your Name (Optional)"
+                          type="text"
+                          value={reviewAuthor}
+                          onChange={(e) => setReviewAuthor(e.target.value)}
+                        />
+                        <FloatingTextarea
+                          label="Write your review *"
+                          required
+                          rows={3}
+                          value={reviewComment}
+                          onChange={(e) => setReviewComment(e.target.value)}
+                          placeholder="Share your experience regarding the fabric, fit, and finish..."
+                        />
                         <button
                           type="submit"
                           disabled={reviewSubmitting}
@@ -762,25 +759,21 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                           ))}
                         </div>
                       </div>
-                      <div>
-                        <input
-                          type="text"
-                          value={reviewAuthor}
-                          onChange={(e) => setReviewAuthor(e.target.value)}
-                          placeholder="Your Name (Optional)"
-                          className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                        />
-                      </div>
-                      <div>
-                        <textarea
-                          required
-                          rows={3}
-                          value={reviewComment}
-                          onChange={(e) => setReviewComment(e.target.value)}
-                          placeholder="Share your experience regarding the fabric, fit, and finish..."
-                          className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded"
-                        />
-                      </div>
+                      <FloatingInput
+                        compact
+                        label="Your Name (Optional)"
+                        type="text"
+                        value={reviewAuthor}
+                        onChange={(e) => setReviewAuthor(e.target.value)}
+                      />
+                      <FloatingTextarea
+                        label="Write your review *"
+                        required
+                        rows={3}
+                        value={reviewComment}
+                        onChange={(e) => setReviewComment(e.target.value)}
+                        placeholder="Share your experience regarding the fabric, fit, and finish..."
+                      />
                       <button
                         type="submit"
                         disabled={reviewSubmitting}

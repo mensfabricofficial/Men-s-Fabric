@@ -3,6 +3,7 @@ import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, Tag, CheckCircle2 } fr
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { EmptyState } from '../common/EmptyState';
+import { FloatingInput } from '../common/FloatingInput';
 import { settingsService } from '../../services/settingsService';
 
 interface CartDrawerProps {
@@ -209,18 +210,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                     </button>
                   </div>
                 ) : (
-                  <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                    <input
+                  <form onSubmit={handleApplyCoupon} className="flex gap-2 items-center">
+                    <FloatingInput
+                      compact
+                      label="Coupon Code"
+                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
                       type="text"
                       value={couponInput}
                       onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
-                      placeholder="Coupon Code"
-                      className="flex-1 px-3 py-1.5 bg-white border border-neutral-300 rounded text-xs uppercase focus:outline-none focus:border-black"
+                      className="uppercase"
                     />
                     <button
                       type="submit"
                       disabled={couponLoading || !couponInput.trim()}
-                      className="px-3 py-1.5 bg-neutral-900 text-white text-xs font-semibold rounded hover:bg-black disabled:opacity-50 cursor-pointer"
+                      className="h-10 px-4 bg-neutral-900 text-white text-xs font-semibold rounded-[6px] hover:bg-black disabled:opacity-50 cursor-pointer shrink-0"
                     >
                       {couponLoading ? '...' : 'Apply'}
                     </button>

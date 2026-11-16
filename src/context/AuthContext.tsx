@@ -9,9 +9,12 @@ import {
   sendEmailVerification,
   verifyBeforeUpdateEmail,
   updateProfile,
-  getIdTokenResult
+  getIdTokenResult,
+  GoogleAuthProvider,
+  FacebookAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { ADMIN_CONFIG } from '../lib/firebaseConfig';
 import { CustomerProfile } from '../types';
@@ -21,10 +24,12 @@ interface AuthContextType {
   customerProfile: CustomerProfile | null;
   isAdmin: boolean;
   loading: boolean;
-  signIn: (email: string, pass: string) => Promise<User>;
+  signIn: (emailOrPhone: string, pass: string) => Promise<User>;
   signUp: (email: string, pass: string, name: string, phone: string) => Promise<User>;
+  signInWithGoogle: () => Promise<User>;
+  signInWithFacebook: () => Promise<User>;
   logOut: () => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
+  resetPassword: (emailOrPhone: string) => Promise<void>;
   refreshProfile: () => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   reloadCurrentUser: () => Promise<User | null>;
@@ -149,12 +154,117 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  const signIn = async (email: string, pass: string): Promise<User> => {
-    const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+  const resolveEmailFromIdentifier = async (identifier: string): Promise<string> => {
+    const trimmed = identifier.trim();
+    if (trimmed.includes('@')) {
+      return trimmed;
+    }
+
+    const cleanPhone = trimmed.replace(/[^\d+]/g, '').replace(/^(\+88|88)/, '');
+    if (!cleanPhone) {
+      throw new Error('Please enter a valid email address or mobile phone number.');
+    }
+
+    // 1. Check local customer cache first
+    try {
+      const raw = localStorage.getItem(LOCAL_CUSTOMERS_KEY);
+      if (raw) {
+        const list: CustomerProfile[] = JSON.parse(raw);
+        const match = list.find(
+          (c) =>
+            c.email &&
+            c.phone &&
+            c.phone.replace(/[^\d]/g, '').replace(/^88/, '') === cleanPhone
+        );
+        if (match?.email) return match.email;
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. Check Firestore users collection by phone number
+    try {
+      const phoneCandidates = Array.from(new Set([cleanPhone, trimmed, `+88${cleanPhone}`, `88${cleanPhone}`]));
+      for (const candidate of phoneCandidates) {
+        const q = query(collection(db, 'users'), where('phone', '==', candidate), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const data = snap.docs[0].data() as CustomerProfile;
+          if (data.email) return data.email;
+        }
+      }
+    } catch {
+      // ignore lookup error
+    }
+
+    throw new Error('No account email was found for that phone number. Please sign in with your registered email address.');
+  };
+
+  const signIn = async (emailOrPhone: string, pass: string): Promise<User> => {
+    const resolvedEmail = await resolveEmailFromIdentifier(emailOrPhone);
+    const cred = await signInWithEmailAndPassword(auth, resolvedEmail.trim(), pass);
     const adminStatus = await checkAdminStatus(cred.user);
     setIsAdmin(adminStatus);
     await loadCustomerProfile(cred.user.uid);
     return cred.user;
+  };
+
+  const finalizeSocialSignIn = async (user: User): Promise<User> => {
+    const adminStatus = await checkAdminStatus(user);
+    setIsAdmin(adminStatus);
+
+    const docRef = doc(db, 'users', user.uid);
+    let existingProfile: CustomerProfile | null = null;
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        existingProfile = snap.data() as CustomerProfile;
+      }
+    } catch {
+      // ignore read errors
+    }
+
+    if (existingProfile) {
+      setCustomerProfile(existingProfile);
+      saveLocalCustomer(existingProfile);
+    } else {
+      const profileData: CustomerProfile = {
+        uid: user.uid,
+        name: user.displayName || 'Selvee Customer',
+        email: (user.email || '').toLowerCase(),
+        phone: user.phoneNumber || '',
+        createdAt: serverTimestamp(),
+        disabled: false,
+      };
+      const localProfileData: CustomerProfile = {
+        ...profileData,
+        createdAt: new Date().toISOString(),
+      };
+      setCustomerProfile(localProfileData);
+      saveLocalCustomer(localProfileData);
+      try {
+        await setDoc(docRef, profileData, { merge: true });
+      } catch {
+        // ignore write rules error
+      }
+    }
+
+    return user;
+  };
+
+  const signInWithGoogle = async (): Promise<User> => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const cred = await signInWithPopup(auth, provider);
+    return finalizeSocialSignIn(cred.user);
+  };
+
+  const signInWithFacebook = async (): Promise<User> => {
+    const provider = new FacebookAuthProvider();
+    provider.addScope('email');
+    provider.addScope('public_profile');
+    const cred = await signInWithPopup(auth, provider);
+    return finalizeSocialSignIn(cred.user);
   };
 
   const signUp = async (email: string, pass: string, name: string, phone: string): Promise<User> => {
@@ -265,8 +375,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAdmin(false);
   };
 
-  const resetPassword = async (email: string) => {
-    await sendPasswordResetEmail(auth, email.trim());
+  const resetPassword = async (emailOrPhone: string) => {
+    const resolvedEmail = await resolveEmailFromIdentifier(emailOrPhone);
+    await sendPasswordResetEmail(auth, resolvedEmail.trim());
   };
 
   const refreshProfile = async () => {
@@ -284,6 +395,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         signIn,
         signUp,
+        signInWithGoogle,
+        signInWithFacebook,
         logOut,
         resetPassword,
         refreshProfile,

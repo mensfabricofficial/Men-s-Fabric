@@ -3,6 +3,7 @@ import { Search, Package, CheckCircle2, Clock, Truck, ShieldAlert, ArrowRight, F
 import { Order, OrderStatus } from '../types';
 import { orderService } from '../services/orderService';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
+import { FloatingInput } from '../components/common/FloatingInput';
 
 interface TrackOrderPageProps {
   currentRoute: string;
@@ -101,28 +102,24 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
         <form onSubmit={handleSearch} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                Order Number / ID
-              </label>
-              <input
+              <FloatingInput
+                label="Order Number / ID"
                 type="text"
                 value={orderNumber}
                 onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
                 placeholder="e.g. MF-102948 or 102948"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-mono uppercase"
+                className="font-mono uppercase"
               />
               <span className="text-[10px] text-neutral-400 mt-1 block">Search with or without # or MF- prefix</span>
             </div>
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-1">
-                Phone Number
-              </label>
-              <input
+              <FloatingInput
+                label="Phone Number"
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="01XXXXXXXXX"
-                className="w-full px-3.5 py-2.5 text-xs bg-neutral-50 border border-neutral-300 rounded-lg focus:outline-none focus:border-black font-mono"
+                className="font-mono"
               />
               <span className="text-[10px] text-neutral-400 mt-1 block">Optional if Order Number is provided</span>
             </div>

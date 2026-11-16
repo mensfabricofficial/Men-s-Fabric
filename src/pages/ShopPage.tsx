@@ -12,6 +12,7 @@ import {
 import { Product, Category } from '../types';
 import { productService } from '../services/productService';
 import { ProductGrid } from '../components/product/ProductGrid';
+import { FloatingInput } from '../components/common/FloatingInput';
 
 interface ShopPageProps {
   currentRoute: string;
@@ -214,24 +215,27 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         
         {/* Search Bar - Full width on mobile, inline on desktop */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="relative flex-1 max-w-full sm:max-w-md">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-            <input
+          <div className="flex-1 max-w-full sm:max-w-md">
+            <FloatingInput
+              compact
+              label="Search products by title, fabric, or SKU"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search products by title, fabric, or SKU..."
-              className="w-full pl-9 pr-8 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black text-neutral-900"
+              leftIcon={<Search className="w-4 h-4" />}
+              rightElement={
+                searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                    className="text-neutral-400 hover:text-black cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                ) : undefined
+              }
             />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-black cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
 
           {/* Quick Sort dropdown */}

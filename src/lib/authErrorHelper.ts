@@ -76,7 +76,31 @@ export function getCleanAuthErrorMessage(error: any): string {
     return 'This account has been suspended or disabled. Please contact customer support.';
   }
 
-  // 8. Network Connection Failure
+  // 8. Popup Auth Flow Errors
+  if (
+    code.includes('popup-closed-by-user') ||
+    code.includes('cancelled-popup-request')
+  ) {
+    return 'Sign-in window was closed before completing authentication. Please try again.';
+  }
+
+  if (code.includes('popup-blocked')) {
+    return 'Sign-in popup was blocked by your browser. Please allow popups for this site and try again.';
+  }
+
+  if (code.includes('account-exists-with-different-credential')) {
+    return 'An account already exists with the same email address using another sign-in method.';
+  }
+
+  if (code.includes('operation-not-allowed')) {
+    return 'Google or Facebook sign-in needs to be enabled in Authentication settings before use.';
+  }
+
+  if (code.includes('unauthorized-domain')) {
+    return 'This website domain is not added to Authorized Domains in Firebase Authentication settings yet.';
+  }
+
+  // 9. Network Connection Failure
   if (
     code.includes('network-request-failed') ||
     msgLower.includes('network-request-failed') ||
@@ -85,7 +109,7 @@ export function getCleanAuthErrorMessage(error: any): string {
     return 'Network connection issue. Please check your internet connection and try again.';
   }
 
-  // 9. Generic cleanup: Strip any 'Firebase: Error' and '(auth/...)' tokens
+  // 10. Generic cleanup: Strip any 'Firebase: Error' and '(auth/...)' tokens
   let cleaned = rawMsg
     .replace(/Firebase:?\s*/gi, '')
     .replace(/Error\s*\((auth\/[a-zA-Z0-9_-]+)\):?/gi, '')

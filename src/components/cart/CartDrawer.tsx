@@ -87,7 +87,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
             <div className="flex items-center gap-2">
               <ShoppingBag className="w-5 h-5 text-black" />
               <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
-                Your Shopping Bag ({items.reduce((s, i) => s + i.quantity, 0)})
+                Your Shopping Cart ({items.reduce((s, i) => s + i.quantity, 0)})
               </h3>
             </div>
             <button
@@ -103,7 +103,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
             {items.length === 0 ? (
               <EmptyState
                 icon={<ShoppingBag className="w-8 h-8 text-neutral-400" />}
-                title="Your bag is empty"
+                title="Your cart is empty"
                 description="Explore our newest collections and exclusive fabrics."
                 actionText="Start Shopping"
                 onAction={() => {

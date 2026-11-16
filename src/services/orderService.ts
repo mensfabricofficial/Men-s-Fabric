@@ -736,6 +736,19 @@ export const orderService = {
         return false;
       };
 
+      // 0. Instant in-memory cache check when searching by Order Number / ID
+      if (cleanOrderNumber && !cleanPhoneDigits) {
+        const cached =
+          cachedOrdersMap.get(rawOrder) ||
+          cachedOrdersMap.get(rawOrder.toUpperCase()) ||
+          cachedOrdersMap.get(cleanOrderNumber) ||
+          cachedOrdersMap.get(`#${cleanOrderNumber}`) ||
+          cachedOrdersMap.get(`MF-${cleanOrderNumber}`);
+        if (cached && isOrderMatch(cached)) {
+          return cached;
+        }
+      }
+
       // 1. Check in local storage
       const localOrders = this.getLocalOrders();
       const localMatch = localOrders.find(isOrderMatch);

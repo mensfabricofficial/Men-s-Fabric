@@ -19,7 +19,9 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
 
   const url = new URL(window.location.origin + currentRoute);
   const orderId = url.searchParams.get('id');
-  const orderNumber = url.searchParams.get('number');
+  const rawNumber = url.searchParams.get('number');
+  const hashNumber = url.hash ? url.hash.split('&')[0] : '';
+  const orderNumber = rawNumber || hashNumber || null;
 
   useEffect(() => {
     if (orderId) {
@@ -200,7 +202,15 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           </button>
         )}
         <button
-          onClick={() => onNavigate(`/track-order?number=${order?.orderNumber || orderNumber || ''}&phone=${order?.customerPhone || ''}`)}
+          type="button"
+          onClick={() => {
+            const num = order?.orderNumber || orderNumber || '';
+            const id = order?.id || orderId || '';
+            const params = new URLSearchParams();
+            if (num) params.set('number', num);
+            if (id) params.set('id', id);
+            onNavigate(`/track-order${params.toString() ? `?${params.toString()}` : ''}`);
+          }}
           className="w-full sm:w-auto px-7 py-3 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
         >
           Track My Order

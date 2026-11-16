@@ -450,7 +450,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   className="flex-1 py-3.5 bg-black text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-800 transition-colors flex items-center justify-center gap-2 shadow-md disabled:bg-neutral-300 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <ShoppingBag className="w-4 h-4" />
-                  <span>{isOutOfStock ? 'Sold Out' : 'Add to Bag'}</span>
+                  <span>{isOutOfStock ? 'Sold Out' : 'Add to Cart'}</span>
                 </button>
                 <button
                   onClick={() => toggleWishlist(product)}

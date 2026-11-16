@@ -1113,7 +1113,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                               <td className="py-4 pr-4 font-mono text-neutral-900">
                                 <button
                                   type="button"
-                                  onClick={() => onNavigate(`/track-order?number=${o.orderNumber}&phone=${o.customerPhone}`)}
+                                  onClick={() => onNavigate(`/track-order?number=${encodeURIComponent(o.orderNumber)}&id=${encodeURIComponent(o.id)}`)}
                                   className="hover:underline cursor-pointer"
                                   title="Track Order Status"
                                 >

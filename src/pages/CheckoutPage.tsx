@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, 
   Truck, 
@@ -35,14 +35,110 @@ interface CheckoutPageProps {
 
 const BD_DIVISIONS = [
   'Dhaka',
-  'Chittagong',
+  'Chattogram',
   'Rajshahi',
   'Khulna',
-  'Barisal',
+  'Barishal',
   'Sylhet',
   'Rangpur',
   'Mymensingh',
 ];
+
+const BD_DISTRICTS_BY_DIVISION: Record<string, string[]> = {
+  Dhaka: [
+    'Dhaka',
+    'Faridpur',
+    'Gazipur',
+    'Gopalganj',
+    'Kishoreganj',
+    'Madaripur',
+    'Manikganj',
+    'Munshiganj',
+    'Narayanganj',
+    'Narsingdi',
+    'Rajbari',
+    'Shariatpur',
+    'Tangail',
+  ],
+  Chattogram: [
+    'Chattogram',
+    'Bandarban',
+    'Brahmanbaria',
+    'Chandpur',
+    "Cox's Bazar",
+    'Cumilla',
+    'Feni',
+    'Khagrachhari',
+    'Lakshmipur',
+    'Noakhali',
+    'Rangamati',
+  ],
+  Rajshahi: [
+    'Rajshahi',
+    'Bogura',
+    'Chapainawabganj',
+    'Joypurhat',
+    'Naogaon',
+    'Natore',
+    'Pabna',
+    'Sirajganj',
+  ],
+  Khulna: [
+    'Khulna',
+    'Bagerhat',
+    'Chuadanga',
+    'Jashore',
+    'Jhenaidah',
+    'Kushtia',
+    'Magura',
+    'Meherpur',
+    'Narail',
+    'Satkhira',
+  ],
+  Barishal: [
+    'Barishal',
+    'Barguna',
+    'Bhola',
+    'Jhalokati',
+    'Patuakhali',
+    'Pirojpur',
+  ],
+  Sylhet: [
+    'Sylhet',
+    'Habiganj',
+    'Moulvibazar',
+    'Sunamganj',
+  ],
+  Rangpur: [
+    'Rangpur',
+    'Dinajpur',
+    'Gaibandha',
+    'Kurigram',
+    'Lalmonirhat',
+    'Nilphamari',
+    'Panchagarh',
+    'Thakurgaon',
+  ],
+  Mymensingh: [
+    'Mymensingh',
+    'Jamalpur',
+    'Netrokona',
+    'Sherpur',
+  ],
+};
+
+const MFS_LOGOS: Record<'bkash' | 'nagad' | 'rocket', string> = {
+  bkash: '/assets/aistudio/bkash_739d0e9e.png',
+  nagad: '/assets/aistudio/nagad2_9f19b07d.jfif',
+  rocket: '/assets/aistudio/DBBL-Mobile-Banking-Becomes-Rocket_a4583d30.jpg',
+};
+
+const normalizeDivisionName = (raw?: string) => {
+  if (!raw) return 'Dhaka';
+  if (raw === 'Chittagong') return 'Chattogram';
+  if (raw === 'Barisal') return 'Barishal';
+  return BD_DIVISIONS.includes(raw) ? raw : 'Dhaka';
+};
 
 export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const { 
@@ -67,12 +163,19 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(defaultPaymentSettings);
 
   // Form Fields
+  const initialDivision = normalizeDivisionName(customerProfile?.division);
+  const initialDistrictList = BD_DISTRICTS_BY_DIVISION[initialDivision] || BD_DISTRICTS_BY_DIVISION.Dhaka;
+  const savedDistrict = customerProfile?.district || customerProfile?.city || '';
+  const initialDistrict = initialDistrictList.includes(savedDistrict)
+    ? savedDistrict
+    : initialDistrictList[0];
+
   const [fullName, setFullName] = useState(customerProfile?.name || currentUser?.displayName || '');
   const [phone, setPhone] = useState(customerProfile?.phone || '');
   const [email, setEmail] = useState(currentUser?.email || '');
   const [address, setAddress] = useState(customerProfile?.address || '');
-  const [division, setDivision] = useState('Dhaka');
-  const [district, setDistrict] = useState(customerProfile?.city || 'Dhaka');
+  const [division, setDivision] = useState(initialDivision);
+  const [district, setDistrict] = useState(initialDistrict);
   const [notes, setNotes] = useState('');
   
   // Payment State: 'cod' or 'online'
@@ -88,6 +191,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [gatewayDropdownOpen, setGatewayDropdownOpen] = useState(false);
+  const gatewayDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     settingsService.getSettings().then((s) => {
@@ -97,16 +202,34 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     });
   }, []);
 
-  // If bag is empty
+  useEffect(() => {
+    if (!gatewayDropdownOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (gatewayDropdownRef.current && !gatewayDropdownRef.current.contains(e.target as Node)) {
+        setGatewayDropdownOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setGatewayDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [gatewayDropdownOpen]);
+
+  // If cart is empty
   if (items.length === 0) {
     return (
       <div className="max-w-xl mx-auto px-4 py-20 text-center">
         <div className="w-16 h-16 rounded-full bg-neutral-100 flex items-center justify-center mx-auto mb-4">
           <ShoppingBag className="w-8 h-8 text-neutral-400" />
         </div>
-        <h2 className="text-xl font-extrabold uppercase tracking-tight text-neutral-900 mb-2">Your Bag is Empty</h2>
+        <h2 className="text-xl font-extrabold uppercase tracking-tight text-neutral-900 mb-2">Your Cart is Empty</h2>
         <p className="text-xs text-neutral-500 mb-6 max-w-sm mx-auto">
-          You have no items in your shopping bag. Explore our premium menswear collection.
+          You have no items in your shopping cart. Explore our premium menswear collection.
         </p>
         <button
           onClick={() => onNavigate('/shop')}
@@ -137,7 +260,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
           <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-200 text-left text-xs space-y-1.5">
             <div className="flex justify-between text-neutral-600">
-              <span>Items in Bag:</span>
+              <span>Items in Cart:</span>
               <span className="font-semibold">{items.reduce((s, i) => s + i.quantity, 0)} items</span>
             </div>
             <div className="flex justify-between text-neutral-600">
@@ -318,9 +441,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
         throw new Error(result.error || 'Failed to place order.');
       }
 
-      // Clear bag and navigate to confirmation
+      // Clear cart and navigate to confirmation
       clearCart();
-      onNavigate(`/order-confirmation?id=${result.orderId}&number=${result.orderNumber || ''}`);
+      onNavigate(`/order-confirmation?id=${encodeURIComponent(result.orderId || '')}&number=${encodeURIComponent(result.orderNumber || '')}`);
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'Failed to place order. Please review your details and try again.');
@@ -428,8 +551,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   label="Division *"
                   value={division}
                   onChange={(e) => {
-                    setDivision(e.target.value);
-                    if (e.target.value === 'Dhaka') {
+                    const nextDiv = e.target.value;
+                    setDivision(nextDiv);
+                    const divDistricts = BD_DISTRICTS_BY_DIVISION[nextDiv] || [];
+                    const defaultDistrict = divDistricts[0] || nextDiv;
+                    setDistrict(defaultDistrict);
+                    if (nextDiv === 'Dhaka' && defaultDistrict === 'Dhaka') {
                       const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
                       if (dhakaZone) setSelectedZone(dhakaZone);
                     } else {
@@ -443,14 +570,25 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   ))}
                 </FloatingSelect>
 
-                <FloatingInput
-                  label="District / City *"
-                  type="text"
-                  required
+                <FloatingSelect
+                  label="District *"
                   value={district}
-                  onChange={(e) => setDistrict(e.target.value)}
-                  placeholder="e.g. Dhaka North / Mirpur / Chattogram"
-                />
+                  onChange={(e) => {
+                    const nextDist = e.target.value;
+                    setDistrict(nextDist);
+                    if (division === 'Dhaka' && nextDist === 'Dhaka') {
+                      const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
+                      if (dhakaZone) setSelectedZone(dhakaZone);
+                    } else {
+                      const outsideZone = deliveryZones.find((z) => z.id === 'outside-dhaka') || deliveryZones[1] || deliveryZones[0];
+                      if (outsideZone) setSelectedZone(outsideZone);
+                    }
+                  }}
+                >
+                  {(BD_DISTRICTS_BY_DIVISION[division] || [district]).map((dist) => (
+                    <option key={dist} value={dist}>{dist}</option>
+                  ))}
+                </FloatingSelect>
               </div>
 
               <FloatingTextarea
@@ -487,7 +625,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 {[...deliveryZones]
                   .sort((a, b) => {
                     const aInside = a.id === 'dhaka' || a.name.toLowerCase().includes('inside');
@@ -503,16 +641,15 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   .map((zone) => {
                     const isInside = zone.id === 'dhaka' || zone.name.toLowerCase().includes('inside');
                     const isSelected = selectedZone?.id === zone.id;
-                    const zoneTitle = isInside ? 'Inside Dhaka City' : 'Outside Dhaka (Nationwide)';
-                    const timingBadge = isInside ? '1–2 Days Express Delivery' : '2–4 Days Nationwide Courier';
-                    const detailDesc = isInside
-                      ? 'Fast home delivery to your doorstep within 24–48 hours. Cash on delivery available.'
-                      : 'Doorstep courier service covering all 64 districts across Bangladesh via Steadfast / Pathao.';
+                    const zoneTitle = isInside ? 'Inside Dhaka' : 'Outside Dhaka';
+                    const zoneSubtext = isInside
+                      ? 'Fast home delivery across Dhaka city within 24–48 hours.'
+                      : 'Nationwide courier doorstep delivery across all 64 districts.';
 
                     return (
                       <label
                         key={zone.id}
-                        className={`relative flex items-start gap-3.5 p-4 rounded-xl cursor-pointer border transition-all duration-200 ${
+                        className={`relative flex items-start gap-3 p-4 rounded-xl cursor-pointer border transition-all duration-200 ${
                           isSelected
                             ? 'border-neutral-900 bg-neutral-50/90 ring-1 ring-neutral-900 shadow-xs'
                             : 'border-neutral-200 bg-white hover:border-neutral-400 hover:bg-neutral-50/30'
@@ -525,30 +662,21 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                           onChange={() => setSelectedZone(zone)}
                           className="mt-1 accent-black cursor-pointer shrink-0"
                         />
-                        <div className="flex-1 text-xs">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="font-bold text-neutral-900 text-sm tracking-tight">{zoneTitle}</p>
-                              <span className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                isSelected ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-700'
-                              }`}>
-                                {timingBadge}
-                              </span>
-                            </div>
-                            {effectiveFreeDelivery ? (
-                              <div className="text-right shrink-0">
-                                <span className="block text-[10px] text-neutral-400 line-through font-mono">৳{zone.charge}</span>
-                                <span className="font-black text-emerald-700 text-sm uppercase">FREE</span>
-                              </div>
-                            ) : (
-                              <span className="font-black text-neutral-900 text-base font-mono shrink-0">
-                                ৳{zone.charge}
-                              </span>
-                            )}
+                        <div className="flex-1 flex items-start justify-between gap-3 text-xs">
+                          <div>
+                            <p className="font-bold text-neutral-900 text-sm tracking-tight">{zoneTitle}</p>
+                            <p className="text-[11px] text-neutral-500 mt-0.5">{zoneSubtext}</p>
                           </div>
-                          <p className="text-neutral-500 text-[11px] leading-relaxed mt-2.5 pt-2 border-t border-neutral-100">
-                            {detailDesc}
-                          </p>
+                          {effectiveFreeDelivery ? (
+                            <div className="text-right shrink-0">
+                              <span className="text-[10px] text-neutral-400 line-through font-mono mr-1.5">৳{zone.charge}</span>
+                              <span className="font-black text-emerald-700 text-sm uppercase">FREE</span>
+                            </div>
+                          ) : (
+                            <span className="font-black text-neutral-900 text-base font-mono shrink-0">
+                              ৳{zone.charge}
+                            </span>
+                          )}
                         </div>
                       </label>
                     );
@@ -566,13 +694,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 {paymentSettings.onlineDiscountActive && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">
                     <Sparkles className="w-3 h-3 text-emerald-600" />
-                    <span>Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} with Full Online Payment</span>
+                    <span>Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} with Online Payment</span>
                   </span>
                 )}
               </div>
 
-              {/* Two Primary Options: Cash on Delivery & Online Payment */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Two Primary Options Stacked Vertically: Cash on Delivery & Online Payment */}
+              <div className="grid grid-cols-1 gap-3">
                 
                 {/* 1. Cash on Delivery */}
                 <div
@@ -611,7 +739,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   </div>
                 </div>
 
-                {/* 2. Online Payment (bKash / Nagad / Rocket Full Payment) */}
+                {/* 2. Online Payment (bKash / Nagad / Rocket) */}
                 <div
                   onClick={() => setPaymentMode('online')}
                   className={`p-4 border rounded-xl cursor-pointer transition-all flex items-start gap-3 select-none ${
@@ -628,17 +756,24 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     className="mt-1 accent-black cursor-pointer"
                   />
                   <div className="text-xs flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-neutral-900 text-sm">Full Online Payment</span>
-                      <div className="flex items-center gap-1.5">
-                        {paymentSettings.onlineDiscountActive && (
-                          <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-bold">
-                            Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`}
-                          </span>
-                        )}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-bold text-neutral-900 text-sm">Online Payment</span>
+                        <div className="flex items-center gap-1.5">
+                          <img src={MFS_LOGOS.bkash} alt="bKash" className="w-5 h-5 rounded object-cover border border-neutral-200" />
+                          <img src={MFS_LOGOS.nagad} alt="Nagad" className="w-5 h-5 rounded object-cover border border-neutral-200" />
+                          <img src={MFS_LOGOS.rocket} alt="Rocket" className="h-5 w-7 rounded object-cover border border-neutral-200" />
+                        </div>
                       </div>
+                      {paymentSettings.onlineDiscountActive && (
+                        <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-bold">
+                          Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`}
+                        </span>
+                      )}
                     </div>
-                    <p className="text-[11px] text-neutral-500 mt-1">Prepay entire order now with 5% discount; ৳0 due at delivery</p>
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      Pay online via bKash, Nagad, or Rocket with {paymentSettings.onlineDiscountActive ? `${paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} discount` : 'instant confirmation'}; ৳0 due at delivery.
+                    </p>
                   </div>
                 </div>
 
@@ -659,7 +794,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 </div>
               )}
 
-              {/* Digital Gateway Payment Box (For COD with delivery fee > 0 OR Full Online Prepayment) */}
+              {/* Digital Gateway Payment Box (For COD with delivery fee > 0 OR Online Payment) */}
               {activeGateway && needsAdvancePayment && (
                 <div className="p-5 sm:p-6 bg-neutral-50/90 border border-neutral-300 rounded-2xl shadow-xs space-y-5 animate-fade-in transition-all">
                   
@@ -673,7 +808,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       <p className="font-bold text-sm">
                         {paymentMode === 'cod'
                           ? `Pay ৳${effectiveDeliveryCharge} Delivery Charge to Confirm Order`
-                          : `Pay Full Order: ৳${finalPayableTotal.toLocaleString('en-BD')}`}
+                          : `Online Payment Total: ৳${finalPayableTotal.toLocaleString('en-BD')}`}
                       </p>
                       <p className="text-[11px] mt-0.5 opacity-90">
                         {paymentMode === 'cod'
@@ -683,84 +818,107 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     </div>
                   </div>
 
-                  {/* Gateway Selector Tabs */}
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-700 mb-2">
-                      Select Payment Method:
-                    </label>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {paymentSettings.bkash.enabled && (
-                        <button
-                          type="button"
-                          onClick={() => setOnlineGateway('bkash')}
-                          className={`py-3 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                            onlineGateway === 'bkash'
-                              ? 'border-[#D12053] bg-pink-50 text-[#D12053] ring-2 ring-[#D12053] shadow-xs'
-                              : 'border-neutral-200 bg-white text-neutral-700 hover:border-[#D12053]'
-                          }`}
-                        >
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#D12053]" />
-                          <span>bKash</span>
-                        </button>
-                      )}
+                  {/* Gateway Selector Dropdown (bKash / Nagad / Rocket with Official Logos) */}
+                  <div className="relative" ref={gatewayDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setGatewayDropdownOpen((prev) => !prev)}
+                      aria-expanded={gatewayDropdownOpen}
+                      aria-haspopup="listbox"
+                      className={`w-full h-12 px-3.5 bg-white border rounded-[6px] flex items-center justify-between text-sm font-semibold text-neutral-900 transition-colors cursor-pointer ${
+                        gatewayDropdownOpen ? 'border-neutral-900' : 'border-neutral-400 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <img
+                          src={MFS_LOGOS[onlineGateway]}
+                          alt={onlineGateway}
+                          className={`${onlineGateway === 'rocket' ? 'h-6 w-8' : 'w-6 h-6'} rounded object-cover border border-neutral-200 shrink-0`}
+                        />
+                        <span>
+                          {onlineGateway === 'bkash' ? 'bKash' : onlineGateway === 'nagad' ? 'Nagad' : 'Rocket'}
+                        </span>
+                      </div>
+                      <ChevronDown
+                        className={`w-4 h-4 text-neutral-600 transition-transform duration-200 ${
+                          gatewayDropdownOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
 
-                      {paymentSettings.nagad.enabled && (
-                        <button
-                          type="button"
-                          onClick={() => setOnlineGateway('nagad')}
-                          className={`py-3 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                            onlineGateway === 'nagad'
-                              ? 'border-[#F7941D] bg-amber-50 text-[#D97706] ring-2 ring-[#F7941D] shadow-xs'
-                              : 'border-neutral-200 bg-white text-neutral-700 hover:border-[#F7941D]'
-                          }`}
-                        >
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#F7941D]" />
-                          <span>Nagad</span>
-                        </button>
-                      )}
+                    <span className="pointer-events-none absolute -top-2.5 left-3 px-1.5 text-[11px] font-medium text-neutral-900 bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)] leading-none">
+                      Select Payment Method *
+                    </span>
 
-                      {paymentSettings.rocket.enabled && (
-                        <button
-                          type="button"
-                          onClick={() => setOnlineGateway('rocket')}
-                          className={`py-3 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                            onlineGateway === 'rocket'
-                              ? 'border-[#8C3494] bg-purple-50 text-[#8C3494] ring-2 ring-[#8C3494] shadow-xs'
-                              : 'border-neutral-200 bg-white text-neutral-700 hover:border-[#8C3494]'
-                          }`}
-                        >
-                          <span className="w-2.5 h-2.5 rounded-full bg-[#8C3494]" />
-                          <span>Rocket</span>
-                        </button>
-                      )}
-                    </div>
+                    {gatewayDropdownOpen && (
+                      <div
+                        role="listbox"
+                        className="absolute left-0 right-0 mt-1.5 bg-white border border-neutral-300 rounded-[8px] shadow-xl overflow-hidden z-30 animate-fade-in"
+                      >
+                        {(['bkash', 'nagad', 'rocket'] as const)
+                          .filter((gw) => paymentSettings[gw].enabled)
+                          .map((gw) => {
+                            const isSelected = onlineGateway === gw;
+                            const label = gw === 'bkash' ? 'bKash' : gw === 'nagad' ? 'Nagad' : 'Rocket';
+                            return (
+                              <button
+                                key={gw}
+                                type="button"
+                                role="option"
+                                aria-selected={isSelected}
+                                onClick={() => {
+                                  setOnlineGateway(gw);
+                                  setGatewayDropdownOpen(false);
+                                }}
+                                className={`w-full px-3.5 py-2.5 flex items-center justify-between text-xs sm:text-sm transition-colors cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-neutral-100 font-bold text-neutral-900'
+                                    : 'bg-white font-medium text-neutral-700 hover:bg-neutral-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <img
+                                    src={MFS_LOGOS[gw]}
+                                    alt={label}
+                                    className={`${gw === 'rocket' ? 'h-6 w-8' : 'w-6 h-6'} rounded object-cover border border-neutral-200 shrink-0`}
+                                  />
+                                  <span>{label}</span>
+                                </div>
+                                {isSelected && <Check className="w-4 h-4 text-black shrink-0" />}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
 
                   {/* Gateway Header & Prominent Account Number Box */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white rounded-xl border border-neutral-200 shadow-2xs">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2.5 h-2.5 rounded-full ${
-                          onlineGateway === 'bkash' ? 'bg-[#D12053]' : onlineGateway === 'nagad' ? 'bg-[#F7941D]' : 'bg-[#8C3494]'
-                        }`} />
-                        <span className="text-[11px] uppercase font-bold tracking-widest text-neutral-500">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-white rounded-xl border border-neutral-200 shadow-2xs">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={MFS_LOGOS[onlineGateway]}
+                        alt={onlineGateway.toUpperCase()}
+                        className={`${onlineGateway === 'rocket' ? 'w-11 h-8' : 'w-9 h-9'} rounded-lg object-cover border border-neutral-200 shrink-0`}
+                      />
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-neutral-500 block">
                           {onlineGateway.toUpperCase()} Official Account
                         </span>
+                        <p className="text-[13px] sm:text-sm font-extrabold text-neutral-900 mt-0.5 leading-snug">
+                          {activeGateway.accountType}
+                        </p>
                       </div>
-                      <p className="text-sm font-extrabold text-neutral-900 mt-0.5">
-                        {onlineGateway.toUpperCase()} — {activeGateway.accountType}
-                      </p>
                     </div>
 
                     {/* Copy Button Box */}
-                    <div className="flex items-center gap-2 bg-neutral-50 px-3 py-2 rounded-xl border border-neutral-300">
-                      <span className="font-mono font-extrabold text-sm sm:text-base text-neutral-900 tracking-wider">
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 bg-neutral-50 px-3.5 py-2 rounded-xl border border-neutral-300 shrink-0">
+                      <span className="font-mono font-extrabold text-sm sm:text-[15px] text-neutral-900 tracking-wide whitespace-nowrap">
                         {activeGateway.number}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleCopyNumber(activeGateway.number)}
-                        className="px-3 py-1.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1 cursor-pointer"
+                        className="px-3 py-1.5 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap"
                       >
                         {copiedNumber ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedNumber ? 'Copied' : 'Copy'}</span>
@@ -786,7 +944,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       onlineDiscount > 0 && (
                         <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center gap-1">
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>৳{onlineDiscount} Prepayment Discount Included</span>
+                          <span>৳{onlineDiscount} Online Discount Included</span>
                         </span>
                       )
                     )}
@@ -910,92 +1068,92 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
             {/* Cost Breakdown */}
             <div className="space-y-2.5 pt-3 border-t border-neutral-200 text-xs">
-              <div className="flex justify-between text-neutral-600">
-                <span>Products Subtotal</span>
-                <span>৳{subtotal.toLocaleString('en-BD')}</span>
+              <div className="flex items-center justify-between text-neutral-600">
+                <span>Subtotal</span>
+                <span className="font-medium text-neutral-900">৳{subtotal.toLocaleString('en-BD')}</span>
               </div>
 
               {discount > 0 && (
-                <div className="flex justify-between text-emerald-700 font-semibold">
+                <div className="flex items-center justify-between text-emerald-700 font-medium">
                   <span>Coupon Discount ({appliedCoupon?.code})</span>
                   <span>-৳{discount.toLocaleString('en-BD')}</span>
                 </div>
               )}
 
               {paymentMode === 'online' && onlineDiscount > 0 && (
-                <div className="flex justify-between text-emerald-700 font-semibold">
-                  <span>Online Prepayment Discount (5%)</span>
+                <div className="flex items-center justify-between text-emerald-700 font-medium">
+                  <span>
+                    Online Payment Discount
+                    {paymentSettings.onlineDiscountType === 'percentage'
+                      ? ` (${paymentSettings.onlineDiscountValue}%)`
+                      : ''}
+                  </span>
                   <span>-৳{onlineDiscount.toLocaleString('en-BD')}</span>
                 </div>
               )}
 
-              <div className="flex justify-between text-neutral-600">
-                <span>Delivery Fee ({selectedZone?.name})</span>
+              <div className="flex items-center justify-between text-neutral-600">
+                <span>
+                  Delivery Fee ({selectedZone?.id === 'dhaka' || selectedZone?.name.toLowerCase().includes('inside') ? 'Inside Dhaka' : 'Outside Dhaka'})
+                </span>
                 {effectiveFreeDelivery ? (
                   <span className="font-bold text-emerald-700">
                     <span className="line-through text-neutral-400 mr-1.5 font-normal">৳{baseDeliveryCharge}</span>
-                    FREE (৳0)
+                    FREE
                   </span>
                 ) : (
-                  <span>৳{effectiveDeliveryCharge.toLocaleString('en-BD')}</span>
+                  <span className="font-medium text-neutral-900">৳{effectiveDeliveryCharge.toLocaleString('en-BD')}</span>
                 )}
               </div>
 
-              {effectiveFreeDelivery && (
-                <div className="flex justify-between text-emerald-700 font-semibold">
-                  <span>One-Time Free Delivery ({effectiveFreeDeliveryCoupon?.code || 'VIP'})</span>
-                  <span>-৳{baseDeliveryCharge.toLocaleString('en-BD')}</span>
-                </div>
-              )}
-
-              {/* Exact display per user specification for COD vs Online */}
+              {/* Minimal Totals & Method Summary */}
               {paymentMode === 'cod' ? (
-                <div className="pt-2 border-t border-neutral-200 space-y-2">
+                <>
                   {effectiveDeliveryCharge > 0 && (
-                    <div className="flex justify-between text-emerald-700 font-semibold">
-                      <span>Advance Delivery Fee Paid</span>
-                      <span>-৳{effectiveDeliveryCharge.toLocaleString('en-BD')}</span>
+                    <div className="flex items-center justify-between text-neutral-600">
+                      <span>Advance Delivery Fee</span>
+                      <span className="font-medium text-neutral-900">
+                        -৳{effectiveDeliveryCharge.toLocaleString('en-BD')}
+                      </span>
                     </div>
                   )}
-                  <div className="flex justify-between text-base font-extrabold text-neutral-900 pt-1 border-t border-neutral-100">
-                    <span>Due on Delivery (Cash to Courier)</span>
-                    <span className="text-black">৳{Math.max(0, subtotal - discount).toLocaleString('en-BD')}</span>
+
+                  <div className="pt-3 mt-1 border-t border-neutral-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs text-neutral-500">
+                      <span>Payment Method</span>
+                      <span className="font-medium text-neutral-800">
+                        {effectiveDeliveryCharge === 0
+                          ? 'Cash on Delivery'
+                          : `COD (${onlineGateway === 'bkash' ? 'bKash' : onlineGateway === 'nagad' ? 'Nagad' : 'Rocket'} Advance)`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-base font-bold text-neutral-900 pt-2 border-t border-neutral-100">
+                      <span>Due on Delivery</span>
+                      <span>৳{Math.max(0, subtotal - discount).toLocaleString('en-BD')}</span>
+                    </div>
                   </div>
-                  <div className={`flex justify-between text-xs font-bold p-2.5 rounded-lg border ${
-                    effectiveDeliveryCharge === 0
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                      : 'bg-neutral-50 text-neutral-600 border-neutral-200'
-                  }`}>
-                    <span>Advance Payment Right Now</span>
-                    <span className="font-mono font-extrabold">
-                      {effectiveDeliveryCharge === 0 ? '৳0 (Free Delivery)' : `৳${effectiveDeliveryCharge.toLocaleString('en-BD')}`}
+                </>
+              ) : (
+                <div className="pt-3 mt-1 border-t border-neutral-200 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-neutral-500">
+                    <span>Payment Method</span>
+                    <span className="font-medium text-neutral-800">
+                      Online Payment ({onlineGateway === 'bkash' ? 'bKash' : onlineGateway === 'nagad' ? 'Nagad' : 'Rocket'})
                     </span>
                   </div>
-                </div>
-              ) : (
-                <div className="pt-2 border-t border-neutral-200 space-y-2">
-                  <div className="flex justify-between text-base font-extrabold text-neutral-900">
-                    <span>Total Amount (Paid in Full)</span>
-                    <span>৳{finalPayableTotal.toLocaleString('en-BD')}</span>
+
+                  <div className="flex items-center justify-between text-xs text-neutral-500">
+                    <span>Due on Delivery</span>
+                    <span className="font-medium text-neutral-900">৳0</span>
                   </div>
-                  <div className="flex justify-between text-xs font-semibold text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200">
-                    <span>Due on Delivery (At Doorstep)</span>
-                    <span className="font-bold">৳0 (Fully Pre-paid)</span>
+
+                  <div className="flex items-center justify-between text-base font-bold text-neutral-900 pt-2 border-t border-neutral-100">
+                    <span>Total Payable</span>
+                    <span>৳{finalPayableTotal.toLocaleString('en-BD')}</span>
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Payment Method Selected Preview */}
-            <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs flex items-center justify-between">
-              <span className="text-neutral-500">Selected Method:</span>
-              <span className="font-bold text-neutral-900 uppercase">
-                {paymentMode === 'cod'
-                  ? (effectiveDeliveryCharge === 0
-                      ? 'COD (৳0 Advance • Free Delivery)'
-                      : `COD (Advance ৳${effectiveDeliveryCharge} via ${onlineGateway})`)
-                  : `${onlineGateway.toUpperCase()} (Online Full)`}
-              </span>
             </div>
 
             {/* Submit Button */}

@@ -106,8 +106,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <button
           onClick={handleQuickAdd}
           disabled={isOutOfStock}
-          aria-label="Add to bag"
-          title={isOutOfStock ? 'Sold Out' : 'Quick Add to Bag'}
+          aria-label="Add to cart"
+          title={isOutOfStock ? 'Sold Out' : 'Quick Add to Cart'}
           className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 backdrop-blur-xs border border-neutral-200/90 shadow-xs flex items-center justify-center transition-all duration-200 z-10 ${
             isOutOfStock
               ? 'opacity-40 cursor-not-allowed text-neutral-400'

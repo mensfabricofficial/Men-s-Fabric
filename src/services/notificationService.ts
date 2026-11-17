@@ -19,10 +19,14 @@ const LOCAL_READ_KEY = 'selvee_read_notifs_v1';
 const LOCAL_PUSHED_KEY = 'selvee_pushed_notifs_v1';
 const LOCAL_MUTED_KEY = 'selvee_notif_muted_v1';
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
+const LOCAL_PUSHED_SIGS_KEY = 'selvee_pushed_sigs_v1';
 const CUSTOMER_DEVICE_KEY = 'selvee_customer_device_id_v1';
 const FEED_DOC_PATH = doc(db, 'settings', 'notifications_feed');
 const MAX_FEED_ITEMS = 60;
 let feedWriteQueue: Promise<void> = Promise.resolve();
+const pushedInMemory = new Set<string>();
+const publishedIdsLock = new Set<string>();
+const recentPublishedSigs = new Map<string, number>();
 
 export const getCustomerDeviceId = (): string => {
   if (typeof window === 'undefined') return 'SERVER';
@@ -260,22 +264,65 @@ export const requestMobileNotificationPermission = async (): Promise<Notificatio
   }
 };
 
+const getRecentPushedSigs = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem(LOCAL_PUSHED_SIGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const cutoff = Date.now() - 120000; // 2 minute dedup window across tabs
+        const clean: Record<string, number> = {};
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (typeof v === 'number' && v > cutoff) clean[k] = v;
+        });
+        return clean;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+};
+
+const markSigPushed = (sig: string) => {
+  try {
+    const clean = getRecentPushedSigs();
+    clean[sig] = Date.now();
+    localStorage.setItem(LOCAL_PUSHED_SIGS_KEY, JSON.stringify(clean));
+  } catch {
+    // ignore
+  }
+};
+
 export const triggerNativeMobileNotification = async (notif: AppNotification): Promise<boolean> => {
   if (typeof window === 'undefined') return false;
   if (isNotificationsMuted()) return false;
   if (!('Notification' in window) || Notification.permission !== 'granted') return false;
 
   const pushed = getPushedNotificationIds();
-  if (pushed.has(notif.id)) return false;
+  if (pushedInMemory.has(notif.id) || pushed.has(notif.id)) return false;
 
-  // Do not fire OS popups for stale notifications older than 12 hours on fresh devices
-  const ageMs = Date.now() - (notif.createdAtMs || 0);
-  if (ageMs > 12 * 60 * 60 * 1000) {
+  // Cross-tab & identical-content dedup lock (prevents 2x-3x popups if multiple callers fire)
+  const contentSig = `${notif.type}|${notif.title}|${notif.targetOrderNumber || ''}|${notif.message}`;
+  const recentSigs = getRecentPushedSigs();
+  if (recentSigs[contentSig]) {
+    pushedInMemory.add(notif.id);
     markNotificationPushed(notif.id);
     return false;
   }
 
+  // Do not fire OS popups for stale notifications older than 12 hours on fresh devices
+  const ageMs = Date.now() - (notif.createdAtMs || 0);
+  if (ageMs > 12 * 60 * 60 * 1000) {
+    pushedInMemory.add(notif.id);
+    markNotificationPushed(notif.id);
+    return false;
+  }
+
+  // Acquire synchronous lock BEFORE any await
+  pushedInMemory.add(notif.id);
   markNotificationPushed(notif.id);
+  markSigPushed(contentSig);
 
   try {
     if ('serviceWorker' in navigator) {
@@ -290,7 +337,7 @@ export const triggerNativeMobileNotification = async (notif: AppNotification): P
           badge: '/pwa-192x192.png',
           tag: notif.id,
           vibrate: [200, 100, 200],
-          renotify: true,
+          renotify: false,
           requireInteraction: Boolean(notif.important),
           data: { url: notif.actionUrl || '/' },
         } as NotificationOptions);
@@ -377,6 +424,31 @@ export const notificationService = {
       input.id ||
       `notif-${now.toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
 
+    const existingLocal = getLocalCachedNotifications();
+    if (input.id) {
+      const alreadyLocal = existingLocal.find((n) => n.id === id);
+      if (publishedIdsLock.has(id) || alreadyLocal) {
+        return alreadyLocal || {
+          id,
+          type: input.type,
+          title: input.title.trim(),
+          message: input.message.trim(),
+          audience: input.audience,
+          createdAt: new Date(now).toISOString(),
+          createdAtMs: now,
+        };
+      }
+    }
+
+    const contentSig = `${input.type}|${input.title.trim()}|${input.message.trim()}|${input.targetOrderNumber || ''}`;
+    const lastPub = recentPublishedSigs.get(contentSig);
+    if (lastPub && now - lastPub < 15000) {
+      const existingMatch = existingLocal.find((n) => n.title === input.title.trim() && n.message === input.message.trim());
+      if (existingMatch) return existingMatch;
+    }
+    publishedIdsLock.add(id);
+    recentPublishedSigs.set(contentSig, now);
+
     const notif: AppNotification = {
       id,
       type: input.type,
@@ -400,12 +472,12 @@ export const notificationService = {
     const hasAdminDevice =
       typeof window !== 'undefined' && Boolean(localStorage.getItem('selvee_admin_device_id_v2'));
     if (notif.audience !== 'authorized_devices' || hasAdminDevice) {
-      const existingLocal = getLocalCachedNotifications();
       const mergedLocal = [notif, ...existingLocal.filter((n) => n.id !== id)].slice(0, MAX_FEED_ITEMS);
       saveLocalCachedNotifications(mergedLocal);
     }
 
     // 2. Sequentially queue write to settings/notifications_feed to avoid concurrent overwrite races
+    let alreadyInRemote = false;
     const writeFeed = async () => {
       try {
         const feedSnap = await getDoc(FEED_DOC_PATH);
@@ -413,6 +485,10 @@ export const notificationService = {
           feedSnap.exists() && Array.isArray(feedSnap.data()?.items)
             ? (feedSnap.data().items as AppNotification[])
             : [];
+        if (input.id && remoteItems.some((n) => n && n.id === id)) {
+          alreadyInRemote = true;
+          return;
+        }
         const nextItems = [
           sanitizeForFirestore(notif),
           ...remoteItems.filter((n) => n && n.id !== id),
@@ -435,17 +511,19 @@ export const notificationService = {
     feedWriteQueue = feedWriteQueue.then(writeFeed, writeFeed);
     await feedWriteQueue;
 
-    // 3. Also attempt writing to /notifications collection if rules allow
-    try {
-      await setDoc(
-        doc(db, 'notifications', id),
-        sanitizeForFirestore({
-          ...notif,
-          createdAt: serverTimestamp(),
-        })
-      );
-    } catch {
-      // Non-blocking fallback handled by settings/notifications_feed
+    // 3. Also attempt writing to /notifications collection if not already present remotely
+    if (!alreadyInRemote) {
+      try {
+        await setDoc(
+          doc(db, 'notifications', id),
+          sanitizeForFirestore({
+            ...notif,
+            createdAt: serverTimestamp(),
+          })
+        );
+      } catch {
+        // Non-blocking fallback handled by settings/notifications_feed
+      }
     }
 
     return notif;
@@ -588,7 +666,7 @@ export const notificationService = {
       : template.body;
 
     return this.publishNotification({
-      id: `ord-st-${normalizeOrderNo(cleanNum)}-${params.status}-${Date.now().toString(36)}`,
+      id: `ord-st-${normalizeOrderNo(cleanNum)}-${params.status}`,
       type: 'order_status',
       title: `${template.title} — ${cleanNum}`,
       message: customMsg,
@@ -635,7 +713,7 @@ export const notificationService = {
 
     const tpl = map[params.paymentStatus];
     return this.publishNotification({
-      id: `ord-pay-${normalizeOrderNo(cleanNum)}-${params.paymentStatus}-${Date.now().toString(36)}`,
+      id: `ord-pay-${normalizeOrderNo(cleanNum)}-${params.paymentStatus}`,
       type: 'payment_update',
       title: tpl.title,
       message: tpl.body,

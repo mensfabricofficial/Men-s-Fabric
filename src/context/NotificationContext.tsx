@@ -118,9 +118,19 @@ export const NotificationProvider: React.FC<{
     adminDeviceService.getStoredDeviceId()
   );
   const [isApprovedAdminDevice, setIsApprovedAdminDevice] = useState<boolean>(false);
+  const [deviceStatusResolved, setDeviceStatusResolved] = useState<boolean>(() =>
+    !adminDeviceService.getStoredDeviceId()
+  );
 
   const knownIdsRef = useRef<Set<string> | null>(null);
   const seenAdminOrderIdsRef = useRef<Set<string> | null>(null);
+  const toastedIdsRef = useRef<Set<string>>(new Set());
+  const toastedSigsRef = useRef<Set<string>>(new Set());
+  const orderSnapshotsRef = useRef<Record<string, { orderStatus: OrderStatus; paymentStatus: PaymentStatus }>>(
+    getStoredOrderSnapshots()
+  );
+  const allNotificationsRef = useRef<AppNotification[]>([]);
+  const appStartedAtRef = useRef<number>(Date.now());
   const toastTimerRef = useRef<number | null>(null);
 
   const showInAppToast = useCallback((notif: AppNotification) => {
@@ -132,6 +142,94 @@ export const NotificationProvider: React.FC<{
       setActiveToast(null);
     }, 6500);
   }, []);
+
+  // Direct browser notification permission prompt as soon as user enters the website
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const current = getBrowserNotificationPermission();
+    setPermission(current);
+
+    if (current === 'granted') {
+      setNotificationsMuted(false);
+      setIsMuted(false);
+      setInAppAlertsActive(true);
+      try {
+        localStorage.setItem(INAPP_ALERTS_KEY, '1');
+      } catch {
+        // ignore
+      }
+      if (currentUser?.emailVerified) {
+        enableCurrentDeviceForVerifiedUser().catch(() => {});
+      }
+      return;
+    }
+
+    if (current !== 'default') return;
+
+    let handled = false;
+    const activateAfterGrant = (res: NotificationPermission | 'unsupported') => {
+      setPermission(res);
+      if (res === 'granted') {
+        setNotificationsMuted(false);
+        setIsMuted(false);
+        setInAppAlertsActive(true);
+        try {
+          localStorage.setItem(INAPP_ALERTS_KEY, '1');
+        } catch {
+          // ignore
+        }
+        if (currentUser?.emailVerified) {
+          enableCurrentDeviceForVerifiedUser().catch(() => {});
+        }
+      }
+    };
+
+    // 1. Try triggering browser native prompt immediately on website load
+    const tryImmediatePrompt = async () => {
+      if (sessionStorage.getItem('selvee_browser_prompt_auto_v1') === '1') return;
+      sessionStorage.setItem('selvee_browser_prompt_auto_v1', '1');
+      try {
+        const res = await requestMobileNotificationPermission();
+        if (res === 'granted' || res === 'denied') {
+          handled = true;
+        }
+        activateAfterGrant(res);
+      } catch {
+        // Browser requires user gesture; fallback listener below handles first tap/click
+      }
+    };
+
+    tryImmediatePrompt();
+
+    // 2. If browser blocked non-gesture prompt (e.g. Android Chrome / Safari), trigger on very first click/tap
+    const onFirstUserGesture = () => {
+      if (handled || getBrowserNotificationPermission() !== 'default') {
+        cleanupGestureListeners();
+        return;
+      }
+      if (sessionStorage.getItem('selvee_browser_prompt_gesture_v1') === '1') {
+        cleanupGestureListeners();
+        return;
+      }
+      sessionStorage.setItem('selvee_browser_prompt_gesture_v1', '1');
+      handled = true;
+      cleanupGestureListeners();
+
+      // MUST invoke synchronously inside click/pointerdown gesture before any await
+      requestMobileNotificationPermission()
+        .then((res) => activateAfterGrant(res))
+        .catch(() => {});
+    };
+
+    const cleanupGestureListeners = () => {
+      window.removeEventListener('click', onFirstUserGesture, true);
+    };
+
+    window.addEventListener('click', onFirstUserGesture, true);
+    return () => {
+      cleanupGestureListeners();
+    };
+  }, [currentUser?.emailVerified, enableCurrentDeviceForVerifiedUser]);
 
   // Track stored admin device ID across tabs / when /admin creates an ID
   useEffect(() => {
@@ -150,13 +248,16 @@ export const NotificationProvider: React.FC<{
   useEffect(() => {
     if (!storedDeviceId) {
       setIsApprovedAdminDevice(false);
+      setDeviceStatusResolved(true);
       seenAdminOrderIdsRef.current = null;
       return;
     }
 
+    setDeviceStatusResolved(false);
     const unsub = adminDeviceService.subscribeToDeviceStatus(storedDeviceId, (status) => {
       const approved = status === 'approved';
       setIsApprovedAdminDevice(approved);
+      setDeviceStatusResolved(true);
       if (!approved) {
         seenAdminOrderIdsRef.current = null;
         setActiveToast((prev) => (prev?.audience === 'authorized_devices' ? null : prev));
@@ -182,12 +283,25 @@ export const NotificationProvider: React.FC<{
     return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
   }, [onNavigate]);
 
+  const [feedSynced, setFeedSynced] = useState<boolean>(false);
+
   // Subscribe to notifications feed
   useEffect(() => {
+    let emitCount = 0;
+    const timer = window.setTimeout(() => setFeedSynced(true), 1200);
     const unsub = notificationService.subscribeToAllNotifications((items) => {
+      allNotificationsRef.current = items;
       setAllNotifications(items);
+      emitCount += 1;
+      // Second emission is the remote Firestore snapshot (first is synchronous localStorage cache)
+      if (emitCount >= 2) {
+        setFeedSynced(true);
+      }
     });
-    return () => unsub();
+    return () => {
+      window.clearTimeout(timer);
+      unsub();
+    };
   }, []);
 
   // Authorized Admin Devices ONLY: real-time listener on incoming Firestore orders
@@ -255,46 +369,59 @@ export const NotificationProvider: React.FC<{
     ).slice(0, 10);
 
     const processOrdersSnapshot = (ordersList: Order[]) => {
-      const snapshots = getStoredOrderSnapshots();
+      const snapshots = orderSnapshotsRef.current;
       let changed = false;
 
       ordersList.forEach((ord) => {
         if (!ord?.orderNumber) return;
         const prev = snapshots[ord.orderNumber];
-        if (prev) {
-          if (prev.orderStatus !== ord.orderStatus) {
-            notificationService
-              .notifyOrderStatusChanged({
-                orderNumber: ord.orderNumber,
-                status: ord.orderStatus,
-                customerId: ord.customerId,
-                customerEmail: ord.customerEmail || ord.shippingAddress?.email,
-                customerPhone: ord.customerPhone || ord.shippingAddress?.phone,
-              })
-              .catch(() => {});
-          }
-          if (prev.paymentStatus !== ord.paymentStatus && ord.paymentStatus !== 'pending') {
-            notificationService
-              .notifyPaymentStatusChanged({
-                orderNumber: ord.orderNumber,
-                paymentStatus: ord.paymentStatus,
-                customerId: ord.customerId,
-                customerEmail: ord.customerEmail || ord.shippingAddress?.email,
-                customerPhone: ord.customerPhone || ord.shippingAddress?.phone,
-              })
-              .catch(() => {});
-          }
-        }
-        if (
-          !prev ||
-          prev.orderStatus !== ord.orderStatus ||
-          prev.paymentStatus !== ord.paymentStatus
-        ) {
+        const nextOrderStatus = ord.orderStatus;
+        const nextPaymentStatus = ord.paymentStatus;
+
+        // Update snapshot synchronously BEFORE dispatching notifications so concurrent listeners never double-fire
+        if (!prev || prev.orderStatus !== nextOrderStatus || prev.paymentStatus !== nextPaymentStatus) {
           snapshots[ord.orderNumber] = {
-            orderStatus: ord.orderStatus,
-            paymentStatus: ord.paymentStatus,
+            orderStatus: nextOrderStatus,
+            paymentStatus: nextPaymentStatus,
           };
           changed = true;
+        }
+
+        if (prev) {
+          if (prev.orderStatus !== nextOrderStatus) {
+            const cleanNo = ord.orderNumber.trim().toUpperCase().replace(/^#/, '').replace(/^MF-/, '');
+            const expectedId = `ord-st-${cleanNo}-${nextOrderStatus}`;
+            window.setTimeout(() => {
+              if (!allNotificationsRef.current.some((n) => n.id === expectedId)) {
+                notificationService
+                  .notifyOrderStatusChanged({
+                    orderNumber: ord.orderNumber,
+                    status: nextOrderStatus,
+                    customerId: ord.customerId,
+                    customerEmail: ord.customerEmail || ord.shippingAddress?.email,
+                    customerPhone: ord.customerPhone || ord.shippingAddress?.phone,
+                  })
+                  .catch(() => {});
+              }
+            }, 900);
+          }
+          if (prev.paymentStatus !== nextPaymentStatus && nextPaymentStatus !== 'pending') {
+            const cleanNo = ord.orderNumber.trim().toUpperCase().replace(/^#/, '').replace(/^MF-/, '');
+            const expectedId = `ord-pay-${cleanNo}-${nextPaymentStatus}`;
+            window.setTimeout(() => {
+              if (!allNotificationsRef.current.some((n) => n.id === expectedId)) {
+                notificationService
+                  .notifyPaymentStatusChanged({
+                    orderNumber: ord.orderNumber,
+                    paymentStatus: nextPaymentStatus,
+                    customerId: ord.customerId,
+                    customerEmail: ord.customerEmail || ord.shippingAddress?.email,
+                    customerPhone: ord.customerPhone || ord.shippingAddress?.phone,
+                  })
+                  .catch(() => {});
+              }
+            }, 900);
+          }
         }
       });
 
@@ -390,17 +517,32 @@ export const NotificationProvider: React.FC<{
     isNotificationForCustomer(n, customerIdentity)
   );
 
-  // Detect brand-new incoming notifications -> trigger mobile OS push + subtle in-app toast
+  // Detect brand-new incoming notifications -> trigger mobile OS push + subtle in-app toast (strictly ONCE)
   useEffect(() => {
-    if (isWaitingProfile) return;
-
-    if (customerNotifications.length === 0) {
-      if (knownIdsRef.current === null) knownIdsRef.current = new Set();
-      return;
-    }
+    if (isWaitingProfile || !deviceStatusResolved || !feedSynced) return;
 
     if (knownIdsRef.current === null) {
       knownIdsRef.current = new Set(customerNotifications.map((n) => n.id));
+      // Only alert items that were genuinely created right after this page opened
+      const justCreated = customerNotifications.filter(
+        (n) => (n.createdAtMs || 0) >= appStartedAtRef.current - 3000
+      );
+      if (justCreated.length === 0) return;
+      const topLive = justCreated[0];
+      const sig = `${topLive.type}|${topLive.title}|${topLive.targetOrderNumber || ''}|${topLive.message}`;
+      if (
+        !readIds.has(topLive.id) &&
+        !toastedIdsRef.current.has(topLive.id) &&
+        !toastedSigsRef.current.has(sig)
+      ) {
+        toastedIdsRef.current.add(topLive.id);
+        toastedSigsRef.current.add(sig);
+        showInAppToast(topLive);
+        triggerNativeMobileNotification(topLive);
+        if (!isMuted && topLive.type === 'admin_new_order' && isApprovedAdminDevice) {
+          playOrderAlertChime();
+        }
+      }
       return;
     }
 
@@ -408,7 +550,20 @@ export const NotificationProvider: React.FC<{
     if (newlyArrived.length > 0) {
       newlyArrived.forEach((n) => knownIdsRef.current!.add(n.id));
       const topNotif = newlyArrived[0];
-      if (topNotif && !readIds.has(topNotif.id)) {
+      const isLiveAlert = (topNotif?.createdAtMs || 0) >= appStartedAtRef.current - 5000;
+      const sig = topNotif
+        ? `${topNotif.type}|${topNotif.title}|${topNotif.targetOrderNumber || ''}|${topNotif.message}`
+        : '';
+
+      if (
+        topNotif &&
+        isLiveAlert &&
+        !readIds.has(topNotif.id) &&
+        !toastedIdsRef.current.has(topNotif.id) &&
+        !toastedSigsRef.current.has(sig)
+      ) {
+        toastedIdsRef.current.add(topNotif.id);
+        toastedSigsRef.current.add(sig);
         showInAppToast(topNotif);
         triggerNativeMobileNotification(topNotif);
         if (!isMuted && topNotif.type === 'admin_new_order' && isApprovedAdminDevice) {
@@ -423,6 +578,8 @@ export const NotificationProvider: React.FC<{
     isApprovedAdminDevice,
     isMuted,
     isWaitingProfile,
+    deviceStatusResolved,
+    feedSynced,
   ]);
 
   const unreadCount = customerNotifications.filter((n) => !readIds.has(n.id)).length;

@@ -8,7 +8,6 @@ import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { CartDrawer } from './components/cart/CartDrawer';
 import { NotificationDrawer } from './components/common/NotificationDrawer';
-import { AllowNotificationBanner } from './components/common/AllowNotificationBanner';
 import { OfflineIndicator } from './components/common/PWAInstallButton';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { BrandLogo } from './components/common/BrandLogo';
@@ -227,7 +226,6 @@ const AppContent: React.FC = () => {
       <Header currentRoute={currentRoute} onNavigate={navigate} />
       <CartDrawer onNavigate={navigate} />
       <NotificationDrawer onNavigate={navigate} />
-      <AllowNotificationBanner />
       <OfflineIndicator />
       <main className="flex-1 pb-20 md:pb-0">
         {PageComponent}

@@ -105,7 +105,7 @@ self.addEventListener('push', (event) => {
       badge: '/pwa-192x192.png',
       tag: payload.tag,
       vibrate: [200, 100, 200],
-      renotify: true,
+      renotify: false,
       data: { url: payload.url || '/' },
     })
   );
@@ -122,7 +122,7 @@ self.addEventListener('message', (event) => {
       badge: '/pwa-192x192.png',
       tag: p.tag || 'selvee-alert-' + Date.now(),
       vibrate: [200, 100, 200],
-      renotify: true,
+      renotify: false,
       requireInteraction: Boolean(p.important),
       data: { url: p.url || '/' },
     })

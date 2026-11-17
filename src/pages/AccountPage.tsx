@@ -1101,6 +1101,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               ) : (!allNotificationsActive || isCustomerDeviceBlocked || notifPermission === 'default') ? (
                 <button
                   type="button"
+                  data-notif-trigger="true"
                   disabled={enablingNotifs}
                   onClick={async () => {
                     setEnablingNotifs(true);

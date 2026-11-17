@@ -143,7 +143,10 @@ export const NotificationProvider: React.FC<{
     }, 6500);
   }, []);
 
-  // Direct browser notification permission prompt as soon as user enters the website
+  const autoTriedRef = useRef<boolean>(false);
+  const gestureTriedRef = useRef<boolean>(false);
+
+  // Direct browser notification permission prompt on website entry (Desktop immediate + Mobile first-tap)
   useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     const current = getBrowserNotificationPermission();
@@ -166,7 +169,6 @@ export const NotificationProvider: React.FC<{
 
     if (current !== 'default') return;
 
-    let handled = false;
     const activateAfterGrant = (res: NotificationPermission | 'unsupported') => {
       setPermission(res);
       if (res === 'granted') {
@@ -184,38 +186,32 @@ export const NotificationProvider: React.FC<{
       }
     };
 
-    // 1. Try triggering browser native prompt immediately on website load
-    const tryImmediatePrompt = async () => {
-      if (sessionStorage.getItem('selvee_browser_prompt_auto_v1') === '1') return;
-      sessionStorage.setItem('selvee_browser_prompt_auto_v1', '1');
-      try {
-        const res = await requestMobileNotificationPermission();
-        if (res === 'granted' || res === 'denied') {
-          handled = true;
-        }
-        activateAfterGrant(res);
-      } catch {
-        // Browser requires user gesture; fallback listener below handles first tap/click
+    const isMobileViewport =
+      window.innerWidth < 768 ||
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+    // 1. On desktop, trigger native browser prompt immediately on load (mobile browsers ignore non-gesture calls)
+    if (!isMobileViewport && !autoTriedRef.current) {
+      autoTriedRef.current = true;
+      requestMobileNotificationPermission()
+        .then((res) => activateAfterGrant(res))
+        .catch(() => {});
+    }
+
+    // 2. On Mobile / Mobile View (or if desktop prompt stayed 'default'), trigger synchronously on very first tap/click
+    const onFirstUserGesture = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[data-notif-trigger="true"]')) {
+        return;
       }
-    };
-
-    tryImmediatePrompt();
-
-    // 2. If browser blocked non-gesture prompt (e.g. Android Chrome / Safari), trigger on very first click/tap
-    const onFirstUserGesture = () => {
-      if (handled || getBrowserNotificationPermission() !== 'default') {
+      if (gestureTriedRef.current || getBrowserNotificationPermission() !== 'default') {
         cleanupGestureListeners();
         return;
       }
-      if (sessionStorage.getItem('selvee_browser_prompt_gesture_v1') === '1') {
-        cleanupGestureListeners();
-        return;
-      }
-      sessionStorage.setItem('selvee_browser_prompt_gesture_v1', '1');
-      handled = true;
+      gestureTriedRef.current = true;
       cleanupGestureListeners();
 
-      // MUST invoke synchronously inside click/pointerdown gesture before any await
       requestMobileNotificationPermission()
         .then((res) => activateAfterGrant(res))
         .catch(() => {});

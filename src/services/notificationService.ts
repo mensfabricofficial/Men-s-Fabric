@@ -326,10 +326,15 @@ export const triggerNativeMobileNotification = async (notif: AppNotification): P
 
   try {
     if ('serviceWorker' in navigator) {
-      const reg = await Promise.race([
-        navigator.serviceWorker.ready,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
-      ]);
+      let reg: ServiceWorkerRegistration | undefined =
+        (await navigator.serviceWorker.getRegistration('/').catch(() => undefined)) ||
+        (await navigator.serviceWorker.getRegistration().catch(() => undefined));
+      if (!reg || !reg.active) {
+        reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2500)),
+        ]);
+      }
       if (reg && 'showNotification' in reg) {
         await reg.showNotification(notif.title, {
           body: notif.message,

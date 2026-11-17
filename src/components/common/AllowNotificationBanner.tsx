@@ -2,19 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Bell, X } from 'lucide-react';
 import { useNotifications } from '../../context/NotificationContext';
 
-const PROMPT_HANDLED_KEY = 'selvee_notif_prompt_handled_v1';
+const PROMPT_DISMISSED_KEY = 'selvee_notif_banner_closed_v2';
 
 export const AllowNotificationBanner: React.FC = () => {
   const {
     permission,
     enableAllNotificationsOneClick,
-    customerVerificationBlockReason,
     isDrawerOpen,
   } = useNotifications();
 
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(PROMPT_HANDLED_KEY) === '1';
+      return localStorage.getItem(PROMPT_DISMISSED_KEY) === '1';
     } catch {
       return false;
     }
@@ -22,7 +21,7 @@ export const AllowNotificationBanner: React.FC = () => {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setVisible(true), 250);
+    const timer = window.setTimeout(() => setVisible(true), 600);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -30,15 +29,14 @@ export const AllowNotificationBanner: React.FC = () => {
     !visible ||
     dismissed ||
     isDrawerOpen ||
-    permission !== 'default' ||
-    customerVerificationBlockReason === 'unverified_email'
+    permission !== 'default'
   ) {
     return null;
   }
 
   const handleAllow = async () => {
     try {
-      localStorage.setItem(PROMPT_HANDLED_KEY, '1');
+      localStorage.setItem(PROMPT_DISMISSED_KEY, '1');
     } catch {
       // ignore
     }
@@ -48,7 +46,7 @@ export const AllowNotificationBanner: React.FC = () => {
 
   const handleDismiss = () => {
     try {
-      localStorage.setItem(PROMPT_HANDLED_KEY, '1');
+      localStorage.setItem(PROMPT_DISMISSED_KEY, '1');
     } catch {
       // ignore
     }
@@ -67,14 +65,15 @@ export const AllowNotificationBanner: React.FC = () => {
             <Bell className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-bold text-neutral-900">Get Order &amp; Offer Alerts</p>
-            <p className="text-[11px] text-neutral-500 truncate">Turn on browser notifications</p>
+            <p className="text-xs font-bold text-neutral-900">Allow Notifications</p>
+            <p className="text-[11px] text-neutral-500 truncate">Order status &amp; new offer alerts</p>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
+            data-notif-trigger="true"
             onClick={handleAllow}
             className="px-3.5 py-2 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
           >
@@ -82,6 +81,7 @@ export const AllowNotificationBanner: React.FC = () => {
           </button>
           <button
             type="button"
+            data-notif-trigger="true"
             onClick={handleDismiss}
             aria-label="Close"
             className="p-1.5 text-neutral-400 hover:text-neutral-900 rounded-lg cursor-pointer"

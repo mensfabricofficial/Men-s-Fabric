@@ -263,6 +263,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ onNaviga
 
                   <button
                     type="button"
+                    data-notif-trigger="true"
                     onClick={handleEnablePush}
                     disabled={requesting}
                     className="w-full py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60"

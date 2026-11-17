@@ -619,28 +619,30 @@ export const orderService = {
           snap.forEach((d) => {
             const ord = { id: d.id, ...d.data() } as Order;
             orderMap.set(d.id, ord);
+            cacheOrderRecord(ord);
           });
         } catch (idErr) {
           console.warn('Orders by customerId notice:', idErr);
         }
       }
 
-      // 3. Query Firestore by customerEmail (if still no customerId or guest lookup)
-      if (cleanEmail && (!cleanCustomerId || orderMap.size === 0)) {
+      // 3. Query Firestore by customerEmail (always fetch live updates including guest-to-account orders)
+      if (cleanEmail) {
         try {
           const q = query(collection(db, 'orders'), where('customerEmail', '==', cleanEmail));
           const snap = await getDocs(q);
           snap.forEach((d) => {
             const ord = { id: d.id, ...d.data() } as Order;
             orderMap.set(d.id, ord);
+            cacheOrderRecord(ord);
           });
         } catch (mailErr) {
           console.warn('Orders by email notice:', mailErr);
         }
       }
 
-      // 4. Query Firestore by customerPhone (exact 10 digits match)
-      if (cleanPhoneDigits && cleanPhoneDigits.length >= 10 && (!cleanCustomerId || orderMap.size === 0)) {
+      // 4. Query Firestore by customerPhone (always fetch live updates)
+      if (cleanPhoneDigits && cleanPhoneDigits.length >= 10) {
         try {
           const phoneVariants = [
             cleanPhoneDigits,
@@ -654,6 +656,7 @@ export const orderService = {
             snap.forEach((d) => {
               const ord = { id: d.id, ...d.data() } as Order;
               orderMap.set(d.id, ord);
+              cacheOrderRecord(ord);
             });
           }
         } catch (phoneErr) {
@@ -676,43 +679,25 @@ export const orderService = {
     }
   },
 
-  // Get order by ID or Order Number (Local-first & Firestore resilient)
+  // Get order by ID or Order Number (Live Firestore-first with local fallback)
   async getOrderById(id: string): Promise<Order | null> {
     if (!id) return null;
     const cleanId = id.trim();
     const cleanNum = cleanId.replace(/^[#]/, '').replace(/^MF-/, '').trim();
 
-    // 1. Instant Cache Check
-    const cached = cachedOrdersMap.get(cleanId) ||
-                   cachedOrdersMap.get(cleanNum) ||
-                   cachedOrdersMap.get(`#${cleanNum}`) ||
-                   cachedOrdersMap.get(`MF-${cleanNum}`);
-    if (cached) return cached;
-
-    // 2. Local orders check
-    const localOrders = this.getLocalOrders();
-    const localMatch = localOrders.find((o) => {
-      const oNum = (o.orderNumber || '').replace(/^[#]/, '').replace(/^MF-/, '').trim();
-      return o.id === cleanId || oNum === cleanNum || o.orderNumber === cleanId;
-    });
-    if (localMatch) {
-      cacheOrderRecord(localMatch);
-      return localMatch;
-    }
-
-    // 3. Query Firestore by doc ID
+    // 1. Query Firestore by doc ID (live status)
     try {
       const snap = await getDoc(doc(db, 'orders', cleanId));
       if (snap.exists()) {
         const ord = { id: snap.id, ...snap.data() } as Order;
-        cacheOrderRecord(ord);
+        this.saveLocalOrder(ord);
         return ord;
       }
     } catch {
       // Continue
     }
 
-    // 4. Query Firestore by orderNumber
+    // 2. Query Firestore by orderNumber (live status)
     const searchVariants = [
       cleanId,
       `#${cleanNum}`,
@@ -726,7 +711,7 @@ export const orderService = {
         const snap = await getDocs(q);
         if (!snap.empty) {
           const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
-          cacheOrderRecord(ord);
+          this.saveLocalOrder(ord);
           return ord;
         }
       } catch {
@@ -734,10 +719,27 @@ export const orderService = {
       }
     }
 
+    // 3. Offline / local fallback
+    const cached = cachedOrdersMap.get(cleanId) ||
+                   cachedOrdersMap.get(cleanNum) ||
+                   cachedOrdersMap.get(`#${cleanNum}`) ||
+                   cachedOrdersMap.get(`MF-${cleanNum}`);
+    if (cached) return cached;
+
+    const localOrders = this.getLocalOrders();
+    const localMatch = localOrders.find((o) => {
+      const oNum = (o.orderNumber || '').replace(/^[#]/, '').replace(/^MF-/, '').trim();
+      return o.id === cleanId || oNum === cleanNum || o.orderNumber === cleanId;
+    });
+    if (localMatch) {
+      cacheOrderRecord(localMatch);
+      return localMatch;
+    }
+
     return null;
   },
 
-  // Track order by Order Number and/or Phone Number (Strict identity isolation - never leaks other orders)
+  // Track order by Order Number and/or Phone Number (Live Firestore-first with local fallback)
   async trackOrder(orderQuery: string, phoneQuery?: string): Promise<Order | null> {
     try {
       const rawOrder = (orderQuery || '').trim();
@@ -785,35 +787,14 @@ export const orderService = {
         return false;
       };
 
-      // 0. Instant in-memory cache check when searching by Order Number / ID
-      if (cleanOrderNumber && !cleanPhoneDigits) {
-        const cached =
-          cachedOrdersMap.get(rawOrder) ||
-          cachedOrdersMap.get(rawOrder.toUpperCase()) ||
-          cachedOrdersMap.get(cleanOrderNumber) ||
-          cachedOrdersMap.get(`#${cleanOrderNumber}`) ||
-          cachedOrdersMap.get(`MF-${cleanOrderNumber}`);
-        if (cached && isOrderMatch(cached)) {
-          return cached;
-        }
-      }
-
-      // 1. Check in local storage
-      const localOrders = this.getLocalOrders();
-      const localMatch = localOrders.find(isOrderMatch);
-      if (localMatch) {
-        cacheOrderRecord(localMatch);
-        return localMatch;
-      }
-
-      // 2. Direct Firestore Doc ID query
+      // 1. Direct Firestore Doc ID query (live remote data)
       if (rawOrder && !rawOrder.startsWith('#')) {
         try {
           const docSnap = await getDoc(doc(db, 'orders', rawOrder));
           if (docSnap.exists()) {
             const ord = { id: docSnap.id, ...docSnap.data() } as Order;
             if (isOrderMatch(ord)) {
-              cacheOrderRecord(ord);
+              this.saveLocalOrder(ord);
               return ord;
             }
           }
@@ -822,15 +803,17 @@ export const orderService = {
         }
       }
 
-      // 3. Query Firestore by orderNumber variations
+      // 2. Query Firestore by orderNumber variations (live remote data)
       if (cleanOrderNumber) {
-        const variants = [
-          `#${cleanOrderNumber}`,
-          cleanOrderNumber,
-          `MF-${cleanOrderNumber}`,
-          `#${cleanDigits}`,
-          `MF-${cleanDigits}`,
-        ].filter(Boolean);
+        const variants = Array.from(
+          new Set([
+            `#${cleanOrderNumber}`,
+            cleanOrderNumber,
+            `MF-${cleanOrderNumber}`,
+            cleanDigits ? `#${cleanDigits}` : '',
+            cleanDigits ? `MF-${cleanDigits}` : '',
+          ].filter(Boolean))
+        );
 
         for (const variant of variants) {
           try {
@@ -839,7 +822,7 @@ export const orderService = {
             for (const d of snap.docs) {
               const ord = { id: d.id, ...d.data() } as Order;
               if (isOrderMatch(ord)) {
-                cacheOrderRecord(ord);
+                this.saveLocalOrder(ord);
                 return ord;
               }
             }
@@ -849,7 +832,7 @@ export const orderService = {
         }
       }
 
-      // 4. Query Firestore by customerPhone (exact 10 digits match)
+      // 3. Query Firestore by customerPhone (live remote data)
       if (cleanPhoneDigits) {
         const phoneVariants = [
           cleanPhoneDigits,
@@ -865,13 +848,33 @@ export const orderService = {
             for (const d of snap.docs) {
               const ord = { id: d.id, ...d.data() } as Order;
               if (isOrderMatch(ord)) {
-                cacheOrderRecord(ord);
+                this.saveLocalOrder(ord);
                 return ord;
               }
             }
           } catch {
             // Continue
           }
+        }
+      }
+
+      // 4. Local storage & memory fallback (if offline / unpersisted local order)
+      const localOrders = this.getLocalOrders();
+      const localMatch = localOrders.find(isOrderMatch);
+      if (localMatch) {
+        cacheOrderRecord(localMatch);
+        return localMatch;
+      }
+
+      if (cleanOrderNumber && !cleanPhoneDigits) {
+        const cached =
+          cachedOrdersMap.get(rawOrder) ||
+          cachedOrdersMap.get(rawOrder.toUpperCase()) ||
+          cachedOrdersMap.get(cleanOrderNumber) ||
+          cachedOrdersMap.get(`#${cleanOrderNumber}`) ||
+          cachedOrdersMap.get(`MF-${cleanOrderNumber}`);
+        if (cached && isOrderMatch(cached)) {
+          return cached;
         }
       }
 

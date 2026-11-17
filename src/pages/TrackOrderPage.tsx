@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Check, ShieldAlert, FileText, BellRing } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Search, Check, ShieldAlert, FileText, BellRing, RefreshCw } from 'lucide-react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Order, OrderStatus } from '../types';
 import { orderService } from '../services/orderService';
 import { useAuth } from '../context/AuthContext';
@@ -35,7 +37,7 @@ const formatDate = (ts: any): string => {
 
 export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) => {
   const { currentUser } = useAuth();
-  const { permission, requestMobileAlerts } = useNotifications();
+  const { allNotificationsActive, enableAllNotificationsOneClick } = useNotifications();
   const [orderNumber, setOrderNumber] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
@@ -43,7 +45,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
   const [error, setError] = useState('');
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
 
-  const performTrack = async (num: string, fallbackId?: string) => {
+  const performTrack = useCallback(async (num: string, fallbackId?: string) => {
     const targetNum = (num || '').trim();
     const targetId = (fallbackId || '').trim();
     if (!targetNum && !targetId) return;
@@ -67,7 +69,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const url = new URL(window.location.origin + currentRoute);
@@ -84,18 +86,65 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
       if (resolvedNum) setOrderNumber(resolvedNum);
       performTrack(resolvedNum, paramId);
     }
-  }, [currentRoute]);
+  }, [currentRoute, performTrack]);
 
+  // Load recent orders (for signed-in user or local device history)
   useEffect(() => {
-    if (!currentUser) {
-      setRecentOrders([]);
-      return;
-    }
-    orderService
-      .getCustomerOrders(currentUser.uid, currentUser.email || undefined)
-      .then((list) => setRecentOrders(list.slice(0, 4)))
-      .catch(() => setRecentOrders([]));
+    const loadRecent = async () => {
+      if (currentUser) {
+        try {
+          const list = await orderService.getCustomerOrders(currentUser.uid, currentUser.email || undefined);
+          if (list.length > 0) {
+            setRecentOrders(list.slice(0, 4));
+            return;
+          }
+        } catch {
+          // fallback below
+        }
+      }
+      const localList = orderService.getLocalOrders();
+      setRecentOrders(localList.slice(0, 4));
+    };
+    void loadRecent();
   }, [currentUser]);
+
+  // Real-time Firestore + local event listener so tracked order updates live immediately
+  useEffect(() => {
+    const trackedId = order?.id;
+    const trackedNum = order?.orderNumber;
+    if (!trackedId) return;
+
+    const unsub = onSnapshot(
+      doc(db, 'orders', trackedId),
+      (snap) => {
+        if (snap.exists()) {
+          const liveOrder = { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
+          orderService.saveLocalOrder(liveOrder);
+          setOrder(liveOrder);
+        }
+      },
+      () => {
+        // Silently rely on manual refresh / local updates if offline
+      }
+    );
+
+    const handleLocalUpdate = (e: Event) => {
+      const updated = (e as CustomEvent<Order>).detail;
+      if (
+        updated &&
+        ((trackedId && updated.id === trackedId) ||
+          (trackedNum && updated.orderNumber === trackedNum))
+      ) {
+        setOrder(updated);
+      }
+    };
+    window.addEventListener('mf_orders_updated', handleLocalUpdate);
+
+    return () => {
+      unsub();
+      window.removeEventListener('mf_orders_updated', handleLocalUpdate);
+    };
+  }, [order?.id, order?.orderNumber]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -225,32 +274,42 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsInvoiceOpen(true)}
-                className="self-start sm:self-auto px-3.5 py-2 border border-neutral-200 hover:border-neutral-400 text-neutral-800 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <FileText className="w-3.5 h-3.5 text-neutral-500" />
-                <span>Invoice</span>
-              </button>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => performTrack(order.orderNumber, order.id)}
+                  disabled={loading}
+                  title="Refresh live status"
+                  className="px-3 py-2 border border-neutral-200 hover:border-neutral-400 text-neutral-700 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsInvoiceOpen(true)}
+                  className="px-3.5 py-2 border border-neutral-200 hover:border-neutral-400 text-neutral-800 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Invoice</span>
+                </button>
+              </div>
             </div>
 
-            {permission !== 'granted' && (
+            {!allNotificationsActive && (
               <div className="px-5 sm:px-7 py-3.5 bg-neutral-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2.5 text-neutral-700">
                   <BellRing className="w-4 h-4 text-neutral-900 shrink-0" />
-                  <span>Turn on mobile alerts to get notified automatically when this order moves or ships.</span>
+                  <span>Turn on alerts with 1 click to get notified automatically when this order updates.</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  {permission === 'default' && (
-                    <button
-                      type="button"
-                      onClick={() => requestMobileAlerts()}
-                      className="px-3 py-1.5 bg-neutral-900 text-white text-[11px] font-semibold rounded-md hover:bg-black transition-colors cursor-pointer"
-                    >
-                      Enable Mobile Alerts
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => enableAllNotificationsOneClick()}
+                    className="px-3 py-1.5 bg-neutral-900 text-white text-[11px] font-semibold rounded-md hover:bg-black transition-colors cursor-pointer"
+                  >
+                    Turn On Notifications (1-Click)
+                  </button>
                   <PWAInstallButton compact />
                 </div>
               </div>

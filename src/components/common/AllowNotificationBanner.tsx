@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { BellRing, X } from 'lucide-react';
+import { Bell, X } from 'lucide-react';
 import { useNotifications } from '../../context/NotificationContext';
 
-const DISMISS_SESSION_KEY = 'selvee_notif_banner_dismissed_v1';
+const PROMPT_HANDLED_KEY = 'selvee_notif_prompt_handled_v1';
 
 export const AllowNotificationBanner: React.FC = () => {
   const {
     permission,
-    allNotificationsActive,
     enableAllNotificationsOneClick,
     customerVerificationBlockReason,
     isDrawerOpen,
@@ -15,16 +14,15 @@ export const AllowNotificationBanner: React.FC = () => {
 
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem(DISMISS_SESSION_KEY) === '1';
+      return localStorage.getItem(PROMPT_HANDLED_KEY) === '1';
     } catch {
       return false;
     }
   });
   const [visible, setVisible] = useState(false);
-  const [requesting, setRequesting] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setVisible(true), 300);
+    const timer = window.setTimeout(() => setVisible(true), 250);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -32,31 +30,25 @@ export const AllowNotificationBanner: React.FC = () => {
     !visible ||
     dismissed ||
     isDrawerOpen ||
-    allNotificationsActive ||
-    customerVerificationBlockReason === 'unverified_email' ||
-    permission === 'denied'
+    permission !== 'default' ||
+    customerVerificationBlockReason === 'unverified_email'
   ) {
     return null;
   }
 
   const handleAllow = async () => {
-    setRequesting(true);
     try {
-      await enableAllNotificationsOneClick();
-      try {
-        sessionStorage.setItem(DISMISS_SESSION_KEY, '1');
-      } catch {
-        // ignore
-      }
-      setDismissed(true);
-    } finally {
-      setRequesting(false);
+      localStorage.setItem(PROMPT_HANDLED_KEY, '1');
+    } catch {
+      // ignore
     }
+    setDismissed(true);
+    await enableAllNotificationsOneClick();
   };
 
   const handleDismiss = () => {
     try {
-      sessionStorage.setItem(DISMISS_SESSION_KEY, '1');
+      localStorage.setItem(PROMPT_HANDLED_KEY, '1');
     } catch {
       // ignore
     }
@@ -67,48 +59,35 @@ export const AllowNotificationBanner: React.FC = () => {
     <div
       role="dialog"
       aria-label="Allow Notifications"
-      className="fixed bottom-20 md:bottom-5 right-4 left-4 sm:left-auto sm:w-[375px] z-40 animate-fade-in"
+      className="fixed bottom-20 md:bottom-5 right-4 left-4 sm:left-auto sm:w-[350px] z-40 animate-fade-in"
     >
-      <div className="bg-white border border-neutral-200 rounded-2xl shadow-2xl p-4 flex items-start gap-3">
-        <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center shrink-0 mt-0.5">
-          <BellRing className="w-5 h-5" />
+      <div className="bg-white border border-neutral-200 rounded-xl shadow-xl p-3.5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center shrink-0">
+            <Bell className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-neutral-900">Get Order &amp; Offer Alerts</p>
+            <p className="text-[11px] text-neutral-500 truncate">Turn on browser notifications</p>
+          </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
-              Allow Notifications
-            </h3>
-            <button
-              type="button"
-              onClick={handleDismiss}
-              aria-label="Dismiss notification prompt"
-              className="p-0.5 text-neutral-400 hover:text-neutral-900 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-[11px] text-neutral-600 mt-1 leading-relaxed">
-            Turn on mobile alerts for live order status updates, exclusive offers, and flash discounts.
-          </p>
-
-          <div className="flex items-center gap-2 mt-3">
-            <button
-              type="button"
-              onClick={handleAllow}
-              disabled={requesting}
-              className="px-4 py-2 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60"
-            >
-              {requesting ? 'Requesting...' : 'Allow Notifications'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDismiss}
-              className="px-3 py-2 text-[11px] font-medium text-neutral-600 hover:text-black rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-            >
-              Later
-            </button>
-          </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={handleAllow}
+            className="px-3.5 py-2 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+          >
+            Allow
+          </button>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            aria-label="Close"
+            className="p-1.5 text-neutral-400 hover:text-neutral-900 rounded-lg cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>

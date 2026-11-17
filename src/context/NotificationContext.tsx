@@ -401,11 +401,6 @@ export const NotificationProvider: React.FC<{
 
     if (knownIdsRef.current === null) {
       knownIdsRef.current = new Set(customerNotifications.map((n) => n.id));
-      // Also push any very recent (< 3 min old) unread notification not pushed yet
-      const newest = customerNotifications[0];
-      if (newest && !readIds.has(newest.id) && Date.now() - (newest.createdAtMs || 0) < 3 * 60 * 1000) {
-        triggerNativeMobileNotification(newest);
-      }
       return;
     }
 
@@ -416,10 +411,7 @@ export const NotificationProvider: React.FC<{
       if (topNotif && !readIds.has(topNotif.id)) {
         showInAppToast(topNotif);
         triggerNativeMobileNotification(topNotif);
-        if (
-          !isMuted &&
-          ((topNotif.type === 'admin_new_order' && isApprovedAdminDevice) || inAppAlertsActive)
-        ) {
+        if (!isMuted && topNotif.type === 'admin_new_order' && isApprovedAdminDevice) {
           playOrderAlertChime();
         }
       }
@@ -431,7 +423,6 @@ export const NotificationProvider: React.FC<{
     isApprovedAdminDevice,
     isMuted,
     isWaitingProfile,
-    inAppAlertsActive,
   ]);
 
   const unreadCount = customerNotifications.filter((n) => !readIds.has(n.id)).length;
@@ -440,12 +431,14 @@ export const NotificationProvider: React.FC<{
     granted: boolean;
     inAppActive: boolean;
   }> => {
-    // 1. If verified customer is signed in, authorize this PC/Mobile device immediately
-    if (currentUser?.emailVerified) {
-      await enableCurrentDeviceForVerifiedUser();
-    }
+    // 1. Trigger native browser permission SYNCHRONOUSLY while click gesture is active (no prior await!)
+    const currentPerm = getBrowserNotificationPermission();
+    const permPromise =
+      currentPerm === 'default'
+        ? requestMobileNotificationPermission()
+        : Promise.resolve(currentPerm);
 
-    // 2. Unmute and enable persistent in-app + live alerts immediately
+    // 2. Unmute and enable locally immediately
     setNotificationsMuted(false);
     setIsMuted(false);
     setInAppAlertsActive(true);
@@ -455,61 +448,20 @@ export const NotificationProvider: React.FC<{
       // ignore
     }
 
-    // 3. Request native browser/OS notification permission (works on both PC & Mobile)
-    let res = permission;
-    if (res === 'default') {
-      res = await requestMobileNotificationPermission();
-      setPermission(res);
-    }
+    const res = await permPromise;
+    setPermission(res);
 
-    // 4. Fire immediate confirmation feedback across both PC & Mobile
-    const welcomeNotif: AppNotification = {
-      id: `welcome-alerts-${Date.now().toString(36)}`,
-      type: 'announcement',
-      title: isApprovedAdminDevice
-        ? 'Admin Order & Device Alerts Active'
-        : 'All Notifications Enabled',
-      message: isApprovedAdminDevice
-        ? 'Order alerts, payment alerts & admin notifications are now active on this device.'
-        : 'Order updates, payment alerts, offers & promo codes are now active on this device.',
-      audience: isApprovedAdminDevice ? 'authorized_devices' : 'customer',
-      targetUid: currentUser?.uid || undefined,
-      targetEmail: currentUser?.email || undefined,
-      targetPhone: customerProfile?.phone || undefined,
-      targetOrderNumber: localOrders[0]?.orderNumber || undefined,
-      actionUrl: isApprovedAdminDevice ? '/admin?tab=orders' : '/shop',
-      important: false,
-      createdAt: new Date().toISOString(),
-      createdAtMs: Date.now(),
-    };
-
-    showInAppToast(welcomeNotif);
-    playOrderAlertChime();
-
-    if (res === 'granted') {
-      const published = await notificationService.publishNotification({
-        id: welcomeNotif.id,
-        type: welcomeNotif.type,
-        title: welcomeNotif.title,
-        message: welcomeNotif.message,
-        audience: welcomeNotif.audience,
-        targetUid: welcomeNotif.targetUid,
-        targetEmail: welcomeNotif.targetEmail,
-        targetPhone: welcomeNotif.targetPhone,
-        targetOrderNumber: welcomeNotif.targetOrderNumber,
-        actionUrl: welcomeNotif.actionUrl,
-        important: false,
-        createdBy: 'system',
-      });
-      await triggerNativeMobileNotification(published);
+    // 3. Bind verified customer device in background (never blocks browser prompt)
+    if (currentUser?.emailVerified) {
+      enableCurrentDeviceForVerifiedUser().catch(() => {});
     }
 
     return { granted: res === 'granted', inAppActive: true };
   };
 
   const requestMobileAlerts = async () => {
-    await enableAllNotificationsOneClick();
-    return getBrowserNotificationPermission();
+    const result = await enableAllNotificationsOneClick();
+    return result.granted ? 'granted' : getBrowserNotificationPermission();
   };
 
   const toggleMute = () => {

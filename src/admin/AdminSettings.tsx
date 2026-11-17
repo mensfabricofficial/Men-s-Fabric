@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Megaphone,
   Bell,
+  BellRing,
   Eye,
   EyeOff,
   Check,
@@ -32,11 +33,13 @@ import { adminDeviceService, AdminDevice, DEFAULT_ADMIN_ACCESS_KEY } from '../se
 import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 import { firebaseConfig, ADMIN_CONFIG } from '../lib/firebaseConfig';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const AdminSettings: React.FC = () => {
   const { currentUser } = useAuth();
+  const { permission: notifPermission, requestMobileAlerts, sendTestAdminOrderAlert } = useNotifications();
   const [activeTab, setActiveTab] = useState<'general' | 'sizeguide' | 'apikeys' | 'devices'>('general');
   const [settings, setSettings] = useState<SiteSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
@@ -1114,26 +1117,58 @@ export const AdminSettings: React.FC = () => {
               )}
             </div>
 
-            {/* Current Device Identifier */}
-            <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-950">
-              <div className="flex items-center gap-2.5">
-                {adminDeviceService.getDeviceInfo().deviceType === 'Mobile' ? (
-                  <Smartphone className="w-4 h-4 text-emerald-700" />
-                ) : (
-                  <Laptop className="w-4 h-4 text-emerald-700" />
-                )}
-                <div>
-                  <p className="font-bold">
-                    Current Device: <span className="font-mono text-[11px]">{currentDeviceId}</span>
-                  </p>
-                  <p className="text-[11px] text-emerald-800">
-                    {adminDeviceService.getDeviceInfo().deviceName} • Status: Verified Approved
-                  </p>
+            {/* Current Device Identifier & Order Alert Binding */}
+            <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-3 text-xs text-emerald-950">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  {adminDeviceService.getDeviceInfo().deviceType === 'Mobile' ? (
+                    <Smartphone className="w-4 h-4 text-emerald-700" />
+                  ) : (
+                    <Laptop className="w-4 h-4 text-emerald-700" />
+                  )}
+                  <div>
+                    <p className="font-bold">
+                      Current Device: <span className="font-mono text-[11px]">{currentDeviceId}</span>
+                    </p>
+                    <p className="text-[11px] text-emerald-800">
+                      {adminDeviceService.getDeviceInfo().deviceName} • Status: Verified Approved
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded shrink-0">
+                  This Device
+                </span>
+              </div>
+
+              <div className="pt-2.5 border-t border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-start gap-2 text-[11px] text-emerald-900">
+                  <BellRing className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                  <span>
+                    <b>Exclusive Order Alerts:</b> Only approved devices listed here receive instant alerts whenever a customer places a new order.
+                    {notifPermission === 'granted' && ' Browser/mobile push alerts are active on this device.'}
+                    {notifPermission === 'denied' && ' Browser alerts are currently blocked in site settings.'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {notifPermission !== 'granted' && notifPermission !== 'unsupported' && notifPermission !== 'denied' ? (
+                    <button
+                      type="button"
+                      onClick={() => requestMobileAlerts()}
+                      className="px-3 py-1.5 bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg font-bold text-[11px] uppercase tracking-wider cursor-pointer"
+                    >
+                      Enable Order Alerts
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => sendTestAdminOrderAlert()}
+                      className="px-3 py-1.5 bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100 rounded-lg font-bold text-[11px] uppercase tracking-wider cursor-pointer"
+                    >
+                      Test Order Alert
+                    </button>
+                  )}
                 </div>
               </div>
-              <span className="text-[10px] font-bold uppercase bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
-                This Device
-              </span>
             </div>
 
             {/* Pending Approval Requests */}

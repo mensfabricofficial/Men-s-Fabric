@@ -2,10 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { WishlistProvider } from './context/WishlistContext';
+import { NotificationProvider } from './context/NotificationContext';
 
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { CartDrawer } from './components/cart/CartDrawer';
+import { NotificationDrawer } from './components/common/NotificationDrawer';
+import { AllowNotificationBanner } from './components/common/AllowNotificationBanner';
+import { OfflineIndicator } from './components/common/PWAInstallButton';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { BrandLogo } from './components/common/BrandLogo';
 
@@ -30,6 +34,7 @@ import { AdminOrders } from './admin/AdminOrders';
 import { AdminCoupons } from './admin/AdminCoupons';
 import { AdminDelivery } from './admin/AdminDelivery';
 import { AdminBanners } from './admin/AdminBanners';
+import { AdminNotifications } from './admin/AdminNotifications';
 import { AdminCustomers } from './admin/AdminCustomers';
 import { AdminReviews } from './admin/AdminReviews';
 import { AdminSettings } from './admin/AdminSettings';
@@ -41,12 +46,50 @@ const AppContent: React.FC = () => {
   const [currentRoute, setCurrentRoute] = useState<string>(window.location.pathname + window.location.search);
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
+  const validAdminTabs: AdminTab[] = [
+    'dashboard',
+    'products',
+    'categories',
+    'orders',
+    'customers',
+    'reviews',
+    'coupons',
+    'delivery',
+    'banners',
+    'notifications',
+    'settings',
+    'admins',
+    'audit',
+  ];
+
+  useEffect(() => {
+    if (currentRoute.startsWith('/admin')) {
+      const search = currentRoute.includes('?') ? currentRoute.split('?')[1] : '';
+      const tabParam = new URLSearchParams(search).get('tab') as AdminTab | null;
+      if (tabParam && validAdminTabs.includes(tabParam)) {
+        setAdminTab(tabParam);
+      }
+    }
+  }, [currentRoute]);
+
   useEffect(() => {
     const handlePopState = () => {
       setCurrentRoute(window.location.pathname + window.location.search);
     };
+    const handleCustomNavigate = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail) {
+        window.history.pushState({}, '', detail);
+        setCurrentRoute(detail);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('selvee_navigate', handleCustomNavigate);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('selvee_navigate', handleCustomNavigate);
+    };
   }, []);
 
   const navigate = (route: string) => {
@@ -85,12 +128,14 @@ const AppContent: React.FC = () => {
           {adminTab === 'coupons' && <AdminCoupons />}
           {adminTab === 'delivery' && <AdminDelivery />}
           {adminTab === 'banners' && <AdminBanners />}
+          {adminTab === 'notifications' && <AdminNotifications />}
           {adminTab === 'customers' && <AdminCustomers />}
           {adminTab === 'reviews' && <AdminReviews />}
           {adminTab === 'settings' && <AdminSettings />}
           {adminTab === 'admins' && <AdminAdmins />}
           {adminTab === 'audit' && <AdminAudit />}
         </AdminLayout>
+        <NotificationDrawer onNavigate={navigate} />
       </AdminDeviceGate>
     );
   }
@@ -181,6 +226,9 @@ const AppContent: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-white text-neutral-900 selection:bg-black selection:text-white">
       <Header currentRoute={currentRoute} onNavigate={navigate} />
       <CartDrawer onNavigate={navigate} />
+      <NotificationDrawer onNavigate={navigate} />
+      <AllowNotificationBanner />
+      <OfflineIndicator />
       <main className="flex-1 pb-20 md:pb-0">
         {PageComponent}
       </main>
@@ -195,7 +243,9 @@ export default function App() {
     <AuthProvider>
       <CartProvider>
         <WishlistProvider>
-          <AppContent />
+          <NotificationProvider>
+            <AppContent />
+          </NotificationProvider>
         </WishlistProvider>
       </CartProvider>
     </AuthProvider>

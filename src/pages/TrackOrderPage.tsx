@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Check, ShieldAlert, FileText } from 'lucide-react';
+import { Search, Check, ShieldAlert, FileText, BellRing } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { orderService } from '../services/orderService';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { FloatingInput } from '../components/common/FloatingInput';
+import { PWAInstallButton } from '../components/common/PWAInstallButton';
 
 interface TrackOrderPageProps {
   currentRoute: string;
@@ -33,6 +35,7 @@ const formatDate = (ts: any): string => {
 
 export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) => {
   const { currentUser } = useAuth();
+  const { permission, requestMobileAlerts } = useNotifications();
   const [orderNumber, setOrderNumber] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
@@ -232,6 +235,27 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
               </button>
             </div>
 
+            {permission !== 'granted' && (
+              <div className="px-5 sm:px-7 py-3.5 bg-neutral-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5 text-neutral-700">
+                  <BellRing className="w-4 h-4 text-neutral-900 shrink-0" />
+                  <span>Turn on mobile alerts to get notified automatically when this order moves or ships.</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {permission === 'default' && (
+                    <button
+                      type="button"
+                      onClick={() => requestMobileAlerts()}
+                      className="px-3 py-1.5 bg-neutral-900 text-white text-[11px] font-semibold rounded-md hover:bg-black transition-colors cursor-pointer"
+                    >
+                      Enable Mobile Alerts
+                    </button>
+                  )}
+                  <PWAInstallButton compact />
+                </div>
+              </div>
+            )}
+
             {/* Minimal Progress Stepper */}
             <div className="p-5 sm:p-7">
               {order.orderStatus === 'cancelled' || order.orderStatus === 'returned' ? (
@@ -369,7 +393,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
                       <img
                         src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={item.productName}
-                        className="w-10 h-12 object-cover rounded bg-neutral-50 border border-neutral-200/70 shrink-0"
+                        className="w-12 h-12 aspect-square object-cover object-center rounded-md bg-neutral-50 border border-neutral-200/70 shrink-0"
                       />
                       <div className="min-w-0">
                         <p className="font-medium text-neutral-900 truncate">{item.productName}</p>

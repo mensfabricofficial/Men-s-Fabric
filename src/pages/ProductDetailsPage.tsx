@@ -9,8 +9,7 @@ import {
   Star, 
   Ruler, 
   ChevronRight, 
-  ChevronDown, 
-  ChevronUp,
+  ChevronLeft,
   Plus,
   Minus,
   Share2,
@@ -54,9 +53,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
   const [activeGuideCatId, setActiveGuideCatId] = useState<string>('panjabi');
   
-  // Accordion states
-  const [activeTab, setActiveTab] = useState<'desc' | 'specs' | 'delivery' | 'reviews'>('desc');
-  const [mobileOpenAccordion, setMobileOpenAccordion] = useState<'desc' | 'specs' | 'delivery' | 'reviews' | null>(null);
+  // Accordion state (unified mobile & desktop hairline accordion)
+  const [openAccordion, setOpenAccordion] = useState<'desc' | 'specs' | 'delivery' | 'reviews' | null>('desc');
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
   // Review submission state
@@ -211,6 +209,23 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const isWishlisted = isInWishlist(product.id);
   const isOutOfStock = availableStock <= 0;
 
+  const galleryImages =
+    product.images && product.images.length > 0
+      ? product.images
+      : [product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg'];
+  const foundImgIndex = galleryImages.indexOf(selectedImage);
+  const activeImageIndex = foundImgIndex >= 0 ? foundImgIndex : 0;
+
+  const handlePrevImage = () => {
+    const nextIdx = (activeImageIndex - 1 + galleryImages.length) % galleryImages.length;
+    setSelectedImage(galleryImages[nextIdx]);
+  };
+
+  const handleNextImage = () => {
+    const nextIdx = (activeImageIndex + 1) % galleryImages.length;
+    setSelectedImage(galleryImages[nextIdx]);
+  };
+
   const handleAddToCart = (redirect = false) => {
     if (isOutOfStock) return;
     addItem({
@@ -270,37 +285,19 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       </div>
 
       {/* Main Details Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 mb-16">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start mb-16">
         
-        {/* Left: Image Gallery (7 cols on lg) */}
-        <div className="lg:col-span-7 flex flex-col-reverse md:flex-row gap-4">
-          
-          {/* Thumbnails strip (square like main image) */}
-          {product.images && product.images.length > 1 && (
-            <div className="flex md:flex-col gap-3 overflow-x-auto md:overflow-y-auto shrink-0 pb-2 md:pb-0">
-              {product.images.map((img, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedImage(img)}
-                  className={`w-16 h-16 sm:w-20 sm:h-20 aspect-square rounded-md border overflow-hidden shrink-0 transition-all cursor-pointer bg-neutral-100 ${
-                    selectedImage === img ? 'border-black ring-1 ring-black' : 'border-neutral-200 opacity-75 hover:opacity-100'
-                  }`}
-                >
-                  <img src={img} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover object-center" />
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Main Display Image */}
-          <div className="relative flex-1 aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200">
+        {/* Left: Perfect-Sized Square Image Showcase + Frosted Arrows + Premium Gliding Progress Bar */}
+        <div className="lg:col-span-6 space-y-4">
+          <div className="relative w-full aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200/80">
             <img
-              src={selectedImage || product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+              src={galleryImages[activeImageIndex] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
               alt={product.name}
               decoding="async"
               fetchPriority="high"
               className="w-full h-full object-cover object-center transition-opacity duration-200"
             />
+
             {/* Badges */}
             {isSale && (
               <div className="absolute top-4 left-4 z-10">
@@ -309,11 +306,59 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 </span>
               </div>
             )}
+
+            {/* Frosted Circular Carousel Navigation Arrows */}
+            {galleryImages.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePrevImage}
+                  aria-label="Previous image"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-neutral-900/25 hover:bg-neutral-900/45 border border-white/80 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
+                >
+                  <ChevronLeft className="w-5 h-5" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextImage}
+                  aria-label="Next image"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-neutral-900/25 hover:bg-neutral-900/45 border border-white/80 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
+                >
+                  <ChevronRight className="w-5 h-5" strokeWidth={1.8} />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Premium Counter & Outlined Pill Progress Bar */}
+          <div className="flex items-center justify-center gap-3.5 pt-1">
+            <span className="text-xs sm:text-[13px] font-medium tracking-wide text-neutral-900 tabular-nums">
+              {activeImageIndex + 1} / {galleryImages.length}
+            </span>
+            <div className="relative w-48 sm:w-60 h-[8px] rounded-full border border-neutral-800/80 bg-white overflow-hidden">
+              <div
+                className="h-full bg-neutral-950 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: `${((activeImageIndex + 1) / galleryImages.length) * 100}%`,
+                }}
+              />
+              <div className="absolute inset-0 flex">
+                {galleryImages.map((img, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSelectedImage(img)}
+                    aria-label={`View image ${idx + 1}`}
+                    className="flex-1 h-full cursor-pointer"
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Right: Product Actions & Specs (5 cols on lg) */}
-        <div className="lg:col-span-5 flex flex-col justify-between space-y-6">
+        {/* Right: Product Actions & Specs */}
+        <div className="lg:col-span-6 flex flex-col justify-between space-y-6">
           
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs text-neutral-400 font-semibold tracking-wider uppercase">
@@ -327,20 +372,19 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
             {/* Price section with Red Discount Badge beside prices */}
             <div className="flex items-center flex-wrap gap-3 pt-1">
-              <span className="text-2xl sm:text-3xl font-bold text-neutral-900">
-                ৳{currentPrice.toLocaleString('en-BD')}
+              <span className="text-2xl sm:text-3xl font-bold text-neutral-900 tabular-nums">
+                BDT {currentPrice.toLocaleString('en-BD')}
               </span>
               {isSale && (
                 <>
-                  <span className="text-base text-neutral-400 line-through font-normal">
-                    ৳{product.price.toLocaleString('en-BD')}
+                  <span className="text-base text-neutral-400 line-through font-normal tabular-nums">
+                    BDT {product.price.toLocaleString('en-BD')}
                   </span>
                   <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
                     -{discountPercent}% OFF
                   </span>
                 </>
               )}
-              <span className="text-[11px] text-neutral-500 font-medium">VAT Included</span>
             </div>
 
             {/* Stock indicator */}
@@ -494,258 +538,91 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
       </div>
 
-      {/* Tabs & Additional Details Section */}
-      <div className="mb-16">
-        {/* Mobile View: Clean Stacked Hairline Accordion */}
-        <div className="md:hidden border-b border-neutral-200">
-          {[
-            {
-              id: 'desc' as const,
-              label: 'Description',
-              content: (
-                <p className="whitespace-pre-line text-xs text-neutral-700 leading-relaxed">
-                  {product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}
-                </p>
-              ),
-            },
-            {
-              id: 'specs' as const,
-              label: 'Fabric & Specifications',
-              content: (
-                <div className="divide-y divide-neutral-100 text-xs">
-                  <div className="py-2.5 flex justify-between gap-4">
-                    <span className="font-medium text-neutral-500">Fabric / Composition</span>
-                    <span className="font-semibold text-neutral-900 text-right">{product.fabric || '100% Premium Cotton'}</span>
-                  </div>
-                  <div className="py-2.5 flex justify-between gap-4">
-                    <span className="font-medium text-neutral-500">Gender / Fit</span>
-                    <span className="font-semibold text-neutral-900 capitalize text-right">{product.gender}</span>
-                  </div>
-                  <div className="py-2.5 flex justify-between gap-4">
-                    <span className="font-medium text-neutral-500">Care Instructions</span>
-                    <span className="font-semibold text-neutral-900 text-right">Machine wash cold with like colors; iron warm.</span>
-                  </div>
+      {/* Unified Stacked Hairline Accordion (Mobile & Desktop) */}
+      <div className="mb-16 border-b border-neutral-200">
+        {[
+          {
+            id: 'desc' as const,
+            label: 'Description',
+            content: (
+              <p className="whitespace-pre-line text-xs sm:text-sm text-neutral-600 leading-relaxed">
+                {product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}
+              </p>
+            ),
+          },
+          {
+            id: 'specs' as const,
+            label: 'Fabric & Specifications',
+            content: (
+              <div className="w-full divide-y divide-neutral-100 text-xs sm:text-sm">
+                <div className="py-3 flex justify-between gap-6">
+                  <span className="font-medium text-neutral-500">Fabric / Composition</span>
+                  <span className="font-semibold text-neutral-900 text-right">{product.fabric || '100% Premium Cotton'}</span>
                 </div>
-              ),
-            },
-            {
-              id: 'delivery' as const,
-              label: 'Delivery & Returns',
-              content: (
-                <div className="space-y-2.5 text-xs text-neutral-700 leading-relaxed">
-                  <p><b>Inside Dhaka:</b> ৳70 (Delivered within 24–48 hours)</p>
-                  <p><b>Outside Dhaka:</b> ৳130 (Delivered via courier within 2–4 business days)</p>
-                  <p><b>Exchange Policy:</b> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
-                  <p><b>Payment:</b> Cash on Delivery available nationwide. You may inspect the seal before accepting delivery.</p>
+                <div className="py-3 flex justify-between gap-6">
+                  <span className="font-medium text-neutral-500">Gender / Fit</span>
+                  <span className="font-semibold text-neutral-900 capitalize text-right">{product.gender}</span>
                 </div>
-              ),
-            },
-            {
-              id: 'reviews' as const,
-              label: `Reviews (${reviews.length})`,
-              content: (
-                <div className="space-y-5">
-                  {reviews.length === 0 ? (
-                    <p className="text-xs text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {reviews.map((r) => (
-                        <div key={r.id} className="p-3.5 bg-neutral-50 rounded-lg space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-xs text-neutral-900">{r.customerName}</span>
-                            <div className="flex text-amber-400">
-                              {Array.from({ length: 5 }).map((_, i) => (
-                                <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
-                              ))}
-                            </div>
-                          </div>
-                          <p className="text-xs text-neutral-600">{r.comment}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Submit Review Form */}
-                  <div className="border-t border-neutral-200 pt-4">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Write a Customer Review</h4>
-                    {reviewSuccess ? (
-                      <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded">
-                        Thank you! Your review has been submitted and will appear upon moderation.
-                      </div>
-                    ) : (
-                      <form onSubmit={handleReviewSubmit} className="space-y-3">
-                        {reviewError && (
-                          <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
-                            {reviewError}
-                          </div>
-                        )}
-                        <div>
-                          <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
-                          <div className="flex gap-1">
-                            {[1, 2, 3, 4, 5].map((num) => (
-                              <button
-                                key={num}
-                                type="button"
-                                onClick={() => setReviewRating(num)}
-                                className="p-1 cursor-pointer text-amber-400"
-                              >
-                                <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <FloatingInput
-                          compact
-                          label="Your Name (Optional)"
-                          type="text"
-                          value={reviewAuthor}
-                          onChange={(e) => setReviewAuthor(e.target.value)}
-                        />
-                        <FloatingTextarea
-                          label="Write your review *"
-                          required
-                          rows={3}
-                          value={reviewComment}
-                          onChange={(e) => setReviewComment(e.target.value)}
-                          placeholder="Share your experience regarding the fabric, fit, and finish..."
-                        />
-                        <button
-                          type="submit"
-                          disabled={reviewSubmitting}
-                          className="w-full py-2.5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
-                        >
-                          {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
-                        </button>
-                      </form>
-                    )}
-                  </div>
-                </div>
-              ),
-            },
-          ].map((section) => {
-            const isOpen = mobileOpenAccordion === section.id;
-            return (
-              <div key={section.id} className="border-t border-neutral-200">
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  onClick={() => setMobileOpenAccordion(isOpen ? null : section.id)}
-                  className="w-full py-4 flex items-center justify-between text-left cursor-pointer group"
-                >
-                  <span className="text-sm font-medium text-neutral-900 tracking-tight">
-                    {section.label}
-                  </span>
-                  {isOpen ? (
-                    <Minus className="w-4 h-4 text-neutral-600 shrink-0" strokeWidth={1.75} />
-                  ) : (
-                    <Plus className="w-4 h-4 text-neutral-600 shrink-0" strokeWidth={1.75} />
-                  )}
-                </button>
-                {isOpen && (
-                  <div className="pb-5 animate-fade-in">
-                    {section.content}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Desktop View: Horizontal Tabs */}
-        <div className="hidden md:block border-t border-neutral-200 pt-8">
-          <div className="flex border-b border-neutral-200 gap-6 overflow-x-auto">
-            {[
-              { id: 'desc', label: 'Description' },
-              { id: 'specs', label: 'Fabric & Specifications' },
-              { id: 'delivery', label: 'Delivery & Returns' },
-              { id: 'reviews', label: `Reviews (${reviews.length})` },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`pb-3 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-                  activeTab === tab.id
-                    ? 'border-black text-black'
-                    : 'border-transparent text-neutral-400 hover:text-black'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="py-6 text-sm text-neutral-700 leading-relaxed max-w-3xl">
-            {activeTab === 'desc' && (
-              <div className="space-y-4">
-                <p className="whitespace-pre-line">{product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}</p>
-              </div>
-            )}
-
-            {activeTab === 'specs' && (
-              <div className="divide-y divide-neutral-100 text-xs">
-                <div className="py-2.5 flex justify-between">
-                  <span className="font-semibold text-neutral-500">Fabric / Composition</span>
-                  <span className="font-bold text-neutral-900">{product.fabric || '100% Premium Cotton'}</span>
-                </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="font-semibold text-neutral-500">Gender / Fit</span>
-                  <span className="font-bold text-neutral-900 capitalize">{product.gender}</span>
-                </div>
-                <div className="py-2.5 flex justify-between">
-                  <span className="font-semibold text-neutral-500">Care Instructions</span>
-                  <span className="font-bold text-neutral-900">Machine wash cold with like colors; iron warm.</span>
+                <div className="py-3 flex justify-between gap-6">
+                  <span className="font-medium text-neutral-500">Care Instructions</span>
+                  <span className="font-semibold text-neutral-900 text-right">Machine wash cold with like colors; iron warm.</span>
                 </div>
               </div>
-            )}
-
-            {activeTab === 'delivery' && (
-              <div className="space-y-3 text-xs">
-                <p><b>Inside Dhaka:</b> ৳70 (Delivered within 24–48 hours)</p>
-                <p><b>Outside Dhaka:</b> ৳130 (Delivered via courier within 2–4 business days)</p>
-                <p><b>Exchange Policy:</b> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
-                <p><b>Payment:</b> Cash on Delivery available nationwide. You may inspect the seal before accepting the delivery.</p>
+            ),
+          },
+          {
+            id: 'delivery' as const,
+            label: 'Delivery & Returns',
+            content: (
+              <div className="w-full space-y-2.5 text-xs sm:text-sm text-neutral-600 leading-relaxed">
+                <p><strong className="font-semibold text-neutral-900">Inside Dhaka:</strong> ৳70 (Delivered within 24–48 hours)</p>
+                <p><strong className="font-semibold text-neutral-900">Outside Dhaka:</strong> ৳130 (Delivered via courier within 2–4 business days)</p>
+                <p><strong className="font-semibold text-neutral-900">Exchange Policy:</strong> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
+                <p><strong className="font-semibold text-neutral-900">Payment:</strong> Cash on Delivery available nationwide. You may inspect the seal before accepting delivery.</p>
               </div>
-            )}
-
-            {activeTab === 'reviews' && (
-              <div className="space-y-6">
-                {/* Review list */}
+            ),
+          },
+          {
+            id: 'reviews' as const,
+            label: `Reviews (${reviews.length})`,
+            content: (
+              <div className="w-full space-y-6">
                 {reviews.length === 0 ? (
-                  <p className="text-xs text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
+                  <p className="text-xs sm:text-sm text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     {reviews.map((r) => (
-                      <div key={r.id} className="p-4 bg-neutral-50 rounded-lg space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-xs text-neutral-900">{r.customerName}</span>
+                      <div key={r.id} className="p-4 bg-neutral-50 border border-neutral-100 rounded-lg space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs sm:text-sm text-neutral-900">{r.customerName}</span>
                           <div className="flex text-amber-400">
                             {Array.from({ length: 5 }).map((_, i) => (
                               <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
                             ))}
                           </div>
                         </div>
-                        <p className="text-xs text-neutral-600">{r.comment}</p>
+                        <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">{r.comment}</p>
                       </div>
                     ))}
                   </div>
                 )}
 
                 {/* Submit Review Form */}
-                <div className="border-t border-neutral-200 pt-6">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3">Write a Customer Review</h4>
+                <div className="border-t border-neutral-200 pt-5 max-w-2xl">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3.5">Write a Customer Review</h4>
                   {reviewSuccess ? (
-                    <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded">
+                    <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-lg">
                       Thank you! Your review has been submitted and will appear upon moderation.
                     </div>
                   ) : (
-                    <form onSubmit={handleReviewSubmit} className="space-y-3">
+                    <form onSubmit={handleReviewSubmit} className="space-y-3.5">
                       {reviewError && (
-                        <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded border border-red-200">
+                        <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200">
                           {reviewError}
                         </div>
                       )}
                       <div>
-                        <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">Rating</label>
+                        <label className="block text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-1">Rating</label>
                         <div className="flex gap-1">
                           {[1, 2, 3, 4, 5].map((num) => (
                             <button
@@ -777,7 +654,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                       <button
                         type="submit"
                         disabled={reviewSubmitting}
-                        className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded cursor-pointer hover:bg-neutral-800"
+                        className="w-full sm:w-auto px-6 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-neutral-800"
                       >
                         {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
                       </button>
@@ -785,9 +662,35 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   )}
                 </div>
               </div>
-            )}
-          </div>
-        </div>
+            ),
+          },
+        ].map((section) => {
+          const isOpen = openAccordion === section.id;
+          return (
+            <div key={section.id} className="border-t border-neutral-200">
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setOpenAccordion(isOpen ? null : section.id)}
+                className="w-full py-4 sm:py-5 flex items-center justify-between text-left cursor-pointer group"
+              >
+                <span className="text-sm sm:text-base font-bold text-neutral-900 group-hover:text-black transition-colors">
+                  {section.label}
+                </span>
+                {isOpen ? (
+                  <Minus className="w-4 h-4 text-neutral-700 shrink-0" />
+                ) : (
+                  <Plus className="w-4 h-4 text-neutral-700 shrink-0" />
+                )}
+              </button>
+              {isOpen && (
+                <div className="pb-6 animate-fade-in">
+                  {section.content}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Related Products Section */}

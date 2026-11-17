@@ -264,6 +264,8 @@ export interface CustomerProfile {
   postalCode?: string;
   createdAt: any;
   disabled?: boolean;
+  verifiedDeviceId?: string;
+  emailVerifiedAt?: string;
 }
 
 export interface AuditLog {
@@ -275,3 +277,32 @@ export interface AuditLog {
   details?: string;
   timestamp: any;
 }
+
+export type NotificationType =
+  | 'order_placed'
+  | 'order_status'
+  | 'payment_update'
+  | 'offer'
+  | 'coupon'
+  | 'announcement'
+  | 'admin_new_order';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  audience: 'all' | 'customer' | 'authorized_devices';
+  targetUid?: string;
+  targetEmail?: string;
+  targetPhone?: string;
+  targetOrderNumber?: string;
+  actionUrl?: string;
+  couponCode?: string;
+  important?: boolean;
+  readBy?: string[];
+  createdAt: any;
+  createdAtMs: number;
+  createdBy?: string;
+}
+

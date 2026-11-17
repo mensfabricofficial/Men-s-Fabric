@@ -1049,7 +1049,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       <img
                         src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={item.productName}
-                        className="w-12 h-14 object-cover rounded-lg bg-neutral-100 border border-neutral-200"
+                        className="w-14 h-14 aspect-square object-cover object-center rounded-md bg-neutral-100 border border-neutral-200/80 shrink-0"
                       />
                       <div>
                         <p className="font-semibold text-neutral-900 line-clamp-1">{item.productName}</p>

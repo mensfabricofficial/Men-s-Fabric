@@ -5,6 +5,7 @@ import { db } from '../lib/firebase';
 import { Coupon, CustomerProfile } from '../types';
 import { settingsService } from '../services/settingsService';
 import { orderService } from '../services/orderService';
+import { notificationService } from '../services/notificationService';
 import { useAuth } from '../context/AuthContext';
 
 interface SelectableCustomer {
@@ -37,6 +38,7 @@ export const AdminCoupons: React.FC = () => {
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [autoApply, setAutoApply] = useState<boolean>(true);
   const [active, setActive] = useState(true);
+  const [notifyCustomers, setNotifyCustomers] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const loadSelectableCustomers = async () => {
@@ -127,6 +129,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(true);
     setActive(true);
+    setNotifyCustomers(true);
     setModalOpen(true);
   };
 
@@ -145,6 +148,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(true);
     setActive(true);
+    setNotifyCustomers(true);
     setModalOpen(true);
   };
 
@@ -168,6 +172,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(c.autoApply !== false);
     setActive(c.active);
+    setNotifyCustomers(false);
     setModalOpen(true);
   };
 
@@ -252,7 +257,21 @@ export const AdminCoupons: React.FC = () => {
             pickedCustomer ? `Targeted to ${pickedCustomer.name}` : `Type: ${discountType}`
           );
         }
-        setActionToast(`Coupon "${cleanCode}" created.`);
+        if (active && notifyCustomers) {
+          notificationService
+            .notifyNewCouponOffer({
+              code: cleanCode,
+              discountType,
+              discountAmount: discountType === 'free_delivery' ? 0 : Number(discountAmount) || 0,
+              minOrderAmount: Number(minOrderAmount) || 0,
+              targetCustomerUid: pickedCustomer?.uid && !pickedCustomer.uid.startsWith('guest-') ? pickedCustomer.uid : undefined,
+              targetCustomerEmail: pickedCustomer?.email,
+              targetCustomerPhone: pickedCustomer?.phone,
+              targetCustomerName: pickedCustomer?.name,
+            })
+            .catch(() => {});
+        }
+        setActionToast(`Coupon "${cleanCode}" created${active && notifyCustomers ? ' & customer notified' : ''}.`);
       }
       setModalOpen(false);
       setTimeout(() => setActionToast(null), 3000);
@@ -657,11 +676,25 @@ export const AdminCoupons: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 space-y-2.5">
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-neutral-800">
                   <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-black w-4 h-4" />
                   <span>Coupon Active</span>
                 </label>
+
+                {active && (
+                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={notifyCustomers}
+                      onChange={(e) => setNotifyCustomers(e.target.checked)}
+                      className="accent-black w-4 h-4"
+                    />
+                    <span>
+                      Send Mobile &amp; App Notification {selectedCustomerKey ? 'to Selected Customer' : 'to All Customers'}
+                    </span>
+                  </label>
+                )}
               </div>
 
               <div className="pt-3 flex justify-end gap-2 border-t border-neutral-200">

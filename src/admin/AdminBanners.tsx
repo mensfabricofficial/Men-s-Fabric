@@ -3,6 +3,7 @@ import { Plus, Edit, Trash2, Image as ImageIcon, X, Upload } from 'lucide-react'
 import { Banner } from '../types';
 import { settingsService } from '../services/settingsService';
 import { productService } from '../services/productService';
+import { notificationService } from '../services/notificationService';
 
 export const AdminBanners: React.FC = () => {
   const [banners, setBanners] = useState<Banner[]>([]);
@@ -18,6 +19,7 @@ export const AdminBanners: React.FC = () => {
   const [buttonLink, setButtonLink] = useState('/shop');
   const [sortOrder, setSortOrder] = useState<number>(1);
   const [active, setActive] = useState(true);
+  const [notifyCustomers, setNotifyCustomers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -45,6 +47,7 @@ export const AdminBanners: React.FC = () => {
     setButtonLink('/shop');
     setSortOrder(banners.length + 1);
     setActive(true);
+    setNotifyCustomers(true);
     setModalOpen(true);
   };
 
@@ -58,6 +61,7 @@ export const AdminBanners: React.FC = () => {
     setButtonLink(b.buttonLink);
     setSortOrder(b.sortOrder || 1);
     setActive(b.active);
+    setNotifyCustomers(false);
     setModalOpen(true);
   };
 
@@ -94,6 +98,19 @@ export const AdminBanners: React.FC = () => {
         await settingsService.updateBanner(editingBanner.id, payload);
       } else {
         await settingsService.createBanner(payload);
+      }
+      if (active && notifyCustomers) {
+        notificationService
+          .publishNotification({
+            type: 'offer',
+            title: payload.badge ? `${payload.badge}: ${payload.title}` : payload.title,
+            message: payload.subtitle || 'Check out our latest offer now on Selvee!',
+            audience: 'all',
+            actionUrl: payload.buttonLink || '/shop',
+            important: true,
+            createdBy: 'admin',
+          })
+          .catch(() => {});
       }
       setModalOpen(false);
       await loadBanners();
@@ -269,11 +286,22 @@ export const AdminBanners: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-neutral-800">
                   <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-black w-4 h-4" />
                   <span>Banner Active</span>
                 </label>
+                {active && (
+                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={notifyCustomers}
+                      onChange={(e) => setNotifyCustomers(e.target.checked)}
+                      className="accent-black w-4 h-4"
+                    />
+                    <span>Send Mobile Offer Notification to Customers</span>
+                  </label>
+                )}
               </div>
 
               <div className="pt-3 flex justify-end gap-2 border-t border-neutral-200">

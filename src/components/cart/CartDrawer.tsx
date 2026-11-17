@@ -123,7 +123,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                         setIsCartDrawerOpen(false);
                         onNavigate(`/product/${item.productId}`);
                       }}
-                      className="w-18 h-24 object-cover object-center rounded bg-neutral-100 shrink-0 border border-neutral-200 cursor-pointer hover:opacity-90 transition-opacity"
+                      className="w-20 h-20 aspect-square object-cover object-center rounded-md bg-neutral-100 shrink-0 border border-neutral-200/80 cursor-pointer hover:opacity-90 transition-opacity"
                     />
                     <div className="flex-1 flex flex-col justify-between">
                       <div>

@@ -21,14 +21,18 @@ import {
   Send,
   Building,
   Key,
-  FileText
+  FileText,
+  BellRing,
+  BellOff
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { Order } from '../types';
 import { orderService } from '../services/orderService';
 import { EmptyState } from '../components/common/EmptyState';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { PWAInstallButton } from '../components/common/PWAInstallButton';
 import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
 import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
 
@@ -63,6 +67,15 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     updateCustomerProfile,
     requestEmailChange
   } = useAuth();
+  const {
+    permission: notifPermission,
+    isMuted: notifMuted,
+    isCustomerDeviceBlocked,
+    customerVerificationBlockReason,
+    requestMobileAlerts,
+    toggleMute: toggleNotifMute,
+    sendTestMobileAlert,
+  } = useNotifications();
 
   // Auth Form State
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
@@ -1048,6 +1061,71 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                   {passResetStatus.message}
                 </p>
               )}
+            </div>
+
+            {/* Card 4: Mobile Notifications & App */}
+            <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)] space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BellRing className="w-4 h-4 text-neutral-900" />
+                  <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
+                    Mobile Alerts &amp; App
+                  </h2>
+                </div>
+                <span className={`text-[11px] font-medium px-2.5 py-0.5 rounded-full ${
+                  notifPermission === 'granted' && !notifMuted
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-neutral-100 text-neutral-600'
+                }`}>
+                  {notifPermission === 'granted' ? (notifMuted ? 'Paused' : 'Active') : notifPermission === 'denied' ? 'Blocked' : 'Not Enabled'}
+                </span>
+              </div>
+
+              <p className="text-[13px] text-neutral-600 leading-relaxed">
+                Get instant mobile notifications when your order is confirmed, packed, shipped, or delivered, and whenever new offers drop.
+              </p>
+
+              {isCustomerDeviceBlocked ? (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                  {customerVerificationBlockReason === 'other_device'
+                    ? 'Notifications are active only on the verified device where you completed email verification. Use that verified device to receive account & order alerts.'
+                    : 'Please verify your email address on this device first to unlock mobile notifications here.'}
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {notifPermission !== 'granted' ? (
+                    <button
+                      type="button"
+                      onClick={() => requestMobileAlerts()}
+                      className="px-4 py-2 bg-black text-white text-xs font-medium rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer"
+                    >
+                      Enable Mobile Notifications
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={toggleNotifMute}
+                        className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+                        <span>{notifMuted ? 'Resume Mobile Alerts' : 'Pause Mobile Alerts'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => sendTestMobileAlert()}
+                        className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-900 text-xs font-medium rounded-[6px] transition-colors cursor-pointer"
+                      >
+                        Test Mobile Alert
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="pt-1">
+                <PWAInstallButton />
+              </div>
             </div>
           </div>
         )}

@@ -22,7 +22,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const isOutOfStock = product.totalStock <= 0;
 
   const primaryImage = product.thumbnail || product.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
-  const secondaryImage = product.images?.[1] || primaryImage;
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
   const displaySku = product.sku || product.variants?.[0]?.sku || (product.id ? product.id.slice(0, 6).toUpperCase() : '277055');
@@ -62,14 +61,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     });
   };
 
-  const hasSecondary = Boolean(secondaryImage && secondaryImage !== primaryImage);
-
   return (
     <div
       onClick={() => onNavigate(`/product/${product.id}`)}
       className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none"
     >
-      {/* Image container */}
+      {/* Image container (No auto image swap on hover) */}
       <div className="relative w-full aspect-square bg-neutral-100 overflow-hidden rounded-lg border border-neutral-200/70 group-hover:border-neutral-300 transition-colors duration-300">
         <img
           src={primaryImage}
@@ -77,15 +74,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           decoding="async"
           className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-[1.03] will-change-transform"
         />
-        {hasSecondary && (
-          <img
-            src={secondaryImage}
-            alt=""
-            decoding="async"
-            loading="lazy"
-            className="absolute inset-0 w-full h-full object-cover object-center opacity-0 group-hover:opacity-100 transition-all duration-500 ease-out group-hover:scale-[1.03] will-change-transform"
-          />
-        )}
 
         {/* Badges on top-left: Discount % or Sold Out */}
         <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
@@ -102,7 +90,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
         </div>
 
-        {/* Bottom-left Premium White Shopping Bag Icon Button */}
+        {/* Bottom-left Premium White Shopping Cart Icon Button */}
         <button
           onClick={handleQuickAdd}
           disabled={isOutOfStock}

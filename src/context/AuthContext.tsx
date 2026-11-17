@@ -22,6 +22,7 @@ import { CustomerProfile } from '../types';
 interface AuthContextType {
   currentUser: User | null;
   customerProfile: CustomerProfile | null;
+  profileLoaded: boolean;
   isAdmin: boolean;
   loading: boolean;
   signIn: (emailOrPhone: string, pass: string) => Promise<User>;
@@ -63,6 +64,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -122,17 +124,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   };
 
-  const loadCustomerProfile = async (uid: string) => {
+  const getLocalCustomerDeviceId = (): string => {
+    try {
+      let id = localStorage.getItem('selvee_customer_device_id_v1');
+      if (!id) {
+        const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+        id = `CUS-${Date.now().toString(36).toUpperCase()}-${rand}`;
+        localStorage.setItem('selvee_customer_device_id_v1', id);
+      }
+      return id;
+    } catch {
+      return 'CLIENT';
+    }
+  };
+
+  // Binds verifiedDeviceId strictly once when customer email becomes verified on a device
+  const bindVerifiedDeviceIfNeeded = async (user: User, loadedProfile?: CustomerProfile | null) => {
+    if (!user?.uid || !user.emailVerified) return;
+    if (loadedProfile?.verifiedDeviceId) return;
+
+    const deviceId = getLocalCustomerDeviceId();
+    const docRef = doc(db, 'users', user.uid);
+    try {
+      const freshSnap = await getDoc(docRef);
+      const freshData = freshSnap.exists() ? (freshSnap.data() as CustomerProfile) : null;
+      if (freshData?.verifiedDeviceId) {
+        // Already verified on another device — do NOT overwrite!
+        setCustomerProfile(freshData);
+        saveLocalCustomer(freshData);
+        return;
+      }
+
+      const verifiedAt = new Date().toISOString();
+      await setDoc(
+        docRef,
+        {
+          verifiedDeviceId: deviceId,
+          emailVerifiedAt: verifiedAt,
+          email: (user.email || freshData?.email || '').toLowerCase(),
+          name: user.displayName || freshData?.name || 'Selvee Customer',
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setCustomerProfile((prev) => {
+        const next: CustomerProfile = {
+          ...(prev || freshData || {
+            uid: user.uid,
+            name: user.displayName || 'Selvee Customer',
+            email: (user.email || '').toLowerCase(),
+            createdAt: verifiedAt,
+          }),
+          verifiedDeviceId: deviceId,
+          emailVerifiedAt: verifiedAt,
+        };
+        saveLocalCustomer(next);
+        return next;
+      });
+    } catch {
+      // Fallback: save locally if Firestore offline
+      setCustomerProfile((prev) => {
+        if (prev?.verifiedDeviceId) return prev;
+        const verifiedAt = new Date().toISOString();
+        const next: CustomerProfile = {
+          ...(prev || {
+            uid: user.uid,
+            name: user.displayName || 'Selvee Customer',
+            email: (user.email || '').toLowerCase(),
+            createdAt: verifiedAt,
+          }),
+          verifiedDeviceId: deviceId,
+          emailVerifiedAt: verifiedAt,
+        };
+        saveLocalCustomer(next);
+        return next;
+      });
+    }
+  };
+
+  const loadCustomerProfile = async (uid: string, userObj?: User | null) => {
     try {
       const docRef = doc(db, 'users', uid);
       const docSnap = await getDoc(docRef);
+      let loaded: CustomerProfile | null = null;
       if (docSnap.exists()) {
-        const data = docSnap.data() as CustomerProfile;
-        setCustomerProfile(data);
-        saveLocalCustomer(data);
+        loaded = docSnap.data() as CustomerProfile;
+        setCustomerProfile(loaded);
+        saveLocalCustomer(loaded);
+      }
+      if (userObj?.emailVerified) {
+        await bindVerifiedDeviceIfNeeded(userObj, loaded);
       }
     } catch (e) {
       console.warn("Could not load user profile:", e);
+    } finally {
+      setProfileLoaded(true);
     }
   };
 
@@ -140,13 +226,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
+        setProfileLoaded(false);
         const adminStatus = await checkAdminStatus(user);
         setIsAdmin(adminStatus);
         setLoading(false);
-        void loadCustomerProfile(user.uid);
+        void loadCustomerProfile(user.uid, user);
       } else {
         setIsAdmin(false);
         setCustomerProfile(null);
+        setProfileLoaded(false);
         setLoading(false);
       }
     });
@@ -205,7 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cred = await signInWithEmailAndPassword(auth, resolvedEmail.trim(), pass);
     const adminStatus = await checkAdminStatus(cred.user);
     setIsAdmin(adminStatus);
-    await loadCustomerProfile(cred.user.uid);
+    await loadCustomerProfile(cred.user.uid, cred.user);
     return cred.user;
   };
 
@@ -227,7 +315,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (existingProfile) {
       setCustomerProfile(existingProfile);
       saveLocalCustomer(existingProfile);
+      if (user.emailVerified && !existingProfile.verifiedDeviceId) {
+        await bindVerifiedDeviceIfNeeded(user, existingProfile);
+      }
     } else {
+      const deviceId = user.emailVerified ? getLocalCustomerDeviceId() : undefined;
+      const verifiedAt = user.emailVerified ? new Date().toISOString() : undefined;
       const profileData: CustomerProfile = {
         uid: user.uid,
         name: user.displayName || 'Selvee Customer',
@@ -235,6 +328,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phone: user.phoneNumber || '',
         createdAt: serverTimestamp(),
         disabled: false,
+        ...(deviceId ? { verifiedDeviceId: deviceId, emailVerifiedAt: verifiedAt } : {}),
       };
       const localProfileData: CustomerProfile = {
         ...profileData,
@@ -248,6 +342,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore write rules error
       }
     }
+    setProfileLoaded(true);
 
     return user;
   };
@@ -320,7 +415,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updatedUser = auth.currentUser;
       setCurrentUser(updatedUser ? ({ ...updatedUser } as User) : null);
       if (updatedUser) {
-        await loadCustomerProfile(updatedUser.uid);
+        await loadCustomerProfile(updatedUser.uid, updatedUser);
       }
       return updatedUser;
     }
@@ -382,7 +477,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProfile = async () => {
     if (currentUser) {
-      await loadCustomerProfile(currentUser.uid);
+      await loadCustomerProfile(currentUser.uid, currentUser);
     }
   };
 
@@ -391,6 +486,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         currentUser,
         customerProfile,
+        profileLoaded,
         isAdmin,
         loading,
         signIn,

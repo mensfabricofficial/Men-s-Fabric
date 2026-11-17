@@ -134,12 +134,22 @@ function detectDeviceInfo(): {
 }
 
 export const adminDeviceService = {
+  getStoredDeviceId(): string | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      return localStorage.getItem(DEVICE_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+
   getCurrentDeviceId(): string {
     if (typeof window === 'undefined') return 'SERVER';
     let id = localStorage.getItem(DEVICE_STORAGE_KEY);
     if (!id) {
       id = generateDeviceId();
       localStorage.setItem(DEVICE_STORAGE_KEY, id);
+      window.dispatchEvent(new Event('selvee_admin_device_id_changed'));
     }
     return id;
   },

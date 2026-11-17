@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Package, ArrowRight, Truck, Phone, MapPin, FileText, Printer } from 'lucide-react';
+import { CheckCircle, Package, ArrowRight, Truck, Phone, MapPin, FileText, Printer, BellRing } from 'lucide-react';
 import { Order } from '../types';
 import { orderService } from '../services/orderService';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
+import { useNotifications } from '../context/NotificationContext';
+import { PWAInstallButton } from '../components/common/PWAInstallButton';
 
 interface OrderConfirmationPageProps {
   currentRoute: string;
@@ -16,6 +18,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInvoice, setShowInvoice] = useState(false);
+  const { permission, requestMobileAlerts } = useNotifications();
 
   const url = new URL(window.location.origin + currentRoute);
   const orderId = url.searchParams.get('id');
@@ -104,7 +107,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                       <img
                         src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={item.productName}
-                        className="w-10 h-12 object-cover rounded bg-white border border-neutral-200"
+                        className="w-12 h-12 aspect-square object-cover object-center rounded-md bg-white border border-neutral-200/80 shrink-0"
                       />
                       <div>
                         <p className="font-semibold text-neutral-900">{item.productName}</p>
@@ -187,6 +190,32 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
               : 'Thank you for your online payment. Your package will be dispatched with priority express tracking.'}
           </span>
         </div>
+
+        {permission !== 'granted' && (
+          <div className="bg-white border border-neutral-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-start gap-2.5 text-neutral-800">
+              <BellRing className="w-4 h-4 text-black shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-neutral-900">Get Live Order Alerts on Mobile</p>
+                <p className="text-[11px] text-neutral-500 mt-0.5">
+                  Receive instant notifications when your parcel is confirmed, packed, and out for delivery.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {permission === 'default' && (
+                <button
+                  type="button"
+                  onClick={() => requestMobileAlerts()}
+                  className="px-4 py-2 bg-black text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+                >
+                  Enable Alerts
+                </button>
+              )}
+              <PWAInstallButton compact />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Action Buttons */}

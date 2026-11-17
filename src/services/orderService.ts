@@ -18,6 +18,7 @@ import { CartItem, Order, OrderStatus, PaymentStatus, ShippingAddress, PaymentMe
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { getLocalDeliveryZones, settingsService } from './settingsService';
 import { productService } from './productService';
+import { notificationService } from './notificationService';
 
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
 const cachedOrdersMap = new Map<string, Order>();
@@ -139,6 +140,7 @@ export const orderService = {
       // Generate human-readable order number with # format (e.g. #102948)
       const orderNumber = `#${Math.floor(100000 + Math.random() * 900000)}`;
       const orderDocRef = doc(collection(db, 'orders'));
+      let transactionGrandTotal = 0;
 
       // Use Firestore transaction to verify prices and decrement inventory atomically
       // Strictly separating: ALL READS FIRST -> CALCULATIONS -> ALL WRITES
@@ -265,6 +267,7 @@ export const orderService = {
           }
 
           const grandTotal = Math.max(0, calculatedSubtotal - calculatedDiscount - onlineDiscount + deliveryCharge);
+          transactionGrandTotal = grandTotal;
 
           const cleanAddress: ShippingAddress = {
             fullName: shippingAddress.fullName || '',
@@ -383,6 +386,29 @@ export const orderService = {
         } catch (stockErr) {
           console.warn('Stock decrement notice:', stockErr);
         }
+
+        // Notify customer + authorized admin devices (in-app & mobile push alert)
+        const totalItemsCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
+        notificationService
+          .notifyOrderPlaced({
+            orderNumber,
+            total: transactionGrandTotal,
+            customerId,
+            customerEmail: customerEmail || shippingAddress.email,
+            customerPhone: customerPhone || shippingAddress.phone,
+            paymentMethod,
+          })
+          .catch(() => {});
+        notificationService
+          .notifyAdminNewOrder({
+            orderNumber,
+            customerName: customerName || shippingAddress.fullName,
+            customerPhone: customerPhone || shippingAddress.phone,
+            total: transactionGrandTotal,
+            itemCount: totalItemsCount,
+            paymentMethod,
+          })
+          .catch(() => {});
 
         return {
           success: true,
@@ -514,6 +540,29 @@ export const orderService = {
         } catch (stockErr) {
           console.warn('Fallback stock decrement notice:', stockErr);
         }
+
+        // Notify customer + authorized admin devices in fallback checkout path
+        const fallbackItemCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
+        notificationService
+          .notifyOrderPlaced({
+            orderNumber,
+            total: grandTotal,
+            customerId,
+            customerEmail: customerEmail || shippingAddress.email,
+            customerPhone: customerPhone || shippingAddress.phone,
+            paymentMethod,
+          })
+          .catch(() => {});
+        notificationService
+          .notifyAdminNewOrder({
+            orderNumber,
+            customerName: customerName || shippingAddress.fullName,
+            customerPhone: customerPhone || shippingAddress.phone,
+            total: grandTotal,
+            itemCount: fallbackItemCount,
+            paymentMethod,
+          })
+          .catch(() => {});
 
         return {
           success: true,
@@ -890,6 +939,8 @@ export const orderService = {
 
   // Admin: Update order status
   async updateOrderStatus(orderId: string, status: OrderStatus, note?: string) {
+    let notifiedOrderInfo: Partial<Order> | null = null;
+
     // 1. Update local copy immediately
     const localOrders = this.getLocalOrders();
     const target = localOrders.find((o) => o.id === orderId);
@@ -902,6 +953,7 @@ export const orderService = {
         note: note || `Status updated to ${status} by Administrator.`,
       });
       this.saveLocalOrder(target);
+      notifiedOrderInfo = { ...target };
     }
 
     // 2. Update remote Firestore
@@ -910,6 +962,7 @@ export const orderService = {
       const snap = await getDoc(orderRef);
       if (snap.exists()) {
         const data = snap.data() as Order;
+        if (!notifiedOrderInfo) notifiedOrderInfo = { ...data, id: snap.id };
         const timeline = data.timeline || [];
         timeline.push({
           status,
@@ -926,10 +979,26 @@ export const orderService = {
     } catch (e) {
       console.warn('Remote updateOrderStatus notice (updated in local store):', e);
     }
+
+    // 3. Dispatch real-time customer notification (mobile + in-app)
+    if (notifiedOrderInfo?.orderNumber) {
+      notificationService
+        .notifyOrderStatusChanged({
+          orderNumber: notifiedOrderInfo.orderNumber,
+          status,
+          note,
+          customerId: notifiedOrderInfo.customerId,
+          customerEmail: notifiedOrderInfo.customerEmail || notifiedOrderInfo.shippingAddress?.email,
+          customerPhone: notifiedOrderInfo.customerPhone || notifiedOrderInfo.shippingAddress?.phone,
+        })
+        .catch(() => {});
+    }
   },
 
   // Admin: Update payment status
   async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus, note?: string) {
+    let notifiedOrderInfo: Partial<Order> | null = null;
+
     // 1. Update local copy immediately
     const localOrders = this.getLocalOrders();
     const target = localOrders.find((o) => o.id === orderId);
@@ -942,6 +1011,7 @@ export const orderService = {
         note: note || `Payment marked as "${paymentStatus.toUpperCase()}" by Administrator.`,
       });
       this.saveLocalOrder(target);
+      notifiedOrderInfo = { ...target };
     }
 
     // 2. Update remote Firestore
@@ -950,6 +1020,7 @@ export const orderService = {
       const snap = await getDoc(orderRef);
       if (snap.exists()) {
         const data = snap.data() as Order;
+        if (!notifiedOrderInfo) notifiedOrderInfo = { ...data, id: snap.id };
         const timeline = data.timeline || [];
         timeline.push({
           status: data.orderStatus,
@@ -965,6 +1036,19 @@ export const orderService = {
       }
     } catch (e) {
       console.warn('Remote updatePaymentStatus notice (updated in local store):', e);
+    }
+
+    // 3. Dispatch payment notification to customer
+    if (notifiedOrderInfo?.orderNumber) {
+      notificationService
+        .notifyPaymentStatusChanged({
+          orderNumber: notifiedOrderInfo.orderNumber,
+          paymentStatus,
+          customerId: notifiedOrderInfo.customerId,
+          customerEmail: notifiedOrderInfo.customerEmail || notifiedOrderInfo.shippingAddress?.email,
+          customerPhone: notifiedOrderInfo.customerPhone || notifiedOrderInfo.shippingAddress?.phone,
+        })
+        .catch(() => {});
     }
   },
 

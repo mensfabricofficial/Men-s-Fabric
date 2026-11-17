@@ -16,9 +16,12 @@ import {
   Menu, 
   X,
   History,
-  Smartphone
+  Smartphone,
+  Bell,
+  BellRing,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { adminDeviceService } from '../services/adminDeviceService';
 
@@ -32,6 +35,7 @@ export type AdminTab =
   | 'coupons'
   | 'delivery'
   | 'banners'
+  | 'notifications'
   | 'settings'
   | 'admins'
   | 'audit';
@@ -50,6 +54,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   children,
 }) => {
   const { currentUser, logOut } = useAuth();
+  const { unreadCount, setIsDrawerOpen, permission, requestMobileAlerts } = useNotifications();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingDeviceCount, setPendingDeviceCount] = useState(0);
 
@@ -70,6 +75,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'coupons', label: 'Coupons', icon: <Ticket className="w-4 h-4" /> },
     { id: 'delivery', label: 'Delivery Zones', icon: <Truck className="w-4 h-4" /> },
     { id: 'banners', label: 'Banners', icon: <ImageIcon className="w-4 h-4" /> },
+    { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" /> },
     { id: 'settings', label: 'Store Settings', icon: <Settings className="w-4 h-4" /> },
     { id: 'admins', label: 'Admins & Staff', icon: <ShieldCheck className="w-4 h-4" /> },
     { id: 'audit', label: 'Audit Logs', icon: <History className="w-4 h-4" /> },
@@ -94,9 +100,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </button>
           <BrandLogo variant="light" size="sm" />
         </div>
-        <span className="text-[10px] font-bold bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded uppercase">
-          Admin
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsDrawerOpen(true)}
+            aria-label="Open notifications"
+            className="relative p-1.5 text-neutral-300 hover:text-white cursor-pointer"
+          >
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-emerald-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+          <span className="text-[10px] font-bold bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded uppercase">
+            Admin
+          </span>
+        </div>
       </div>
 
       {/* Mobile Backdrop Overlay */}
@@ -117,9 +138,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             <div className="flex items-center gap-2">
               <BrandLogo variant="light" size="sm" />
             </div>
-            <span className="text-[10px] font-bold tracking-widest uppercase bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300">
-              Admin
-            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsDrawerOpen(true)}
+                title="View Incoming Order Alerts"
+                className="relative p-1.5 text-neutral-300 hover:text-white rounded hover:bg-neutral-900 cursor-pointer"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-3.5 px-1 bg-emerald-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              <span className="text-[10px] font-bold tracking-widest uppercase bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300">
+                Admin
+              </span>
+            </div>
           </div>
 
           {/* Navigation Items - Scrollable if screen is short */}
@@ -180,6 +216,23 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
+        {permission === 'default' && (
+          <div className="mb-5 p-3.5 bg-neutral-900 text-white rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <BellRing className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>
+                <b>Authorized Device Order Alerts:</b> Enable notifications on this device to get instant alerts whenever a customer places an order.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => requestMobileAlerts()}
+              className="px-3.5 py-1.5 bg-white text-black font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer w-fit text-[11px] shrink-0"
+            >
+              Enable Order Alerts
+            </button>
+          </div>
+        )}
         {pendingDeviceCount > 0 && currentTab !== 'settings' && (
           <div className="mb-5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-amber-900">

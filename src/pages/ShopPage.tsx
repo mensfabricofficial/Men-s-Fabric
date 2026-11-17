@@ -379,7 +379,7 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         )}
       </div>
 
-      {/* Promotional Bar (Illiyeen inspiration) */}
+      {/* Promotional Bar */}
       <div className="bg-black text-white text-xs sm:text-sm font-semibold py-3 px-4 rounded-xl text-center mb-6 tracking-wide shadow-xs flex items-center justify-center gap-2">
         <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
         <span>Save with Digital Prepayment (bKash, Nagad, Rocket) | Cash on Delivery Available Across Bangladesh</span>

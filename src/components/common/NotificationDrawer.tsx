@@ -65,9 +65,9 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ onNaviga
     permission,
     isMuted,
     isApprovedAdminDevice,
-    isCustomerDeviceBlocked,
+    allNotificationsActive,
     customerVerificationBlockReason,
-    requestMobileAlerts,
+    enableAllNotificationsOneClick,
     toggleMute,
     markAsRead,
     markAllAsRead,
@@ -96,7 +96,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ onNaviga
   const handleEnablePush = async () => {
     setRequesting(true);
     try {
-      await requestMobileAlerts();
+      await enableAllNotificationsOneClick();
     } finally {
       setRequesting(false);
     }
@@ -233,15 +233,13 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ onNaviga
               </div>
             </div>
 
-            {/* Mobile Alert Permission & App Install Card */}
+            {/* Mobile & PC Alert Permission Card */}
             <div className="p-4 bg-neutral-50 border-b border-neutral-200 space-y-2.5 shrink-0">
-              {isCustomerDeviceBlocked && !isApprovedAdminDevice ? (
+              {customerVerificationBlockReason === 'unverified_email' && !isApprovedAdminDevice ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-[11px] text-amber-900 leading-relaxed">
-                  {customerVerificationBlockReason === 'other_device'
-                    ? 'Notifications are bound only to the device where you verified your email. Use your verified device to view notifications & receive mobile alerts.'
-                    : 'Verify your email address on this device to unlock your order updates and mobile alerts here.'}
+                  Verify your email address first to unlock order updates and mobile/PC alerts.
                 </div>
-              ) : permission !== 'granted' ? (
+              ) : !allNotificationsActive || customerVerificationBlockReason === 'other_device' ? (
                 <div className="bg-white border border-neutral-200 rounded-xl p-3.5 space-y-2.5">
                   <div className="flex items-start gap-2.5">
                     <div className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center shrink-0">
@@ -249,39 +247,35 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ onNaviga
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-bold text-neutral-900">
-                        Get Order &amp; Offer Alerts on Your Phone
+                        Turn On All Notifications (PC &amp; Mobile)
                       </p>
                       <p className="text-[11px] text-neutral-500 mt-0.5 leading-relaxed">
-                        Receive instant notifications when your order ships, payment verifies, or a new discount drops.
+                        Enable order tracking, payment verification &amp; offer alerts on this device in one click.
                       </p>
                     </div>
                   </div>
 
-                  {permission === 'denied' ? (
+                  {permission === 'denied' && (
                     <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
-                      Browser notifications are blocked. Allow notifications in your browser site settings to receive mobile alerts.
+                      OS popups are blocked in browser settings; clicking below still turns on live sound &amp; in-app alerts.
                     </p>
-                  ) : permission === 'unsupported' ? (
-                    <p className="text-[11px] text-neutral-600 bg-neutral-100 rounded-lg px-2.5 py-2">
-                      Add Selvee to your Home Screen below to enable mobile alerts on your device.
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleEnablePush}
-                      disabled={requesting}
-                      className="w-full py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60"
-                    >
-                      {requesting ? 'Enabling...' : 'Enable Mobile Notifications'}
-                    </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={handleEnablePush}
+                    disabled={requesting}
+                    className="w-full py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    {requesting ? 'Activating...' : 'Turn On All Notifications'}
+                  </button>
                 </div>
               ) : (
                 <div className="flex items-center justify-between bg-white border border-neutral-200 rounded-xl px-3.5 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${isMuted ? 'bg-neutral-400' : 'bg-emerald-500'}`} />
                     <span className="text-xs font-medium text-neutral-800">
-                      {isMuted ? 'Mobile Alerts Paused' : 'Mobile Push Alerts Active'}
+                      {isMuted ? 'All Notifications Paused' : 'All Notifications Active (PC & Mobile)'}
                     </span>
                   </div>
                   <button

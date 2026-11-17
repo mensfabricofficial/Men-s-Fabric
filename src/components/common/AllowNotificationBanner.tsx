@@ -7,8 +7,9 @@ const DISMISS_SESSION_KEY = 'selvee_notif_banner_dismissed_v1';
 export const AllowNotificationBanner: React.FC = () => {
   const {
     permission,
-    requestMobileAlerts,
-    isCustomerDeviceBlocked,
+    allNotificationsActive,
+    enableAllNotificationsOneClick,
+    customerVerificationBlockReason,
     isDrawerOpen,
   } = useNotifications();
 
@@ -23,7 +24,7 @@ export const AllowNotificationBanner: React.FC = () => {
   const [requesting, setRequesting] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setVisible(true), 350);
+    const timer = window.setTimeout(() => setVisible(true), 300);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -31,8 +32,9 @@ export const AllowNotificationBanner: React.FC = () => {
     !visible ||
     dismissed ||
     isDrawerOpen ||
-    permission !== 'default' ||
-    isCustomerDeviceBlocked
+    allNotificationsActive ||
+    customerVerificationBlockReason === 'unverified_email' ||
+    permission === 'denied'
   ) {
     return null;
   }
@@ -40,7 +42,7 @@ export const AllowNotificationBanner: React.FC = () => {
   const handleAllow = async () => {
     setRequesting(true);
     try {
-      await requestMobileAlerts();
+      await enableAllNotificationsOneClick();
       try {
         sessionStorage.setItem(DISMISS_SESSION_KEY, '1');
       } catch {

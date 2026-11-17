@@ -36,6 +36,7 @@ interface AuthContextType {
   reloadCurrentUser: () => Promise<User | null>;
   updateCustomerProfile: (data: Partial<CustomerProfile>) => Promise<void>;
   requestEmailChange: (newEmail: string) => Promise<void>;
+  enableCurrentDeviceForVerifiedUser: () => Promise<void>;
 }
 
 const LOCAL_CUSTOMERS_KEY = 'mf_registered_customers_v1';
@@ -141,15 +142,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Binds verifiedDeviceId strictly once when customer email becomes verified on a device
   const bindVerifiedDeviceIfNeeded = async (user: User, loadedProfile?: CustomerProfile | null) => {
     if (!user?.uid || !user.emailVerified) return;
-    if (loadedProfile?.verifiedDeviceId) return;
+    if (loadedProfile?.verifiedDeviceId || (loadedProfile?.verifiedDeviceIds && loadedProfile.verifiedDeviceIds.length > 0)) {
+      return;
+    }
 
     const deviceId = getLocalCustomerDeviceId();
     const docRef = doc(db, 'users', user.uid);
     try {
       const freshSnap = await getDoc(docRef);
       const freshData = freshSnap.exists() ? (freshSnap.data() as CustomerProfile) : null;
-      if (freshData?.verifiedDeviceId) {
-        // Already verified on another device — do NOT overwrite!
+      if (freshData?.verifiedDeviceId || (freshData?.verifiedDeviceIds && freshData.verifiedDeviceIds.length > 0)) {
+        // Already verified on another device — do NOT auto-overwrite on passive login
         setCustomerProfile(freshData);
         saveLocalCustomer(freshData);
         return;
@@ -160,6 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         docRef,
         {
           verifiedDeviceId: deviceId,
+          verifiedDeviceIds: [deviceId],
           emailVerifiedAt: verifiedAt,
           email: (user.email || freshData?.email || '').toLowerCase(),
           name: user.displayName || freshData?.name || 'Selvee Customer',
@@ -176,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             createdAt: verifiedAt,
           }),
           verifiedDeviceId: deviceId,
+          verifiedDeviceIds: [deviceId],
           emailVerifiedAt: verifiedAt,
         };
         saveLocalCustomer(next);
@@ -184,7 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // Fallback: save locally if Firestore offline
       setCustomerProfile((prev) => {
-        if (prev?.verifiedDeviceId) return prev;
+        if (prev?.verifiedDeviceId || (prev?.verifiedDeviceIds && prev.verifiedDeviceIds.length > 0)) return prev;
         const verifiedAt = new Date().toISOString();
         const next: CustomerProfile = {
           ...(prev || {
@@ -194,11 +199,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             createdAt: verifiedAt,
           }),
           verifiedDeviceId: deviceId,
+          verifiedDeviceIds: [deviceId],
           emailVerifiedAt: verifiedAt,
         };
         saveLocalCustomer(next);
         return next;
       });
+    }
+  };
+
+  // Explicit 1-click user action: authorize current PC or Mobile device for a verified customer account
+  const enableCurrentDeviceForVerifiedUser = async () => {
+    const user = auth.currentUser;
+    if (!user?.uid || !user.emailVerified) return;
+    const deviceId = getLocalCustomerDeviceId();
+    const docRef = doc(db, 'users', user.uid);
+
+    const existingList = Array.from(
+      new Set([
+        ...(customerProfile?.verifiedDeviceIds || []),
+        ...(customerProfile?.verifiedDeviceId ? [customerProfile.verifiedDeviceId] : []),
+        deviceId,
+      ])
+    );
+
+    setCustomerProfile((prev) => {
+      const next: CustomerProfile = {
+        ...(prev || {
+          uid: user.uid,
+          name: user.displayName || 'Selvee Customer',
+          email: (user.email || '').toLowerCase(),
+          createdAt: new Date().toISOString(),
+        }),
+        verifiedDeviceId: prev?.verifiedDeviceId || deviceId,
+        verifiedDeviceIds: existingList,
+      };
+      saveLocalCustomer(next);
+      return next;
+    });
+
+    try {
+      const snap = await getDoc(docRef);
+      const remote = snap.exists() ? (snap.data() as CustomerProfile) : null;
+      const mergedList = Array.from(
+        new Set([
+          ...(remote?.verifiedDeviceIds || []),
+          ...(remote?.verifiedDeviceId ? [remote.verifiedDeviceId] : []),
+          ...existingList,
+        ])
+      );
+      await setDoc(
+        docRef,
+        {
+          verifiedDeviceId: remote?.verifiedDeviceId || deviceId,
+          verifiedDeviceIds: mergedList,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {
+      // Local state still persists
     }
   };
 
@@ -499,7 +559,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendVerificationEmail: sendVerificationEmailAction,
         reloadCurrentUser: reloadCurrentUserAction,
         updateCustomerProfile,
-        requestEmailChange
+        requestEmailChange,
+        enableCurrentDeviceForVerifiedUser
       }}
     >
       {children}

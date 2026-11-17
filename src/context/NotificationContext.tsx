@@ -29,7 +29,9 @@ interface NotificationContextType {
   isApprovedAdminDevice: boolean;
   isCustomerDeviceBlocked: boolean;
   customerVerificationBlockReason: 'unverified_email' | 'other_device' | null;
+  allNotificationsActive: boolean;
   requestMobileAlerts: () => Promise<NotificationPermission | 'unsupported'>;
+  enableAllNotificationsOneClick: () => Promise<{ granted: boolean; inAppActive: boolean }>;
   toggleMute: () => void;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
@@ -42,6 +44,7 @@ interface NotificationContextType {
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
 const STATUS_SNAPSHOT_KEY = 'selvee_order_status_snapshot_v1';
+const INAPP_ALERTS_KEY = 'selvee_inapp_alerts_v1';
 
 const getStoredOrderSnapshots = (): Record<string, { orderStatus: OrderStatus; paymentStatus: PaymentStatus }> => {
   try {
@@ -95,7 +98,7 @@ export const NotificationProvider: React.FC<{
   children: React.ReactNode;
   onNavigate?: (route: string) => void;
 }> = ({ children, onNavigate }) => {
-  const { currentUser, customerProfile, profileLoaded } = useAuth();
+  const { currentUser, customerProfile, profileLoaded, enableCurrentDeviceForVerifiedUser } = useAuth();
   const [allNotifications, setAllNotifications] = useState<AppNotification[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(() => getReadNotificationIds());
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -103,6 +106,13 @@ export const NotificationProvider: React.FC<{
     getBrowserNotificationPermission()
   );
   const [isMuted, setIsMuted] = useState<boolean>(() => isNotificationsMuted());
+  const [inAppAlertsActive, setInAppAlertsActive] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(INAPP_ALERTS_KEY) === '1' || getBrowserNotificationPermission() === 'granted';
+    } catch {
+      return false;
+    }
+  });
   const [activeToast, setActiveToast] = useState<AppNotification | null>(null);
   const [storedDeviceId, setStoredDeviceId] = useState<string | null>(() =>
     adminDeviceService.getStoredDeviceId()
@@ -341,23 +351,27 @@ export const NotificationProvider: React.FC<{
     };
   }, [currentUser?.uid]);
 
-  // Filter notifications strictly by customer identity + verified customer device + approved admin device status
+  // Filter notifications strictly by customer identity + verified customer devices + approved admin device status
   const currentCustomerDeviceId = getCustomerDeviceId();
   const isWaitingProfile = Boolean(currentUser && !profileLoaded && !isApprovedAdminDevice);
+
+  const allowedDevicesSet = new Set<string>([
+    ...(customerProfile?.verifiedDeviceIds || []),
+    ...(customerProfile?.verifiedDeviceId ? [customerProfile.verifiedDeviceId] : []),
+  ]);
 
   let customerVerificationBlockReason: 'unverified_email' | 'other_device' | null = null;
   if (currentUser && !isApprovedAdminDevice && profileLoaded) {
     if (!currentUser.emailVerified) {
       customerVerificationBlockReason = 'unverified_email';
-    } else if (
-      customerProfile?.verifiedDeviceId &&
-      customerProfile.verifiedDeviceId !== currentCustomerDeviceId
-    ) {
+    } else if (allowedDevicesSet.size > 0 && !allowedDevicesSet.has(currentCustomerDeviceId)) {
       customerVerificationBlockReason = 'other_device';
     }
   }
 
   const isCustomerDeviceBlocked = isWaitingProfile || Boolean(customerVerificationBlockReason);
+  const allNotificationsActive =
+    !isCustomerDeviceBlocked && !isMuted && (permission === 'granted' || inAppAlertsActive);
 
   const localOrders = orderService.getLocalOrders();
   const customerIdentity = {
@@ -368,6 +382,7 @@ export const NotificationProvider: React.FC<{
     isApprovedAdminDevice,
     emailVerified: isWaitingProfile ? false : Boolean(currentUser?.emailVerified),
     verifiedDeviceId: customerProfile?.verifiedDeviceId,
+    verifiedDeviceIds: customerProfile?.verifiedDeviceIds,
     currentDeviceId: currentCustomerDeviceId,
   };
 
@@ -401,39 +416,100 @@ export const NotificationProvider: React.FC<{
       if (topNotif && !readIds.has(topNotif.id)) {
         showInAppToast(topNotif);
         triggerNativeMobileNotification(topNotif);
-        if (topNotif.type === 'admin_new_order' && isApprovedAdminDevice && !isMuted) {
+        if (
+          !isMuted &&
+          ((topNotif.type === 'admin_new_order' && isApprovedAdminDevice) || inAppAlertsActive)
+        ) {
           playOrderAlertChime();
         }
       }
     }
-  }, [customerNotifications, readIds, showInAppToast, isApprovedAdminDevice, isMuted, isWaitingProfile]);
+  }, [
+    customerNotifications,
+    readIds,
+    showInAppToast,
+    isApprovedAdminDevice,
+    isMuted,
+    isWaitingProfile,
+    inAppAlertsActive,
+  ]);
 
   const unreadCount = customerNotifications.filter((n) => !readIds.has(n.id)).length;
 
-  const requestMobileAlerts = async () => {
-    const res = await requestMobileNotificationPermission();
-    setPermission(res);
-    setIsMuted(isNotificationsMuted());
+  const enableAllNotificationsOneClick = async (): Promise<{
+    granted: boolean;
+    inAppActive: boolean;
+  }> => {
+    // 1. If verified customer is signed in, authorize this PC/Mobile device immediately
+    if (currentUser?.emailVerified) {
+      await enableCurrentDeviceForVerifiedUser();
+    }
+
+    // 2. Unmute and enable persistent in-app + live alerts immediately
+    setNotificationsMuted(false);
+    setIsMuted(false);
+    setInAppAlertsActive(true);
+    try {
+      localStorage.setItem(INAPP_ALERTS_KEY, '1');
+    } catch {
+      // ignore
+    }
+
+    // 3. Request native browser/OS notification permission (works on both PC & Mobile)
+    let res = permission;
+    if (res === 'default') {
+      res = await requestMobileNotificationPermission();
+      setPermission(res);
+    }
+
+    // 4. Fire immediate confirmation feedback across both PC & Mobile
+    const welcomeNotif: AppNotification = {
+      id: `welcome-alerts-${Date.now().toString(36)}`,
+      type: 'announcement',
+      title: isApprovedAdminDevice
+        ? 'Admin Order & Device Alerts Active'
+        : 'All Notifications Enabled',
+      message: isApprovedAdminDevice
+        ? 'Order alerts, payment alerts & admin notifications are now active on this device.'
+        : 'Order updates, payment alerts, offers & promo codes are now active on this device.',
+      audience: isApprovedAdminDevice ? 'authorized_devices' : 'customer',
+      targetUid: currentUser?.uid || undefined,
+      targetEmail: currentUser?.email || undefined,
+      targetPhone: customerProfile?.phone || undefined,
+      targetOrderNumber: localOrders[0]?.orderNumber || undefined,
+      actionUrl: isApprovedAdminDevice ? '/admin?tab=orders' : '/shop',
+      important: false,
+      createdAt: new Date().toISOString(),
+      createdAtMs: Date.now(),
+    };
+
+    showInAppToast(welcomeNotif);
+    playOrderAlertChime();
+
     if (res === 'granted') {
-      const sample = await notificationService.publishNotification({
-        id: `welcome-alerts-${Date.now().toString(36)}`,
-        type: 'announcement',
-        title: isApprovedAdminDevice ? 'Admin Order & Mobile Alerts Enabled' : 'Mobile Alerts Enabled',
-        message: isApprovedAdminDevice
-          ? 'This authorized device will now receive instant mobile notifications for every new customer order.'
-          : 'You will now receive instant updates on orders, delivery status, and exclusive Selvee offers.',
-        audience: isApprovedAdminDevice ? 'authorized_devices' : 'customer',
-        targetUid: currentUser?.uid || undefined,
-        targetEmail: currentUser?.email || undefined,
-        targetPhone: customerProfile?.phone || undefined,
-        targetOrderNumber: localOrders[0]?.orderNumber || undefined,
-        actionUrl: isApprovedAdminDevice ? '/admin?tab=orders' : '/shop',
+      const published = await notificationService.publishNotification({
+        id: welcomeNotif.id,
+        type: welcomeNotif.type,
+        title: welcomeNotif.title,
+        message: welcomeNotif.message,
+        audience: welcomeNotif.audience,
+        targetUid: welcomeNotif.targetUid,
+        targetEmail: welcomeNotif.targetEmail,
+        targetPhone: welcomeNotif.targetPhone,
+        targetOrderNumber: welcomeNotif.targetOrderNumber,
+        actionUrl: welcomeNotif.actionUrl,
         important: false,
         createdBy: 'system',
       });
-      await triggerNativeMobileNotification(sample);
+      await triggerNativeMobileNotification(published);
     }
-    return res;
+
+    return { granted: res === 'granted', inAppActive: true };
+  };
+
+  const requestMobileAlerts = async () => {
+    await enableAllNotificationsOneClick();
+    return getBrowserNotificationPermission();
   };
 
   const toggleMute = () => {
@@ -520,7 +596,9 @@ export const NotificationProvider: React.FC<{
         isApprovedAdminDevice,
         isCustomerDeviceBlocked,
         customerVerificationBlockReason,
+        allNotificationsActive,
         requestMobileAlerts,
+        enableAllNotificationsOneClick,
         toggleMute,
         markAsRead,
         markAllAsRead,

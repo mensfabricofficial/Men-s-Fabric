@@ -47,6 +47,7 @@ export interface CustomerIdentity {
   isApprovedAdminDevice?: boolean;
   emailVerified?: boolean;
   verifiedDeviceId?: string;
+  verifiedDeviceIds?: string[];
   currentDeviceId?: string;
 }
 
@@ -186,15 +187,19 @@ export const isNotificationForCustomer = (
   // Strict customer verified-device rule:
   // If signed in as a customer (not an approved admin device):
   // - Must have emailVerified === true
-  // - If verifiedDeviceId is bound, MUST match current device ID
+  // - If verified device(s) are bound, currentDeviceId must be in the verified list
   if (identity.uid && !identity.isApprovedAdminDevice) {
     if (!identity.emailVerified) {
       return false;
     }
+    const allowedDevices = new Set<string>([
+      ...(identity.verifiedDeviceIds || []),
+      ...(identity.verifiedDeviceId ? [identity.verifiedDeviceId] : []),
+    ]);
     if (
-      identity.verifiedDeviceId &&
+      allowedDevices.size > 0 &&
       identity.currentDeviceId &&
-      identity.verifiedDeviceId !== identity.currentDeviceId
+      !allowedDevices.has(identity.currentDeviceId)
     ) {
       return false;
     }

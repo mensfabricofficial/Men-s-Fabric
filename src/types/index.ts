@@ -265,6 +265,7 @@ export interface CustomerProfile {
   createdAt: any;
   disabled?: boolean;
   verifiedDeviceId?: string;
+  verifiedDeviceIds?: string[];
   emailVerifiedAt?: string;
 }
 

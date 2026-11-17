@@ -70,12 +70,14 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const {
     permission: notifPermission,
     isMuted: notifMuted,
+    allNotificationsActive,
     isCustomerDeviceBlocked,
     customerVerificationBlockReason,
-    requestMobileAlerts,
+    enableAllNotificationsOneClick,
     toggleMute: toggleNotifMute,
     sendTestMobileAlert,
   } = useNotifications();
+  const [enablingNotifs, setEnablingNotifs] = useState(false);
 
   // Auth Form State
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
@@ -916,6 +918,39 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               </div>
             )}
 
+            {(!allNotificationsActive || isCustomerDeviceBlocked) && customerVerificationBlockReason !== 'unverified_email' && (
+              <div className="bg-black text-white rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center shrink-0">
+                    <BellRing className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-[13px] font-semibold">
+                      Turn On All Notifications (PC &amp; Mobile)
+                    </p>
+                    <p className="text-[11px] text-neutral-300 mt-0.5 leading-relaxed">
+                      One click activates order status, payment updates, flash offers &amp; promo codes on this device.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={enablingNotifs}
+                  onClick={async () => {
+                    setEnablingNotifs(true);
+                    try {
+                      await enableAllNotificationsOneClick();
+                    } finally {
+                      setEnablingNotifs(false);
+                    }
+                  }}
+                  className="px-4 py-2.5 bg-white text-black text-xs font-bold uppercase tracking-wider rounded-[6px] hover:bg-neutral-200 transition-colors cursor-pointer shrink-0 disabled:opacity-60"
+                >
+                  {enablingNotifs ? 'Activating...' : 'Turn On All (1-Click)'}
+                </button>
+              </div>
+            )}
+
             {/* Card 1: Personal Details */}
             <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
               <div className="flex items-center justify-between mb-5">
@@ -1063,62 +1098,93 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               )}
             </div>
 
-            {/* Card 4: Mobile Notifications & App */}
+            {/* Card 4: One-Click All Notifications (PC & Mobile Identical) */}
             <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)] space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <BellRing className="w-4 h-4 text-neutral-900" />
                   <h2 className="text-[15px] sm:text-base font-medium text-neutral-900">
-                    Mobile Alerts &amp; App
+                    All Notifications (PC &amp; Mobile)
                   </h2>
                 </div>
-                <span className={`text-[11px] font-medium px-2.5 py-0.5 rounded-full ${
-                  notifPermission === 'granted' && !notifMuted
+                <span className={`text-[11px] font-medium px-2.5 py-0.5 rounded-full shrink-0 ${
+                  allNotificationsActive
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-neutral-100 text-neutral-600'
+                    : notifMuted
+                    ? 'bg-neutral-100 text-neutral-600'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
                 }`}>
-                  {notifPermission === 'granted' ? (notifMuted ? 'Paused' : 'Active') : notifPermission === 'denied' ? 'Blocked' : 'Not Enabled'}
+                  {allNotificationsActive ? 'All Active' : notifMuted ? 'Paused' : 'Off'}
                 </span>
               </div>
 
               <p className="text-[13px] text-neutral-600 leading-relaxed">
-                Get instant mobile notifications when your order is confirmed, packed, shipped, or delivered, and whenever new offers drop.
+                Turn on all alerts with one click — order tracking updates, payment confirmations, flash offers &amp; promo codes on both PC and Mobile.
               </p>
 
-              {isCustomerDeviceBlocked ? (
+              {/* Included Notification Categories Checklist */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                {[
+                  { label: 'Order Status & Tracking', active: allNotificationsActive },
+                  { label: 'Payment Verification', active: allNotificationsActive },
+                  { label: 'New Offers & Coupons', active: allNotificationsActive },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
+                      item.active
+                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                        : 'bg-neutral-50 border-neutral-200 text-neutral-600'
+                    }`}
+                  >
+                    <CheckCircle className={`w-3.5 h-3.5 shrink-0 ${item.active ? 'text-emerald-600' : 'text-neutral-400'}`} />
+                    <span className="font-medium truncate">{item.label}</span>
+                  </div>
+                ))}
+              </div>
+
+              {customerVerificationBlockReason === 'unverified_email' ? (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
-                  {customerVerificationBlockReason === 'other_device'
-                    ? 'Notifications are active only on the verified device where you completed email verification. Use that verified device to receive account & order alerts.'
-                    : 'Please verify your email address on this device first to unlock mobile notifications here.'}
+                  Please verify your email address on this device first to turn on notifications.
                 </div>
+              ) : !allNotificationsActive || isCustomerDeviceBlocked ? (
+                <button
+                  type="button"
+                  disabled={enablingNotifs}
+                  onClick={async () => {
+                    setEnablingNotifs(true);
+                    try {
+                      await enableAllNotificationsOneClick();
+                    } finally {
+                      setEnablingNotifs(false);
+                    }
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center justify-center gap-2"
+                >
+                  <BellRing className="w-4 h-4" />
+                  <span>{enablingNotifs ? 'Activating All...' : 'Turn On All Notifications (1-Click)'}</span>
+                </button>
               ) : (
                 <div className="flex flex-wrap items-center gap-2.5">
-                  {notifPermission !== 'granted' ? (
-                    <button
-                      type="button"
-                      onClick={() => requestMobileAlerts()}
-                      className="px-4 py-2 bg-black text-white text-xs font-medium rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer"
-                    >
-                      Enable Mobile Notifications
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={toggleNotifMute}
-                        className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                      >
-                        {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-                        <span>{notifMuted ? 'Resume Mobile Alerts' : 'Pause Mobile Alerts'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => sendTestMobileAlert()}
-                        className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-900 text-xs font-medium rounded-[6px] transition-colors cursor-pointer"
-                      >
-                        Test Mobile Alert
-                      </button>
-                    </>
+                  <button
+                    type="button"
+                    onClick={toggleNotifMute}
+                    className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+                    <span>{notifMuted ? 'Turn On Notifications' : 'Pause Notifications'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendTestMobileAlert()}
+                    className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-900 text-xs font-medium rounded-[6px] transition-colors cursor-pointer"
+                  >
+                    Send Test Alert
+                  </button>
+                  {notifPermission === 'denied' && (
+                    <span className="text-[11px] text-amber-700">
+                      Browser popups are blocked in browser settings; live sound &amp; in-app alerts remain active.
+                    </span>
                   )}
                 </div>
               )}

@@ -100,5 +100,20 @@ service cloud.firestore {
     match /notifications/{notifId} {
       allow read, write: if true;
     }
+
+    // POS Suppliers Directory:
+    match /suppliers/{supplierId} {
+      allow read, write: if true;
+    }
+
+    // POS Stock Purchases Ledger:
+    match /purchases/{purchaseId} {
+      allow read, write: if true;
+    }
+
+    // POS Business Expenses Ledger:
+    match /expenses/{expenseId} {
+      allow read, write: if true;
+    }
   }
 }

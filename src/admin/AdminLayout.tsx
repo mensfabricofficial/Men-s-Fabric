@@ -19,6 +19,12 @@ import {
   Smartphone,
   Bell,
   BellRing,
+  Receipt,
+  GitBranch,
+  ShoppingCart,
+  Building2,
+  Wallet,
+  TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -27,9 +33,15 @@ import { adminDeviceService } from '../services/adminDeviceService';
 
 export type AdminTab =
   | 'dashboard'
-  | 'products'
-  | 'categories'
+  | 'pos'
+  | 'pnl'
+  | 'pipeline'
   | 'orders'
+  | 'products'
+  | 'purchases'
+  | 'suppliers'
+  | 'expenses'
+  | 'categories'
   | 'customers'
   | 'reviews'
   | 'coupons'
@@ -53,7 +65,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   onNavigateHome,
   children,
 }) => {
-  const { currentUser, logOut } = useAuth();
+  const { currentUser, staffProfile, isSuperAdmin, hasMenuPermission, logOut } = useAuth();
   const { permission, requestMobileAlerts } = useNotifications();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingDeviceCount, setPendingDeviceCount] = useState(0);
@@ -65,11 +77,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     return () => unsub();
   }, []);
 
-  const menuItems: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
-    { id: 'products', label: 'Products', icon: <Package className="w-4 h-4" /> },
+  const allMenuItems: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'dashboard', label: 'POS Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'pos', label: 'POS Counter Sale', icon: <Receipt className="w-4 h-4" /> },
+    { id: 'pnl', label: 'Profit & Loss / Targets', icon: <TrendingUp className="w-4 h-4" /> },
+    { id: 'pipeline', label: 'Order Workflow', icon: <GitBranch className="w-4 h-4" /> },
+    { id: 'orders', label: 'Orders & Invoices', icon: <ShoppingBag className="w-4 h-4" /> },
+    { id: 'products', label: 'Products & Stock', icon: <Package className="w-4 h-4" /> },
+    { id: 'purchases', label: 'Purchases', icon: <ShoppingCart className="w-4 h-4" /> },
+    { id: 'suppliers', label: 'Suppliers', icon: <Building2 className="w-4 h-4" /> },
+    { id: 'expenses', label: 'Expenses Entry', icon: <Wallet className="w-4 h-4" /> },
     { id: 'categories', label: 'Categories', icon: <FolderTree className="w-4 h-4" /> },
-    { id: 'orders', label: 'Orders', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'customers', label: 'Customers', icon: <Users className="w-4 h-4" /> },
     { id: 'reviews', label: 'Reviews', icon: <MessageSquare className="w-4 h-4" /> },
     { id: 'coupons', label: 'Coupons', icon: <Ticket className="w-4 h-4" /> },
@@ -77,11 +95,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'banners', label: 'Banners', icon: <ImageIcon className="w-4 h-4" /> },
     { id: 'notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" /> },
     { id: 'settings', label: 'Store Settings', icon: <Settings className="w-4 h-4" /> },
-    { id: 'admins', label: 'Admins & Staff', icon: <ShieldCheck className="w-4 h-4" /> },
+    { id: 'admins', label: 'Staff & Roles', icon: <ShieldCheck className="w-4 h-4" /> },
     { id: 'audit', label: 'Audit Logs', icon: <History className="w-4 h-4" /> },
   ];
 
+  const menuItems = allMenuItems.filter((item) => hasMenuPermission(item.id));
+
   const handleOpenDeviceApprovals = () => {
+    if (!hasMenuPermission('settings')) return;
     sessionStorage.setItem('selvee_open_devices_tab', '1');
     onSelectTab('settings');
   };
@@ -174,8 +195,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           
           <div className="pt-2 border-t border-neutral-900 flex items-center justify-between text-xs text-neutral-400">
             <div className="truncate mr-2">
-              <p className="font-semibold text-neutral-200 text-[11px] truncate">{currentUser?.email}</p>
-              <p className="text-[10px] text-neutral-500">Super Administrator</p>
+              <p className="font-semibold text-neutral-200 text-[11px] truncate">
+                {staffProfile?.name || currentUser?.email || 'Administrator'}
+              </p>
+              <p className="text-[10px] text-neutral-500 truncate">
+                {staffProfile?.designation || (isSuperAdmin ? 'Super Administrator' : 'Staff Member')}
+              </p>
             </div>
             <button
               onClick={() => logOut()}
@@ -200,6 +225,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </div>
             <button
               type="button"
+              data-notif-trigger="true"
               onClick={() => requestMobileAlerts()}
               className="px-3.5 py-1.5 bg-white text-black font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer w-fit text-[11px] shrink-0"
             >
@@ -207,7 +233,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
           </div>
         )}
-        {pendingDeviceCount > 0 && currentTab !== 'settings' && (
+        {pendingDeviceCount > 0 && currentTab !== 'settings' && hasMenuPermission('settings') && (
           <div className="mb-5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-amber-900">
               <Smartphone className="w-4 h-4 text-amber-600 shrink-0" />

@@ -17,15 +17,29 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { ADMIN_CONFIG } from '../lib/firebaseConfig';
-import { CustomerProfile } from '../types';
+import { AdminTabId, CustomerProfile, OrderActionPermission, StaffAccount } from '../types';
+import { staffService } from '../services/staffService';
+
+const STAFF_SESSION_KEY = 'mf_admin_staff_session_v1';
+
+const PRIMARY_OWNER_EMAILS = new Set([
+  'admin@mensfabric.com',
+  'mensfabricofficial@gmail.com',
+  'me@admin.com',
+]);
 
 interface AuthContextType {
   currentUser: User | null;
   customerProfile: CustomerProfile | null;
   profileLoaded: boolean;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
+  staffProfile: StaffAccount | null;
   loading: boolean;
+  hasMenuPermission: (tab: AdminTabId) => boolean;
+  hasOrderPermission: (action: OrderActionPermission) => boolean;
   signIn: (emailOrPhone: string, pass: string) => Promise<User>;
+  signInAdminStaff: (identifier: string, passOrPin: string) => Promise<void>;
   signUp: (email: string, pass: string, name: string, phone: string) => Promise<User>;
   signInWithGoogle: () => Promise<User>;
   signInWithFacebook: () => Promise<User>;
@@ -62,67 +76,93 @@ export const saveLocalCustomer = (profile: CustomerProfile) => {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const readStoredStaffSession = (): StaffAccount | null => {
+  try {
+    const raw = localStorage.getItem(STAFF_SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as StaffAccount;
+      if (parsed && parsed.id && parsed.active !== false) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState<boolean>(false);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [staffSession, setStaffSession] = useState<StaffAccount | null>(() => readStoredStaffSession());
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => Boolean(readStoredStaffSession()));
+  const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(() => {
+    const stored = readStoredStaffSession();
+    return Boolean(stored && (stored.isSuperAdmin || stored.fullAccess || stored.role === 'super_admin'));
+  });
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Check admin authorization securely
-  const checkAdminStatus = async (user: User): Promise<boolean> => {
+  const isPrimaryOwner = (user: User | null): boolean => {
+    if (!user) return false;
     const emailLower = user.email?.trim().toLowerCase() || '';
-    // 1. Direct configured UID match or Primary Admin emails
-    if (
+    return (
       user.uid === ADMIN_CONFIG.PRIMARY_ADMIN_UID ||
       user.uid === 'lw3mX9AivNduzBGundo3rB2jZcp2' ||
-      emailLower === 'admin@mensfabric.com' ||
-      emailLower === 'mensfabricofficial@gmail.com' ||
-      emailLower === 'me@admin.com' ||
+      PRIMARY_OWNER_EMAILS.has(emailLower) ||
       ADMIN_CONFIG.SECONDARY_ADMIN_UIDS.includes(user.uid)
-    ) {
-      return true;
+    );
+  };
+
+  // Check admin & staff role authorization securely
+  const checkAdminStatus = async (
+    user: User
+  ): Promise<{ admin: boolean; superAdmin: boolean; matchedStaff: StaffAccount | null }> => {
+    const emailLower = user.email?.trim().toLowerCase() || '';
+
+    // 1. Primary owner check
+    if (isPrimaryOwner(user)) {
+      return { admin: true, superAdmin: true, matchedStaff: null };
     }
 
-    // 2. Custom claims (if set via Firebase Admin SDK)
-    try {
-      const tokenResult = await getIdTokenResult(user);
-      if (tokenResult.claims.admin === true) {
-        return true;
-      }
-    } catch {
-      // Continue to check Firestore
-    }
-
-    // 3. Admin collection document lookup by UID
-    try {
-      const adminDoc = await getDoc(doc(db, 'admins', user.uid));
-      if (adminDoc.exists() && adminDoc.data()?.active !== false) {
-        return true;
-      }
-    } catch {
-      // Permission denied or doesn't exist
-    }
-
-    // 4. Lookup in settings/adminsList by registered email
+    // 2. Lookup in Staff Directory (settings/adminsList) first so role & permissions attach accurately
     try {
       if (emailLower) {
-        const snap = await getDoc(doc(db, 'settings', 'adminsList'));
-        if (snap.exists()) {
-          const adminsMap = snap.data()?.admins || {};
-          const matched = Object.values(adminsMap).find(
-            (a: any) => a.email?.toLowerCase() === emailLower && a.active !== false
+        const list = await staffService.fetchAllStaff();
+        const matched = list.find(
+          (a) => a.email.toLowerCase() === emailLower && a.active !== false
+        );
+        if (matched) {
+          const superFlag = Boolean(
+            matched.isSuperAdmin || matched.fullAccess || matched.role === 'super_admin'
           );
-          if (matched) {
-            return true;
-          }
+          return { admin: true, superAdmin: superFlag, matchedStaff: matched };
         }
       }
     } catch {
       // Ignore
     }
 
-    return false;
+    // 3. Custom claims (if set via Firebase Admin SDK)
+    try {
+      const tokenResult = await getIdTokenResult(user);
+      if (tokenResult.claims.admin === true) {
+        return { admin: true, superAdmin: true, matchedStaff: null };
+      }
+    } catch {
+      // Continue to check Firestore
+    }
+
+    // 4. Admin collection document lookup by UID
+    try {
+      const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+      if (adminDoc.exists() && adminDoc.data()?.active !== false) {
+        const role = adminDoc.data()?.role;
+        return { admin: true, superAdmin: role === 'super_admin', matchedStaff: null };
+      }
+    } catch {
+      // Permission denied or doesn't exist
+    }
+
+    return { admin: false, superAdmin: false, matchedStaff: null };
   };
 
   const getLocalCustomerDeviceId = (): string => {
@@ -284,20 +324,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUser(user);
       if (user) {
         setProfileLoaded(false);
-        const adminStatus = await checkAdminStatus(user);
-        setIsAdmin(adminStatus);
+        const status = await checkAdminStatus(user);
+        const storedStaff = readStoredStaffSession();
+        if (status.admin) {
+          setIsAdmin(true);
+          setIsSuperAdmin(status.superAdmin);
+          setStaffSession(status.matchedStaff);
+        } else if (storedStaff) {
+          setIsAdmin(true);
+          setIsSuperAdmin(
+            Boolean(storedStaff.isSuperAdmin || storedStaff.fullAccess || storedStaff.role === 'super_admin')
+          );
+          setStaffSession(storedStaff);
+        } else {
+          setIsAdmin(false);
+          setIsSuperAdmin(false);
+          setStaffSession(null);
+        }
         setLoading(false);
         void loadCustomerProfile(user.uid, user);
       } else {
-        setIsAdmin(false);
+        const storedStaff = readStoredStaffSession();
         setCustomerProfile(null);
         setProfileLoaded(false);
+        if (storedStaff) {
+          setStaffSession(storedStaff);
+          setIsAdmin(true);
+          setIsSuperAdmin(
+            Boolean(storedStaff.isSuperAdmin || storedStaff.fullAccess || storedStaff.role === 'super_admin')
+          );
+        } else {
+          setIsAdmin(false);
+          setIsSuperAdmin(false);
+          setStaffSession(null);
+        }
         setLoading(false);
       }
     });
 
     return () => unsubscribe();
   }, []);
+
+  // Keep live staff session synced & heartbeat active while logged in as admin/staff
+  useEffect(() => {
+    if (!isAdmin) return;
+    const interval = setInterval(() => {
+      void staffService.touchCurrentSession();
+    }, 60000);
+
+    const unsub = staffService.subscribeToStaff((list) => {
+      const targetEmail = (staffSession?.email || currentUser?.email || '').trim().toLowerCase();
+      if (!targetEmail || isPrimaryOwner(currentUser)) return;
+      const latest = list.find((s) => s.email.toLowerCase() === targetEmail || s.id === staffSession?.id);
+      if (latest) {
+        if (latest.active === false) {
+          try {
+            localStorage.removeItem(STAFF_SESSION_KEY);
+          } catch {
+            // ignore
+          }
+          setStaffSession(null);
+          setIsAdmin(false);
+          setIsSuperAdmin(false);
+        } else {
+          setStaffSession(latest);
+          setIsSuperAdmin(Boolean(latest.isSuperAdmin || latest.fullAccess || latest.role === 'super_admin'));
+          if (readStoredStaffSession()) {
+            try {
+              localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(latest));
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
+  }, [isAdmin, staffSession?.id, staffSession?.email, currentUser]);
 
   const resolveEmailFromIdentifier = async (identifier: string): Promise<string> => {
     const trimmed = identifier.trim();
@@ -348,15 +455,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (emailOrPhone: string, pass: string): Promise<User> => {
     const resolvedEmail = await resolveEmailFromIdentifier(emailOrPhone);
     const cred = await signInWithEmailAndPassword(auth, resolvedEmail.trim(), pass);
-    const adminStatus = await checkAdminStatus(cred.user);
-    setIsAdmin(adminStatus);
+    const status = await checkAdminStatus(cred.user);
+    setIsAdmin(status.admin);
+    setIsSuperAdmin(status.superAdmin);
+    setStaffSession(status.matchedStaff);
     await loadCustomerProfile(cred.user.uid, cred.user);
     return cred.user;
   };
 
+  const signInAdminStaff = async (identifier: string, passOrPin: string): Promise<void> => {
+    const cleanId = identifier.trim();
+    const cleanSecret = passOrPin.trim();
+    if (!cleanId || !cleanSecret) {
+      throw new Error('Please enter your Email or Username and Password / PIN.');
+    }
+
+    // 1. Check Staff Directory credentials first (Username or Email + Password / PIN)
+    const staffMatch = await staffService.verifyStaffCredentials(cleanId, cleanSecret);
+    if (staffMatch) {
+      if (staffMatch.active === false) {
+        throw new Error('This staff account is currently suspended. Contact Super Admin.');
+      }
+      try {
+        localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(staffMatch));
+      } catch {
+        // ignore
+      }
+      setStaffSession(staffMatch);
+      setIsAdmin(true);
+      setIsSuperAdmin(
+        Boolean(staffMatch.isSuperAdmin || staffMatch.fullAccess || staffMatch.role === 'super_admin')
+      );
+      await staffService.recordStaffLogin({
+        staffId: staffMatch.id,
+        staffName: staffMatch.name,
+        designation: staffMatch.designation,
+        email: staffMatch.email,
+        username: staffMatch.username,
+      });
+      return;
+    }
+
+    // 2. Fallback to Firebase Auth email + password sign in (Primary Owner or Firebase Admin)
+    const emailCandidate = cleanId.includes('@')
+      ? cleanId
+      : (await staffService.findStaffByIdentifier(cleanId))?.email || cleanId;
+
+    const cred = await signInWithEmailAndPassword(auth, emailCandidate.trim(), cleanSecret);
+    const status = await checkAdminStatus(cred.user);
+    if (!status.admin) {
+      throw new Error('This account does not have staff or administrator permissions.');
+    }
+    setIsAdmin(true);
+    setIsSuperAdmin(status.superAdmin);
+    setStaffSession(status.matchedStaff);
+    await staffService.recordStaffLogin({
+      staffId: status.matchedStaff?.id || cred.user.uid,
+      staffName: status.matchedStaff?.name || cred.user.displayName || 'Super Admin',
+      designation: status.matchedStaff?.designation || 'Super Administrator',
+      email: (cred.user.email || '').toLowerCase(),
+      username: status.matchedStaff?.username || 'admin',
+    });
+    await loadCustomerProfile(cred.user.uid, cred.user);
+  };
+
   const finalizeSocialSignIn = async (user: User): Promise<User> => {
-    const adminStatus = await checkAdminStatus(user);
-    setIsAdmin(adminStatus);
+    const status = await checkAdminStatus(user);
+    setIsAdmin(status.admin);
+    setIsSuperAdmin(status.superAdmin);
+    setStaffSession(status.matchedStaff);
 
     const docRef = doc(db, 'users', user.uid);
     let existingProfile: CustomerProfile | null = null;
@@ -453,8 +620,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn("Failed to dispatch initial verification email:", verErr);
     }
 
-    const adminStatus = await checkAdminStatus(cred.user);
-    setIsAdmin(adminStatus);
+    const status = await checkAdminStatus(cred.user);
+    setIsAdmin(status.admin);
+    setIsSuperAdmin(status.superAdmin);
+    setStaffSession(status.matchedStaff);
     return cred.user;
   };
 
@@ -515,7 +684,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logOut = async () => {
-    await signOut(auth);
+    await staffService.recordStaffLogout().catch(() => {});
+    try {
+      localStorage.removeItem(STAFF_SESSION_KEY);
+    } catch {
+      // ignore
+    }
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore if staff PIN session only
+    }
     try {
       const { adminDeviceService } = await import('../services/adminDeviceService');
       adminDeviceService.clearSessionAccessKeyVerified();
@@ -524,7 +703,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setCurrentUser(null);
     setCustomerProfile(null);
+    setStaffSession(null);
     setIsAdmin(false);
+    setIsSuperAdmin(false);
   };
 
   const resetPassword = async (emailOrPhone: string) => {
@@ -538,6 +719,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const hasMenuPermission = useCallback(
+    (tab: AdminTabId): boolean => staffService.hasMenuAccess(staffSession, isSuperAdmin, tab),
+    [staffSession, isSuperAdmin]
+  );
+
+  const hasOrderPermission = useCallback(
+    (action: OrderActionPermission): boolean =>
+      staffService.hasOrderActionAccess(staffSession, isSuperAdmin, action),
+    [staffSession, isSuperAdmin]
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -545,8 +737,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         customerProfile,
         profileLoaded,
         isAdmin,
+        isSuperAdmin,
+        staffProfile: staffSession,
         loading,
+        hasMenuPermission,
+        hasOrderPermission,
         signIn,
+        signInAdminStaff,
         signUp,
         signInWithGoogle,
         signInWithFacebook,

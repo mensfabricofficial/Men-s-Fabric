@@ -74,8 +74,10 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
     customerVerificationBlockReason,
     enableAllNotificationsOneClick,
     toggleMute: toggleNotifMute,
+    sendTestMobileAlert,
   } = useNotifications();
   const [enablingNotifs, setEnablingNotifs] = useState(false);
+  const [notifTestStatus, setNotifTestStatus] = useState<string | null>(null);
 
   // Auth Form State
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
@@ -1085,6 +1087,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                     ? 'Paused'
                     : notifPermission === 'denied'
                     ? 'Blocked'
+                    : notifPermission === 'unsupported'
+                    ? 'Unavailable'
                     : 'Off'}
                 </span>
               </div>
@@ -1097,37 +1101,81 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                 <p className="text-xs text-amber-800">
                   Verify your email address first to enable browser notifications.
                 </p>
+              ) : notifPermission === 'unsupported' ? (
+                <p className="text-xs text-neutral-600 leading-relaxed">
+                  Browser notifications are unavailable in this browser view. On iPhone/iPad Safari, tap Share → &ldquo;Add to Home Screen&rdquo; and open the app from your Home Screen.
+                </p>
               ) : notifPermission === 'denied' ? (
                 <p className="text-xs text-neutral-600">
                   Browser notifications are blocked in your browser settings. Allow notifications for this site to receive updates.
                 </p>
               ) : notifPermission !== 'granted' || isCustomerDeviceBlocked ? (
-                <button
-                  type="button"
-                  data-notif-trigger="true"
-                  disabled={enablingNotifs}
-                  onClick={async () => {
-                    setEnablingNotifs(true);
-                    try {
-                      await enableAllNotificationsOneClick();
-                    } finally {
-                      setEnablingNotifs(false);
-                    }
-                  }}
-                  className="px-5 py-2.5 bg-black text-white text-xs font-semibold rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
-                >
-                  <BellRing className="w-4 h-4" />
-                  <span>{enablingNotifs ? 'Enabling...' : 'Enable Browser Notifications'}</span>
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    data-notif-trigger="true"
+                    disabled={enablingNotifs}
+                    onClick={async () => {
+                      setEnablingNotifs(true);
+                      setNotifTestStatus(null);
+                      try {
+                        const res = await enableAllNotificationsOneClick();
+                        if (!res.granted) {
+                          setNotifTestStatus(
+                            'If no browser popup appeared, open this site directly in Chrome/Safari (not an in-app browser) and allow Notifications in site settings.'
+                          );
+                        }
+                      } finally {
+                        setEnablingNotifs(false);
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-black text-white text-xs font-semibold rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
+                  >
+                    <BellRing className="w-4 h-4" />
+                    <span>{enablingNotifs ? 'Enabling...' : 'Enable Browser Notifications'}</span>
+                  </button>
+                  {notifTestStatus && (
+                    <p className="text-xs text-amber-800 leading-relaxed">{notifTestStatus}</p>
+                  )}
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={toggleNotifMute}
-                  className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-                  <span>{notifMuted ? 'Turn On' : 'Pause'}</span>
-                </button>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNotifTestStatus(null);
+                        toggleNotifMute();
+                      }}
+                      className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+                      <span>{notifMuted ? 'Turn On' : 'Pause'}</span>
+                    </button>
+                    {!notifMuted && (
+                      <button
+                        type="button"
+                        data-notif-trigger="true"
+                        onClick={async () => {
+                          setNotifTestStatus(null);
+                          const ok = await sendTestMobileAlert();
+                          setNotifTestStatus(
+                            ok
+                              ? 'Test notification sent. Check your phone/desktop notification bar.'
+                              : 'Could not display browser notification. Check site notification permissions.'
+                          );
+                        }}
+                        className="px-4 py-2 bg-black text-white text-xs font-medium rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Test Popup</span>
+                      </button>
+                    )}
+                  </div>
+                  {notifTestStatus && (
+                    <p className="text-xs text-neutral-600">{notifTestStatus}</p>
+                  )}
+                </div>
               )}
             </div>
           </div>

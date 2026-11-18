@@ -22,9 +22,12 @@ import {
   RefreshCw,
   Sparkles,
   FileText,
-  Receipt
+  Receipt,
+  Package,
+  RotateCcw,
+  Lock,
 } from 'lucide-react';
-import { Order, OrderStatus, PaymentStatus, PaymentMethod } from '../types';
+import { Order, OrderPipelineStage, OrderStatus, PaymentStatus } from '../types';
 import { orderService } from '../services/orderService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
@@ -34,7 +37,7 @@ import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/In
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
 
 export const AdminOrders: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, staffProfile, hasOrderPermission } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -118,19 +121,66 @@ export const AdminOrders: React.FC = () => {
     }
   };
 
-  const handleUpdatePayment = async (payStatus: PaymentStatus) => {
+  const canApprove = hasOrderPermission('order_approve');
+  const canVerifyPayment = hasOrderPermission('payment_verify');
+  const canPack = hasOrderPermission('packaging');
+  const canShip = hasOrderPermission('shipping');
+  const canReturn = hasOrderPermission('order_return');
+  const canCancel = hasOrderPermission('order_cancel');
+
+  const actorDisplayName =
+    staffProfile?.name || currentUser?.displayName || currentUser?.email || 'Authorized Staff';
+
+  const handleQuickPipelineAction = async (
+    nextStage: OrderPipelineStage,
+    extra?: { markPaid?: boolean; dispatchShipped?: boolean }
+  ) => {
     if (!selectedOrder) return;
+    setUpdating(true);
+    try {
+      const updated = await orderService.transferOrderStage({
+        orderId: selectedOrder.id,
+        nextStage,
+        handlerName: actorDisplayName,
+        handlerEmail: staffProfile?.email || currentUser?.email || undefined,
+        note: statusNote.trim() || undefined,
+        markPaymentStatus: extra?.markPaid ? 'paid' : undefined,
+        overrideOrderStatus: extra?.dispatchShipped ? 'shipped' : undefined,
+      });
+      if (updated) {
+        setSelectedOrder(updated);
+        setNewStatus(updated.orderStatus);
+        setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+        settingsService
+          .logAdminAction(
+            currentUser?.uid || staffProfile?.id || 'staff',
+            currentUser?.email || staffProfile?.email || '',
+            'ORDER_WORKFLOW_ACTION',
+            updated.orderNumber,
+            `${updated.orderStatus} by ${actorDisplayName}`
+          )
+          .catch(() => {});
+        setActionToast(`Order ${updated.orderNumber} updated by ${actorDisplayName}`);
+        setTimeout(() => setActionToast(null), 3500);
+      }
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleUpdatePayment = async (payStatus: PaymentStatus) => {
+    if (!selectedOrder || !canVerifyPayment) return;
     try {
       await orderService.updatePaymentStatus(selectedOrder.id, payStatus);
       setSelectedOrder((prev) => (prev ? { ...prev, paymentStatus: payStatus } : prev));
       setOrders((prev) =>
         prev.map((o) => (o.id === selectedOrder.id ? { ...o, paymentStatus: payStatus } : o))
       );
-      if (currentUser) {
+      if (currentUser || staffProfile) {
         settingsService
           .logAdminAction(
-            currentUser.uid,
-            currentUser.email || '',
+            currentUser?.uid || staffProfile?.id || 'staff',
+            currentUser?.email || staffProfile?.email || '',
             'UPDATE_PAYMENT_STATUS',
             selectedOrder.orderNumber,
             `Payment status set to ${payStatus}`
@@ -413,6 +463,17 @@ export const AdminOrders: React.FC = () => {
                         'bg-neutral-100 text-neutral-800'
                       }`}>
                         {ord.orderStatus}
+                      </span>
+                      <span className="block text-[10px] text-neutral-500 mt-1">
+                        {(() => {
+                          const st = orderService.getOrderPipelineStage(ord);
+                          if (st === 'order_verification') return '1. Order Verify';
+                          if (st === 'payment_verification') return '2. Payment Verify';
+                          if (st === 'inventory_packing') return '3. Stock & Pack';
+                          if (st === 'delivery_dispatch') return '4. Delivery Desk';
+                          if (st === 'completed') return ord.orderChannel === 'pos' ? 'POS Sale' : 'Completed';
+                          return 'Cancelled';
+                        })()}
                       </span>
                     </td>
                     <td className="p-3.5 text-right whitespace-nowrap">
@@ -757,16 +818,19 @@ export const AdminOrders: React.FC = () => {
                 {/* Quick Payment Status Actions in Admin */}
                 <div className="pt-3 border-t border-neutral-200">
                   <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
-                    Update Payment Status:
+                    Update Payment Status {!canVerifyPayment ? '(Payment Permission Required)' : ''}:
                   </span>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
+                      disabled={!canVerifyPayment}
                       onClick={() => handleUpdatePayment('paid')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        selectedOrder.paymentStatus === 'paid'
-                          ? 'bg-emerald-600 text-white shadow-xs'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700'
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        !canVerifyPayment
+                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
+                          : selectedOrder.paymentStatus === 'paid'
+                          ? 'bg-emerald-600 text-white shadow-xs cursor-pointer'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700 cursor-pointer'
                       }`}
                     >
                       <CheckCircle className="w-3.5 h-3.5" />
@@ -774,11 +838,14 @@ export const AdminOrders: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      disabled={!canVerifyPayment}
                       onClick={() => handleUpdatePayment('pending')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        selectedOrder.paymentStatus === 'pending'
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700'
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        !canVerifyPayment
+                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
+                          : selectedOrder.paymentStatus === 'pending'
+                          ? 'bg-amber-600 text-white shadow-xs cursor-pointer'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700 cursor-pointer'
                       }`}
                     >
                       <Clock className="w-3.5 h-3.5" />
@@ -786,11 +853,14 @@ export const AdminOrders: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      disabled={!canVerifyPayment}
                       onClick={() => handleUpdatePayment('failed')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        selectedOrder.paymentStatus === 'failed'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700'
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        !canVerifyPayment
+                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
+                          : selectedOrder.paymentStatus === 'failed'
+                          ? 'bg-red-600 text-white shadow-xs cursor-pointer'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700 cursor-pointer'
                       }`}
                     >
                       <XCircle className="w-3.5 h-3.5" />
@@ -798,11 +868,14 @@ export const AdminOrders: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      disabled={!canVerifyPayment}
                       onClick={() => handleUpdatePayment('refunded')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        selectedOrder.paymentStatus === 'refunded'
-                          ? 'bg-purple-600 text-white shadow-xs'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700'
+                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        !canVerifyPayment
+                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
+                          : selectedOrder.paymentStatus === 'refunded'
+                          ? 'bg-purple-600 text-white shadow-xs cursor-pointer'
+                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700 cursor-pointer'
                       }`}
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
@@ -812,11 +885,171 @@ export const AdminOrders: React.FC = () => {
                 </div>
               </div>
 
+              {/* Staff Approval Attribution Summary */}
+              {(selectedOrder.pipeline?.verifiedBy ||
+                selectedOrder.pipeline?.paymentVerifiedBy ||
+                selectedOrder.pipeline?.inventoryHandledBy ||
+                selectedOrder.pipeline?.deliveryHandledBy ||
+                selectedOrder.pipeline?.returnedBy ||
+                selectedOrder.pipeline?.cancelledBy) && (
+                <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] print:hidden">
+                  {selectedOrder.pipeline?.verifiedBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Approved By</span>
+                      <b className="text-neutral-900">{selectedOrder.pipeline.verifiedBy}</b>
+                    </div>
+                  )}
+                  {selectedOrder.pipeline?.paymentVerifiedBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Payment Verified By</span>
+                      <b className="text-neutral-900">{selectedOrder.pipeline.paymentVerifiedBy}</b>
+                    </div>
+                  )}
+                  {selectedOrder.pipeline?.inventoryHandledBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Packed By</span>
+                      <b className="text-neutral-900">{selectedOrder.pipeline.inventoryHandledBy}</b>
+                    </div>
+                  )}
+                  {selectedOrder.pipeline?.deliveryHandledBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Delivery Handled By</span>
+                      <b className="text-neutral-900">{selectedOrder.pipeline.deliveryHandledBy}</b>
+                    </div>
+                  )}
+                  {selectedOrder.pipeline?.returnedBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Returned By</span>
+                      <b className="text-amber-800">{selectedOrder.pipeline.returnedBy}</b>
+                    </div>
+                  )}
+                  {selectedOrder.pipeline?.cancelledBy && (
+                    <div>
+                      <span className="text-neutral-400 block">Cancelled By</span>
+                      <b className="text-red-700">{selectedOrder.pipeline.cancelledBy}</b>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Admin Actions Panel (Hidden in print) */}
               <div className="pt-4 border-t border-neutral-200 space-y-4 print:hidden">
-                <h4 className="font-bold uppercase tracking-wider text-neutral-900">
-                  Update Order Fulfillment Status
-                </h4>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <h4 className="font-bold uppercase tracking-wider text-neutral-900">
+                    Order Action Controls (By Assigned Role)
+                  </h4>
+                  <span className="text-[11px] text-neutral-500">
+                    Actor: <b className="text-neutral-800">{actorDisplayName}</b>
+                  </span>
+                </div>
+
+                {/* All Quick Action Buttons governed by permissions */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={updating || !canApprove}
+                    onClick={() => handleQuickPipelineAction('payment_verification')}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
+                      canApprove
+                        ? 'bg-black text-white hover:bg-neutral-800 cursor-pointer'
+                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canApprove && <Lock className="w-3 h-3" />}
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Order Approve</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canVerifyPayment}
+                    onClick={() => handleQuickPipelineAction('inventory_packing', { markPaid: true })}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
+                      canVerifyPayment
+                        ? 'bg-emerald-700 text-white hover:bg-emerald-800 cursor-pointer'
+                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canVerifyPayment && <Lock className="w-3 h-3" />}
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>Payment Verify</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canPack}
+                    onClick={() => handleQuickPipelineAction('delivery_dispatch')}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
+                      canPack
+                        ? 'bg-neutral-800 text-white hover:bg-black cursor-pointer'
+                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canPack && <Lock className="w-3 h-3" />}
+                    <Package className="w-3.5 h-3.5" />
+                    <span>Packaging</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canShip}
+                    onClick={() => handleQuickPipelineAction('delivery_dispatch', { dispatchShipped: true })}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
+                      canShip
+                        ? 'bg-neutral-900 text-white hover:bg-black cursor-pointer'
+                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canShip && <Lock className="w-3 h-3" />}
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>Shipping</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canShip}
+                    onClick={() => handleQuickPipelineAction('completed', { markPaid: true })}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
+                      canShip
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
+                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canShip && <Lock className="w-3 h-3" />}
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Delivered</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canReturn}
+                    onClick={() => handleQuickPipelineAction('returned')}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded border inline-flex items-center gap-1.5 ${
+                      canReturn
+                        ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 cursor-pointer'
+                        : 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canReturn && <Lock className="w-3 h-3" />}
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Return</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={updating || !canCancel}
+                    onClick={() => handleQuickPipelineAction('cancelled')}
+                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded border inline-flex items-center gap-1.5 ${
+                      canCancel
+                        ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer'
+                        : 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {!canCancel && <Lock className="w-3 h-3" />}
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Cancel</span>
+                  </button>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -838,7 +1071,7 @@ export const AdminOrders: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-neutral-600 font-semibold mb-1">Status Update Note (Timeline)</label>
+                    <label className="block text-neutral-600 font-semibold mb-1">Action / Status Note</label>
                     <input
                       type="text"
                       value={statusNote}
@@ -850,21 +1083,13 @@ export const AdminOrders: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5">
-                  {selectedOrder.orderStatus === 'pending' && (
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateStatus('confirmed')}
-                      disabled={updating}
-                      className="px-5 py-2.5 bg-emerald-600 text-white font-bold uppercase tracking-wider rounded hover:bg-emerald-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>{updating ? 'Updating...' : 'Confirm Order Now'}</span>
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={() => handleUpdateStatus()}
-                    disabled={updating}
+                    disabled={
+                      updating ||
+                      !(canApprove || canVerifyPayment || canPack || canShip || canReturn || canCancel)
+                    }
                     className="px-5 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
                   >
                     {updating ? 'Updating...' : 'Save Fulfillment Status'}

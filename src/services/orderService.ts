@@ -14,7 +14,18 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
-import { CartItem, Order, OrderStatus, PaymentStatus, ShippingAddress, PaymentMethod, PaymentDetails } from '../types';
+import {
+  CartItem,
+  Order,
+  OrderItem,
+  OrderPipelineData,
+  OrderPipelineStage,
+  OrderStatus,
+  PaymentStatus,
+  ShippingAddress,
+  PaymentMethod,
+  PaymentDetails,
+} from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { getLocalDeliveryZones, settingsService } from './settingsService';
 import { productService } from './productService';
@@ -220,6 +231,11 @@ export const orderService = {
               updatedVariants: variantUpdated ? updatedVariants : (productData.variants || []),
             });
 
+            const resolvedUnitCost =
+              typeof productData.costPrice === 'number' && productData.costPrice > 0
+                ? productData.costPrice
+                : undefined;
+
             verifiedOrderItems.push({
               productId: cartItem.productId,
               productName: productData.name,
@@ -228,6 +244,7 @@ export const orderService = {
               color: cartItem.color || 'Standard',
               quantity: cartItem.quantity,
               unitPrice,
+              ...(resolvedUnitCost ? { unitCost: resolvedUnitCost } : {}),
               totalPrice: itemTotal,
               sku: cartItem.sku || productData.sku || '',
             });
@@ -338,6 +355,18 @@ export const orderService = {
             dueOnDelivery: isAdvanceCod ? Math.max(0, calculatedSubtotal - calculatedDiscount) : (paymentMethod !== 'cod' ? 0 : grandTotal),
             paymentStatus: 'pending',
             orderStatus: 'pending',
+            orderChannel: 'online',
+            pipeline: {
+              currentStage: 'order_verification',
+              handoffHistory: [
+                {
+                  stage: 'order_verification',
+                  handlerName: 'Online Checkout',
+                  action: 'New order queued for Order Verification Desk',
+                  timestamp: new Date().toISOString(),
+                },
+              ],
+            },
             timeline: [
               {
                 status: 'pending',
@@ -453,10 +482,16 @@ export const orderService = {
         
         // Resilient fallback: Save order document directly so customer checkout is never blocked
         let fallbackSubtotal = 0;
+        const localCatalogProducts = productService.getLocalProducts();
         const fallbackItems = items.map((item) => {
           const price = item.salePrice || item.price;
           const total = price * item.quantity;
           fallbackSubtotal += total;
+          const matchedProd = localCatalogProducts.find((p) => p.id === item.productId);
+          const resolvedUnitCost =
+            matchedProd && typeof matchedProd.costPrice === 'number' && matchedProd.costPrice > 0
+              ? matchedProd.costPrice
+              : undefined;
           return {
             productId: item.productId,
             productName: item.productName,
@@ -465,6 +500,7 @@ export const orderService = {
             color: item.color || 'Standard',
             quantity: item.quantity,
             unitPrice: price,
+            ...(resolvedUnitCost ? { unitCost: resolvedUnitCost } : {}),
             totalPrice: total,
             sku: item.sku || '',
           };
@@ -533,6 +569,18 @@ export const orderService = {
           dueOnDelivery: paymentMethod !== 'cod' ? 0 : Math.max(0, fallbackSubtotal - fallbackDiscount),
           paymentStatus: 'pending',
           orderStatus: 'pending',
+          orderChannel: 'online',
+          pipeline: {
+            currentStage: 'order_verification',
+            handoffHistory: [
+              {
+                stage: 'order_verification',
+                handlerName: 'Online Checkout',
+                action: 'New order queued for Order Verification Desk',
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          },
           timeline: [
             {
               status: 'pending',
@@ -1186,5 +1234,359 @@ export const orderService = {
       reader.onerror = () => resolve('');
       reader.readAsDataURL(file);
     });
+  },
+
+  // Derive the effective 4-stage workflow position for both new and legacy orders
+  getOrderPipelineStage(ord: Order): OrderPipelineStage {
+    if (ord.orderStatus === 'returned') {
+      return 'returned';
+    }
+    if (ord.orderStatus === 'cancelled') {
+      return 'cancelled';
+    }
+    if (ord.orderStatus === 'delivered' || ord.orderChannel === 'pos') {
+      return 'completed';
+    }
+    if (ord.pipeline?.currentStage) {
+      return ord.pipeline.currentStage;
+    }
+    if (ord.orderStatus === 'packed' || ord.orderStatus === 'shipped') {
+      return 'delivery_dispatch';
+    }
+    if (ord.orderStatus === 'processing') {
+      return 'inventory_packing';
+    }
+    if (ord.orderStatus === 'confirmed') {
+      return ord.paymentStatus === 'paid' ? 'inventory_packing' : 'payment_verification';
+    }
+    return 'order_verification';
+  },
+
+  // Advance / transition an order across workflow stages with staff accountability
+  async transferOrderStage(params: {
+    orderId: string;
+    nextStage: OrderPipelineStage;
+    handlerName: string;
+    handlerEmail?: string;
+    note?: string;
+    markPaymentStatus?: PaymentStatus;
+    overrideOrderStatus?: OrderStatus;
+    courierName?: string;
+    trackingNumber?: string;
+  }): Promise<Order | null> {
+    const {
+      orderId,
+      nextStage,
+      handlerName,
+      handlerEmail,
+      note,
+      markPaymentStatus,
+      overrideOrderStatus,
+      courierName,
+      trackingNumber,
+    } = params;
+
+    const timestamp = new Date().toISOString();
+    const currentLocal = this.getLocalOrders().find((o) => o.id === orderId);
+    let baseOrder: Order | null = currentLocal || null;
+
+    try {
+      const snap = await withTimeout(getDoc(doc(db, 'orders', orderId)), 2500, 'Pipeline fetch timeout');
+      if (snap.exists()) {
+        baseOrder = { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
+      }
+    } catch {
+      // use local if offline
+    }
+
+    if (!baseOrder) return null;
+
+    const prevStage = this.getOrderPipelineStage(baseOrder);
+    const existingPipeline: OrderPipelineData = baseOrder.pipeline || {
+      currentStage: prevStage,
+      handoffHistory: [],
+    };
+
+    let targetOrderStatus: OrderStatus = overrideOrderStatus || baseOrder.orderStatus;
+    if (!overrideOrderStatus) {
+      if (nextStage === 'payment_verification') targetOrderStatus = 'confirmed';
+      else if (nextStage === 'inventory_packing') targetOrderStatus = 'processing';
+      else if (nextStage === 'delivery_dispatch') {
+        targetOrderStatus = courierName || trackingNumber ? 'shipped' : 'packed';
+      } else if (nextStage === 'completed') targetOrderStatus = 'delivered';
+      else if (nextStage === 'returned') targetOrderStatus = 'returned';
+      else if (nextStage === 'cancelled') targetOrderStatus = 'cancelled';
+      else if (nextStage === 'order_verification') targetOrderStatus = 'pending';
+    }
+
+    const targetPaymentStatus: PaymentStatus =
+      markPaymentStatus ||
+      (nextStage === 'completed' && baseOrder.paymentStatus === 'pending' ? 'paid' : baseOrder.paymentStatus);
+
+    const safeActor = handlerName.trim() || 'Authorized Staff';
+    let actionSummary = `Order updated to ${nextStage.replace(/_/g, ' ')} by ${safeActor}`;
+    let customerTimelineNote = `Order status updated to ${targetOrderStatus}.`;
+
+    if (nextStage === 'payment_verification') {
+      actionSummary = `Order approved by ${safeActor} -> Payment Verification`;
+      customerTimelineNote = 'Order verified and confirmed by store team.';
+    } else if (nextStage === 'inventory_packing') {
+      actionSummary = `Payment verified by ${safeActor} -> Packaging & Inventory`;
+      customerTimelineNote = 'Payment confirmed and order sent for packaging.';
+    } else if (nextStage === 'delivery_dispatch' && targetOrderStatus === 'packed') {
+      actionSummary = `Items packed by ${safeActor} -> Ready for Delivery`;
+      customerTimelineNote = 'Items quality-checked, packed, and ready for courier dispatch.';
+    } else if (nextStage === 'delivery_dispatch' && targetOrderStatus === 'shipped') {
+      actionSummary = `Dispatched by ${safeActor}${courierName ? ` via ${courierName}` : ''}`;
+      customerTimelineNote = courierName
+        ? `Parcel dispatched via ${courierName}${trackingNumber ? ` (Tracking: ${trackingNumber})` : ''}.`
+        : 'Parcel handed over to courier and currently in transit.';
+    } else if (nextStage === 'completed') {
+      actionSummary = `Delivered & completed by ${safeActor}`;
+      customerTimelineNote = 'Order delivered successfully. Thank you for shopping with Selvee.';
+    } else if (nextStage === 'returned') {
+      actionSummary = `Order marked as Returned by ${safeActor}`;
+      customerTimelineNote = 'Order has been marked as returned.';
+    } else if (nextStage === 'cancelled') {
+      actionSummary = `Order cancelled by ${safeActor}`;
+      customerTimelineNote = 'Order has been cancelled.';
+    }
+
+    const nextHistory = [
+      ...(existingPipeline.handoffHistory || []),
+      {
+        stage: nextStage,
+        handlerName: safeActor,
+        handlerEmail,
+        action: actionSummary,
+        note: note || undefined,
+        timestamp,
+      },
+    ];
+
+    const updatedPipeline: OrderPipelineData = {
+      ...existingPipeline,
+      currentStage: nextStage,
+      handoffHistory: nextHistory,
+      ...(nextStage === 'payment_verification'
+        ? {
+            verifiedBy: safeActor,
+            verifiedAt: timestamp,
+            verificationNote: note || existingPipeline.verificationNote,
+          }
+        : {}),
+      ...(nextStage === 'inventory_packing'
+        ? {
+            paymentVerifiedBy: safeActor,
+            paymentVerifiedAt: timestamp,
+            paymentNote: note || existingPipeline.paymentNote,
+          }
+        : {}),
+      ...(nextStage === 'delivery_dispatch' && targetOrderStatus === 'packed'
+        ? {
+            inventoryHandledBy: safeActor,
+            inventoryHandledAt: timestamp,
+            inventoryNote: note || existingPipeline.inventoryNote,
+          }
+        : {}),
+      ...(nextStage === 'delivery_dispatch' && (targetOrderStatus === 'shipped' || courierName || trackingNumber)
+        ? {
+            deliveryHandledBy: safeActor,
+            deliveryDispatchedAt: timestamp,
+            courierName: courierName || existingPipeline.courierName,
+            trackingNumber: trackingNumber || existingPipeline.trackingNumber,
+            deliveryNote: note || existingPipeline.deliveryNote,
+          }
+        : {}),
+      ...(nextStage === 'completed'
+        ? {
+            deliveryHandledBy: safeActor,
+            deliveredAt: timestamp,
+            courierName: courierName || existingPipeline.courierName,
+            trackingNumber: trackingNumber || existingPipeline.trackingNumber,
+            deliveryNote: note || existingPipeline.deliveryNote,
+          }
+        : {}),
+      ...(nextStage === 'returned'
+        ? {
+            returnedBy: safeActor,
+            returnedAt: timestamp,
+            returnNote: note || existingPipeline.returnNote,
+          }
+        : {}),
+      ...(nextStage === 'cancelled'
+        ? {
+            cancelledBy: safeActor,
+            cancelledAt: timestamp,
+            cancelNote: note || existingPipeline.cancelNote,
+          }
+        : {}),
+    };
+
+    const updatedTimeline = [
+      ...(baseOrder.timeline || []),
+      {
+        status: targetOrderStatus,
+        timestamp,
+        note: customerTimelineNote,
+      },
+    ];
+
+    const updatedOrder: Order = {
+      ...baseOrder,
+      orderStatus: targetOrderStatus,
+      paymentStatus: targetPaymentStatus,
+      pipeline: updatedPipeline,
+      timeline: updatedTimeline,
+      updatedAt: timestamp,
+    };
+
+    this.saveLocalOrder(updatedOrder);
+
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      const upd = setDoc(
+        orderRef,
+        sanitizeForFirestore({
+          orderStatus: targetOrderStatus,
+          paymentStatus: targetPaymentStatus,
+          pipeline: updatedPipeline,
+          timeline: updatedTimeline,
+          updatedAt: serverTimestamp(),
+        }),
+        { merge: true }
+      );
+      upd.catch(() => {});
+      await withTimeout(upd, 2500, 'Pipeline sync queued');
+    } catch {
+      // background queued
+    }
+
+    if (baseOrder.orderNumber && targetOrderStatus !== baseOrder.orderStatus) {
+      notificationService
+        .notifyOrderStatusChanged({
+          orderNumber: baseOrder.orderNumber,
+          status: targetOrderStatus,
+          note: customerTimelineNote,
+          customerId: baseOrder.customerId,
+          customerEmail: baseOrder.customerEmail || baseOrder.shippingAddress?.email,
+          customerPhone: baseOrder.customerPhone || baseOrder.shippingAddress?.phone,
+        })
+        .catch(() => {});
+    }
+
+    return updatedOrder;
+  },
+
+  // Create immediate Walk-In POS Counter Sale
+  async createPosOrder(params: {
+    customerName: string;
+    customerPhone: string;
+    items: OrderItem[];
+    subtotal: number;
+    discount: number;
+    total: number;
+    paymentMethod: PaymentMethod;
+    cashierName: string;
+    notes?: string;
+  }): Promise<{ success: boolean; order?: Order; error?: string }> {
+    try {
+      const { customerName, customerPhone, items, subtotal, discount, total, paymentMethod, cashierName, notes } =
+        params;
+      if (!items || items.length === 0) {
+        return { success: false, error: 'Add at least one item to complete POS sale.' };
+      }
+
+      const orderNumber = `POS-${Math.floor(100000 + Math.random() * 900000)}`;
+      const orderDocRef = doc(collection(db, 'orders'));
+      const nowIso = new Date().toISOString();
+
+      const newOrder: Order = {
+        id: orderDocRef.id,
+        orderNumber,
+        customerId: 'walk-in-pos',
+        customerName: customerName.trim() || 'Walk-in Customer',
+        customerPhone: customerPhone.trim() || 'N/A',
+        customerEmail: '',
+        shippingAddress: {
+          fullName: customerName.trim() || 'Walk-in Customer',
+          phone: customerPhone.trim() || 'N/A',
+          address: 'In-Store POS Counter',
+          division: 'Dhaka',
+          district: 'Dhaka',
+          notes: notes || '',
+        },
+        items,
+        subtotal,
+        discount,
+        onlineDiscount: 0,
+        deliveryCharge: 0,
+        deliveryZone: 'POS Store Counter',
+        total,
+        paymentMethod,
+        advanceDeliveryPaid: true,
+        advanceAmount: total,
+        dueOnDelivery: 0,
+        paymentStatus: 'paid',
+        orderStatus: 'delivered',
+        orderChannel: 'pos',
+        pipeline: {
+          currentStage: 'completed',
+          verifiedBy: cashierName,
+          verifiedAt: nowIso,
+          paymentVerifiedBy: cashierName,
+          paymentVerifiedAt: nowIso,
+          inventoryHandledBy: cashierName,
+          inventoryHandledAt: nowIso,
+          deliveryHandledBy: cashierName,
+          deliveredAt: nowIso,
+          handoffHistory: [
+            {
+              stage: 'completed',
+              handlerName: cashierName,
+              action: 'Completed Walk-In POS Sale',
+              note: notes || `Paid via ${paymentMethod.toUpperCase()}`,
+              timestamp: nowIso,
+            },
+          ],
+        },
+        timeline: [
+          {
+            status: 'delivered',
+            timestamp: nowIso,
+            note: `Completed via POS Counter (${cashierName}) · ${paymentMethod.toUpperCase()}`,
+          },
+        ],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      const localCopy: Order = { ...newOrder, createdAt: nowIso, updatedAt: nowIso };
+      this.saveLocalOrder(localCopy);
+
+      // Atomic stock decrement on Firestore + local
+      await productService
+        .decrementProductStock(
+          items.map((i) => ({
+            productId: i.productId,
+            size: i.size || 'Standard',
+            color: i.color || 'Standard',
+            quantity: i.quantity,
+          }))
+        )
+        .catch(() => {});
+
+      try {
+        const writePromise = setDoc(orderDocRef, sanitizeForFirestore(newOrder));
+        writePromise.catch(() => {});
+        await withTimeout(writePromise, 2500, 'POS order sync queued');
+      } catch {
+        // already persisted in localStorage and queued
+      }
+
+      return { success: true, order: localCopy };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to complete POS sale.' };
+    }
   },
 };

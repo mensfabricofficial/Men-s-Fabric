@@ -1150,23 +1150,29 @@ export const AdminSettings: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {notifPermission !== 'granted' && notifPermission !== 'unsupported' && notifPermission !== 'denied' ? (
+                  {notifPermission === 'unsupported' ? (
+                    <span className="text-[11px] text-amber-800 font-medium">
+                      Unavailable in this browser view
+                    </span>
+                  ) : notifPermission !== 'granted' && notifPermission !== 'denied' ? (
                     <button
                       type="button"
+                      data-notif-trigger="true"
                       onClick={() => requestMobileAlerts()}
                       className="px-3 py-1.5 bg-emerald-700 text-white hover:bg-emerald-800 rounded-lg font-bold text-[11px] uppercase tracking-wider cursor-pointer"
                     >
                       Enable Order Alerts
                     </button>
-                  ) : (
+                  ) : notifPermission === 'granted' ? (
                     <button
                       type="button"
+                      data-notif-trigger="true"
                       onClick={() => sendTestAdminOrderAlert()}
                       className="px-3 py-1.5 bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100 rounded-lg font-bold text-[11px] uppercase tracking-wider cursor-pointer"
                     >
                       Test Order Alert
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>

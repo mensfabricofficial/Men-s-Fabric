@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Check, ShieldAlert, FileText, RefreshCw } from 'lucide-react';
+import { Search, Check, ShieldAlert, FileText, RefreshCw, Phone, MessageCircle, ArrowRight } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Order, OrderStatus } from '../types';
+import { Order, OrderStatus, SiteSettings } from '../types';
 import { orderService } from '../services/orderService';
+import { settingsService, getLocalSettings } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { FloatingInput } from '../components/common/FloatingInput';
@@ -33,14 +34,20 @@ const formatDate = (ts: any): string => {
   }
 };
 
-export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) => {
+export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, onNavigate }) => {
   const { currentUser } = useAuth();
+  const [settings, setSettings] = useState<SiteSettings>(() => getLocalSettings());
   const [orderNumber, setOrderNumber] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
+
+  useEffect(() => {
+    const unsub = settingsService.subscribeToSettings(setSettings);
+    return () => unsub();
+  }, []);
 
   const performTrack = useCallback(async (num: string, fallbackId?: string) => {
     const targetNum = (num || '').trim();
@@ -183,7 +190,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
     : '';
 
   return (
-    <div className="min-h-[75vh] bg-[#f4f4f6] py-10 sm:py-16">
+    <div className="bg-[#f4f4f6] py-10 sm:py-16">
       <div className="max-w-3xl mx-auto px-4 sm:px-6">
         {/* Header */}
         <div className="text-center mb-7 sm:mb-9">
@@ -205,7 +212,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
                   type="text"
                   value={orderNumber}
                   onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
-                  placeholder="e.g. #102948"
+                  placeholder="e.g. MF-102948"
                   className="font-mono"
                 />
               </div>
@@ -249,6 +256,99 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
             </div>
           )}
         </div>
+
+        {/* Pre-Search Guide & Delivery Information (shown when no order is loaded yet) */}
+        {!order && (
+          <div className="bg-white border border-neutral-200/80 rounded-lg divide-y divide-neutral-100">
+            {/* Delivery Timeline Overview */}
+            <div className="p-5 sm:p-7">
+              <h2 className="text-sm sm:text-[15px] font-semibold text-neutral-900 tracking-tight">
+                How Delivery &amp; Tracking Works
+              </h2>
+              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                Every Selvee order moves through three checked stages before reaching your doorstep.
+              </p>
+
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-6 pt-5 border-t border-neutral-100">
+                <div>
+                  <p className="text-xs font-semibold text-neutral-900">
+                    01. Order Confirmation
+                  </p>
+                  <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                    Once placed, our team verifies your shipping details and prepares the order for dispatch.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-neutral-900">
+                    02. Quality Check &amp; Packing
+                  </p>
+                  <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                    Each garment is inspected, folded, and sealed in protective packaging with your invoice attached.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-neutral-900 tabular-nums">
+                    03. Nationwide Courier
+                  </p>
+                  <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed tabular-nums">
+                    Delivery takes 1–2 business days inside Dhaka and 2–4 business days across all 64 districts.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Order Number Help & Direct Support */}
+            <div className="p-5 sm:p-7 grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs">
+              <div>
+                <h3 className="font-semibold text-neutral-900">
+                  Where to find your Order Number
+                </h3>
+                <p className="text-neutral-500 mt-1.5 leading-relaxed">
+                  Your order number starts with <span className="font-mono text-neutral-800">MF-</span> and is shown on your checkout confirmation, printed invoice, and Account Order History.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('/account')}
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>{currentUser ? 'View Order History in Account' : 'Sign in to view past orders'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-neutral-900">
+                  Need help with a shipment?
+                </h3>
+                <p className="text-neutral-500 mt-1.5 leading-relaxed">
+                  If your tracking status has not updated or you need to adjust a delivery address, reach our support desk directly.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-4">
+                  {settings.phone && (
+                    <a
+                      href={`tel:${settings.phone.replace(/[^+\d]/g, '')}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline whitespace-nowrap shrink-0 tabular-nums"
+                    >
+                      <Phone className="w-3.5 h-3.5 text-neutral-500" />
+                      <span>{settings.phone}</span>
+                    </a>
+                  )}
+                  {settings.whatsapp && settings.whatsapp.trim() && (
+                    <a
+                      href={`https://wa.me/${settings.whatsapp.replace(/[^0-9]/g, '')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline whitespace-nowrap shrink-0"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-neutral-500" />
+                      <span>WhatsApp Support</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Order Status Card */}
         {order && (
@@ -452,24 +552,29 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
               <div className="p-5 sm:p-7">
                 <h3 className="text-xs font-medium text-neutral-500 mb-3">Updates</h3>
                 <div className="space-y-2.5">
-                  {order.timeline.map((entry, i) => (
-                    <div key={i} className="flex items-start justify-between gap-4 text-xs">
-                      <div className="flex items-start gap-2.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mt-1.5 shrink-0" />
-                        <div>
-                          <span className="font-medium text-neutral-900 capitalize">
-                            {getStatusLabel(entry.status)}
-                          </span>
-                          {entry.note && (
-                            <p className="text-neutral-500 mt-0.5">{entry.note}</p>
-                          )}
+                  {order.timeline.map((entry, i) => {
+                    const cleanCustomerNote = entry.note && /partner/i.test(entry.note)
+                      ? `Order status updated to ${getStatusLabel(entry.status)}.`
+                      : entry.note;
+                    return (
+                      <div key={i} className="flex items-start justify-between gap-4 text-xs">
+                        <div className="flex items-start gap-2.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mt-1.5 shrink-0" />
+                          <div>
+                            <span className="font-medium text-neutral-900 capitalize">
+                              {getStatusLabel(entry.status)}
+                            </span>
+                            {cleanCustomerNote && (
+                              <p className="text-neutral-500 mt-0.5">{cleanCustomerNote}</p>
+                            )}
+                          </div>
                         </div>
+                        <span className="text-neutral-400 text-[11px] shrink-0 tabular-nums">
+                          {formatDate(entry.timestamp)}
+                        </span>
                       </div>
-                      <span className="text-neutral-400 text-[11px] shrink-0 tabular-nums">
-                        {formatDate(entry.timestamp)}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

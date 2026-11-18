@@ -26,6 +26,12 @@ import { AdminLayout, AdminTab } from './admin/AdminLayout';
 import { AdminLogin } from './admin/AdminLogin';
 import { AdminDeviceGate } from './admin/AdminDeviceGate';
 import { AdminDashboard } from './admin/AdminDashboard';
+import { AdminPosTerminal } from './admin/AdminPosTerminal';
+import { AdminProfitLoss } from './admin/AdminProfitLoss';
+import { AdminOrderPipeline } from './admin/AdminOrderPipeline';
+import { AdminPurchases } from './admin/AdminPurchases';
+import { AdminSuppliers } from './admin/AdminSuppliers';
+import { AdminExpenses } from './admin/AdminExpenses';
 import { AdminProducts } from './admin/AdminProducts';
 import { AdminCategories } from './admin/AdminCategories';
 import { AdminOrders } from './admin/AdminOrders';
@@ -40,15 +46,21 @@ import { AdminAdmins } from './admin/AdminAdmins';
 import { AdminAudit } from './admin/AdminAudit';
 
 const AppContent: React.FC = () => {
-  const { currentUser, isAdmin, loading: authLoading } = useAuth();
+  const { currentUser, isAdmin, loading: authLoading, hasMenuPermission } = useAuth();
   const [currentRoute, setCurrentRoute] = useState<string>(window.location.pathname + window.location.search);
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
   const validAdminTabs: AdminTab[] = [
     'dashboard',
-    'products',
-    'categories',
+    'pos',
+    'pnl',
+    'pipeline',
     'orders',
+    'products',
+    'purchases',
+    'suppliers',
+    'expenses',
+    'categories',
     'customers',
     'reviews',
     'coupons',
@@ -60,15 +72,18 @@ const AppContent: React.FC = () => {
     'audit',
   ];
 
+  const firstAllowedTab = validAdminTabs.find((t) => hasMenuPermission(t)) || 'dashboard';
+  const effectiveAdminTab: AdminTab = hasMenuPermission(adminTab) ? adminTab : firstAllowedTab;
+
   useEffect(() => {
     if (currentRoute.startsWith('/admin')) {
       const search = currentRoute.includes('?') ? currentRoute.split('?')[1] : '';
       const tabParam = new URLSearchParams(search).get('tab') as AdminTab | null;
-      if (tabParam && validAdminTabs.includes(tabParam)) {
+      if (tabParam && validAdminTabs.includes(tabParam) && hasMenuPermission(tabParam)) {
         setAdminTab(tabParam);
       }
     }
-  }, [currentRoute]);
+  }, [currentRoute, hasMenuPermission]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -108,30 +123,42 @@ const AppContent: React.FC = () => {
       );
     }
 
-    if (!currentUser || !isAdmin) {
+    if (!isAdmin) {
       return <AdminLogin onNavigateHome={() => navigate('/')} />;
     }
+
+    const handleSelectAdminTab = (tab: AdminTab) => {
+      if (hasMenuPermission(tab)) {
+        setAdminTab(tab);
+      }
+    };
 
     return (
       <AdminDeviceGate onNavigateHome={() => navigate('/')}>
         <AdminLayout
-          currentTab={adminTab}
-          onSelectTab={setAdminTab}
+          currentTab={effectiveAdminTab}
+          onSelectTab={handleSelectAdminTab}
           onNavigateHome={() => navigate('/')}
         >
-          {adminTab === 'dashboard' && <AdminDashboard onNavigateTab={setAdminTab} />}
-          {adminTab === 'products' && <AdminProducts />}
-          {adminTab === 'categories' && <AdminCategories />}
-          {adminTab === 'orders' && <AdminOrders />}
-          {adminTab === 'coupons' && <AdminCoupons />}
-          {adminTab === 'delivery' && <AdminDelivery />}
-          {adminTab === 'banners' && <AdminBanners />}
-          {adminTab === 'notifications' && <AdminNotifications />}
-          {adminTab === 'customers' && <AdminCustomers />}
-          {adminTab === 'reviews' && <AdminReviews />}
-          {adminTab === 'settings' && <AdminSettings />}
-          {adminTab === 'admins' && <AdminAdmins />}
-          {adminTab === 'audit' && <AdminAudit />}
+          {effectiveAdminTab === 'dashboard' && <AdminDashboard onNavigateTab={handleSelectAdminTab} />}
+          {effectiveAdminTab === 'pos' && <AdminPosTerminal />}
+          {effectiveAdminTab === 'pnl' && <AdminProfitLoss onNavigateTab={handleSelectAdminTab} />}
+          {effectiveAdminTab === 'pipeline' && <AdminOrderPipeline />}
+          {effectiveAdminTab === 'orders' && <AdminOrders />}
+          {effectiveAdminTab === 'products' && <AdminProducts />}
+          {effectiveAdminTab === 'purchases' && <AdminPurchases />}
+          {effectiveAdminTab === 'suppliers' && <AdminSuppliers />}
+          {effectiveAdminTab === 'expenses' && <AdminExpenses />}
+          {effectiveAdminTab === 'categories' && <AdminCategories />}
+          {effectiveAdminTab === 'coupons' && <AdminCoupons />}
+          {effectiveAdminTab === 'delivery' && <AdminDelivery />}
+          {effectiveAdminTab === 'banners' && <AdminBanners />}
+          {effectiveAdminTab === 'notifications' && <AdminNotifications />}
+          {effectiveAdminTab === 'customers' && <AdminCustomers />}
+          {effectiveAdminTab === 'reviews' && <AdminReviews />}
+          {effectiveAdminTab === 'settings' && <AdminSettings />}
+          {effectiveAdminTab === 'admins' && <AdminAdmins />}
+          {effectiveAdminTab === 'audit' && <AdminAudit />}
         </AdminLayout>
       </AdminDeviceGate>
     );

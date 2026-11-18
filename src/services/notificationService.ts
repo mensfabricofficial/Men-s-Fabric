@@ -263,7 +263,18 @@ export const getBrowserNotificationPermission = (): NotificationPermission | 'un
 export const requestMobileNotificationPermission = async (): Promise<NotificationPermission | 'unsupported'> => {
   if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
   try {
-    const result = await Notification.requestPermission();
+    const result = await new Promise<NotificationPermission>((resolve) => {
+      try {
+        const maybePromise = Notification.requestPermission((cbPerm) => {
+          resolve(cbPerm);
+        });
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then(resolve).catch(() => resolve(Notification.permission));
+        }
+      } catch {
+        resolve(Notification.permission);
+      }
+    });
     if (result === 'granted') {
       setNotificationsMuted(false);
     }
@@ -311,10 +322,12 @@ export const triggerNativeMobileNotification = async (notif: AppNotification): P
   const pushed = getPushedNotificationIds();
   if (pushedInMemory.has(notif.id) || pushed.has(notif.id)) return false;
 
+  const isTestNotif = notif.id.startsWith('test-');
+
   // Cross-tab & identical-content dedup lock (prevents 2x-3x popups if multiple callers fire)
   const contentSig = `${notif.type}|${notif.title}|${notif.targetOrderNumber || ''}|${notif.message}`;
   const recentSigs = getRecentPushedSigs();
-  if (recentSigs[contentSig]) {
+  if (!isTestNotif && recentSigs[contentSig]) {
     pushedInMemory.add(notif.id);
     markNotificationPushed(notif.id);
     return false;
@@ -322,7 +335,7 @@ export const triggerNativeMobileNotification = async (notif: AppNotification): P
 
   // Do not fire OS popups for stale notifications older than 12 hours on fresh devices
   const ageMs = Date.now() - (notif.createdAtMs || 0);
-  if (ageMs > 12 * 60 * 60 * 1000) {
+  if (!isTestNotif && ageMs > 12 * 60 * 60 * 1000) {
     pushedInMemory.add(notif.id);
     markNotificationPushed(notif.id);
     return false;
@@ -331,31 +344,51 @@ export const triggerNativeMobileNotification = async (notif: AppNotification): P
   // Acquire synchronous lock BEFORE any await
   pushedInMemory.add(notif.id);
   markNotificationPushed(notif.id);
-  markSigPushed(contentSig);
+  if (!isTestNotif) {
+    markSigPushed(contentSig);
+  }
 
   try {
     if ('serviceWorker' in navigator) {
       let reg: ServiceWorkerRegistration | undefined =
         (await navigator.serviceWorker.getRegistration('/').catch(() => undefined)) ||
         (await navigator.serviceWorker.getRegistration().catch(() => undefined));
+
+      if (!reg) {
+        reg = await navigator.serviceWorker
+          .register('/sw.js', { scope: '/', updateViaCache: 'none' })
+          .catch(() => undefined);
+      }
+
       if (!reg || !reg.active) {
         reg = await Promise.race([
           navigator.serviceWorker.ready,
-          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2500)),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 4000)),
         ]);
       }
-      if (reg && 'showNotification' in reg) {
-        await reg.showNotification(notif.title, {
-          body: notif.message,
-          icon: '/pwa-192x192.png',
-          badge: '/pwa-192x192.png',
-          tag: notif.id,
-          vibrate: [200, 100, 200],
-          renotify: false,
-          requireInteraction: Boolean(notif.important),
-          data: { url: notif.actionUrl || '/' },
-        } as NotificationOptions);
-        return true;
+
+      if (reg && reg.active && 'showNotification' in reg) {
+        try {
+          await reg.showNotification(notif.title, {
+            body: notif.message,
+            icon: '/pwa-192x192.png',
+            badge: '/pwa-192x192.png',
+            tag: notif.id,
+            vibrate: [200, 100, 200],
+            renotify: false,
+            requireInteraction: Boolean(notif.important),
+            data: { url: notif.actionUrl || '/' },
+          } as NotificationOptions);
+          return true;
+        } catch {
+          await reg.showNotification(notif.title, {
+            body: notif.message,
+            icon: '/pwa-192x192.png',
+            tag: notif.id,
+            data: { url: notif.actionUrl || '/' },
+          });
+          return true;
+        }
       }
     }
 

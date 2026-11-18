@@ -229,7 +229,7 @@ export const StaticPage: React.FC<StaticPageProps> = ({ type, onNavigate }) => {
           <h1 className="text-2xl sm:text-4xl font-extrabold text-neutral-900 tracking-tight mb-4">
             Shipping & Delivery Policy
           </h1>
-          <p>At Selvee, we ensure fast, reliable delivery throughout Bangladesh in partnership with leading express courier networks.</p>
+          <p>At Selvee, we ensure fast, reliable delivery throughout Bangladesh together with leading express courier networks.</p>
           <h3 className="font-bold text-neutral-900 pt-2">Delivery Rates & Coverage</h3>
           <ul className="list-disc pl-5 space-y-1 text-neutral-600">
             <li><b>Inside Dhaka:</b> ৳70 flat delivery fee. Expected within 24 to 48 hours.</li>

@@ -359,9 +359,16 @@ export const NotificationProvider: React.FC<{
     ...(customerProfile?.verifiedDeviceId ? [customerProfile.verifiedDeviceId] : []),
   ]);
 
+  const isSocialAccount = Boolean(
+    currentUser?.providerData?.some(
+      (p) => p.providerId === 'google.com' || p.providerId === 'facebook.com'
+    )
+  );
+  const isVerifiedAccount = Boolean(currentUser?.emailVerified || isSocialAccount);
+
   let customerVerificationBlockReason: 'unverified_email' | 'other_device' | null = null;
   if (currentUser && !isAdmin && profileLoaded) {
-    if (!currentUser.emailVerified) {
+    if (!isVerifiedAccount) {
       customerVerificationBlockReason = 'unverified_email';
     } else if (allowedDevicesSet.size > 0 && !allowedDevicesSet.has(currentCustomerDeviceId)) {
       customerVerificationBlockReason = 'other_device';
@@ -383,7 +390,7 @@ export const NotificationProvider: React.FC<{
     orderNumbers: localOrders.map((o) => o.orderNumber).filter(Boolean),
     isAdmin,
     isApprovedAdminDevice,
-    emailVerified: isWaitingProfile ? false : Boolean(currentUser?.emailVerified),
+    emailVerified: isWaitingProfile ? false : isVerifiedAccount,
     verifiedDeviceId: customerProfile?.verifiedDeviceId,
     verifiedDeviceIds: customerProfile?.verifiedDeviceIds,
     currentDeviceId: currentCustomerDeviceId,
@@ -392,6 +399,57 @@ export const NotificationProvider: React.FC<{
   const scopedNotifications = allNotifications.filter((n) =>
     isNotificationForCustomer(n, customerIdentity)
   );
+
+  // On mobile & desktop: trigger native browser permission prompt on the first tap/click after login (no in-site banner)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !currentUser || permission !== 'default') return;
+    if (isAdmin && !isApprovedAdminDevice) return;
+    if (!isAdmin && (!profileLoaded || !isVerifiedAccount)) return;
+
+    const sessionKey = `selvee_perm_prompted_${currentUser.uid}`;
+    try {
+      if (sessionStorage.getItem(sessionKey) === '1') return;
+    } catch {
+      // ignore
+    }
+
+    const handleFirstTap = (ev: Event) => {
+      const target = ev.target as HTMLElement | null;
+      // Let explicit enable buttons handle their own request without double-invoking
+      if (target?.closest('[data-notif-trigger="true"]')) return;
+      try {
+        if (sessionStorage.getItem(sessionKey) === '1') return;
+        sessionStorage.setItem(sessionKey, '1');
+      } catch {
+        // ignore
+      }
+      document.removeEventListener('click', handleFirstTap, true);
+
+      requestMobileNotificationPermission().then((res) => {
+        setPermission(res);
+        if (res === 'granted') {
+          setNotificationsMuted(false);
+          setIsMuted(false);
+          if (!isAdmin && isVerifiedAccount) {
+            enableCurrentDeviceForVerifiedUser().catch(() => {});
+          }
+        }
+      });
+    };
+
+    document.addEventListener('click', handleFirstTap, { capture: true });
+    return () => {
+      document.removeEventListener('click', handleFirstTap, { capture: true });
+    };
+  }, [
+    currentUser?.uid,
+    permission,
+    isAdmin,
+    isApprovedAdminDevice,
+    profileLoaded,
+    isVerifiedAccount,
+    enableCurrentDeviceForVerifiedUser,
+  ]);
 
   // Trigger ONLY native Browser Notifications when logged in & browser permission granted
   useEffect(() => {
@@ -440,7 +498,7 @@ export const NotificationProvider: React.FC<{
       newlyArrived.forEach((n) => knownIdsRef.current!.add(n.id));
       const topNotif = newlyArrived.find((n) => canDeliverForRole(n));
       if (!topNotif) return;
-      const isLiveAlert = (topNotif.createdAtMs || 0) >= appStartedAtRef.current - 5000;
+      const isLiveAlert = (topNotif.createdAtMs || 0) >= appStartedAtRef.current - 5 * 60 * 1000;
       const sig = `${topNotif.type}|${topNotif.title}|${topNotif.targetOrderNumber || ''}|${topNotif.message}`;
 
       if (
@@ -491,7 +549,7 @@ export const NotificationProvider: React.FC<{
       setIsMuted(false);
     }
 
-    if (currentUser && !isAdmin && currentUser.emailVerified) {
+    if (currentUser && !isAdmin && isVerifiedAccount) {
       enableCurrentDeviceForVerifiedUser().catch(() => {});
     }
 

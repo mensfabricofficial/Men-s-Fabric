@@ -27,9 +27,9 @@ export const AdminDeviceGate: React.FC<AdminDeviceGateProps> = ({
   children,
   onNavigateHome,
 }) => {
-  const { currentUser, logOut } = useAuth();
-  const uid = currentUser?.uid || '';
-  const email = currentUser?.email || '';
+  const { currentUser, staffProfile, logOut } = useAuth();
+  const uid = currentUser?.uid || staffProfile?.id || '';
+  const email = currentUser?.email || staffProfile?.email || staffProfile?.username || '';
 
   const [keyVerified, setKeyVerified] = useState<boolean>(() =>
     uid ? adminDeviceService.isSessionAccessKeyVerified(uid) : false

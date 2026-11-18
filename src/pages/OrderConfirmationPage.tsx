@@ -188,7 +188,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           <Truck className="w-4 h-4 text-neutral-800 shrink-0" />
           <span>
             {order?.paymentMethod === 'cod'
-              ? 'Our delivery courier partner will contact your phone number prior to parcel delivery. Please keep cash ready.'
+              ? 'Our delivery courier team will contact your phone number prior to parcel delivery. Please keep cash ready.'
               : 'Thank you for your online payment. Your package will be dispatched with priority express tracking.'}
           </span>
         </div>

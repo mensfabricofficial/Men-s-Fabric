@@ -1,39 +1,58 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { 
-  ShoppingBag, 
-  Clock, 
-  DollarSign, 
-  Package, 
-  AlertTriangle, 
-  Users, 
-  ArrowRight, 
-  PlusCircle, 
-  FolderPlus,
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import {
+  ShoppingBag,
+  DollarSign,
+  Package,
+  AlertTriangle,
+  Users,
+  ArrowRight,
+  PlusCircle,
   CheckCircle2,
-  ExternalLink,
   RefreshCw,
   TrendingUp,
   Truck,
-  Eye,
   Calendar,
   Wallet,
   Coins,
   BarChart3,
-  Sparkles
+  Receipt,
+  Building2,
+  ShoppingCart,
+  Target,
 } from 'lucide-react';
-import { collection, getDocs, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Order, Product, CustomerProfile } from '../types';
+import {
+  Order,
+  Product,
+  ExpenseEntry,
+  PurchaseEntry,
+  Supplier,
+  PartnerDeskConfig,
+  SalesTargetsConfig,
+} from '../types';
 import { AdminTab } from './AdminLayout';
 import { orderService } from '../services/orderService';
 import { productService } from '../services/productService';
+import { posService } from '../services/posService';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
+import { useAuth } from '../context/AuthContext';
+import {
+  getLocalDateKey,
+  getLocalMonthKey,
+  getMonthDateBounds,
+  computePeriodAccounting,
+  computeDailySeries,
+  computeStockAudit,
+} from '../lib/accountingUtils';
+import { TargetProgressRow, DailyPerformanceChart } from '../components/admin/FinancialCharts';
 
 interface AdminDashboardProps {
   onNavigateTab: (tab: AdminTab) => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
+  const { hasMenuPermission } = useAuth();
   const [orders, setOrders] = useState<Order[]>(() => orderService.getLocalOrders());
   const [products, setProducts] = useState<Product[]>(() => productService.getLocalProducts());
   const [customerCount, setCustomerCount] = useState<number>(() => {
@@ -58,8 +77,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
       return 0;
     }
   });
+  const [expenses, setExpenses] = useState<ExpenseEntry[]>(() => posService.getLocalExpenses());
+  const [purchases, setPurchases] = useState<PurchaseEntry[]>(() => posService.getLocalPurchases());
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => posService.getLocalSuppliers());
+  const [partnerDesks, setPartnerDesks] = useState<PartnerDeskConfig[]>(() =>
+    posService.getLocalPartnerDesks()
+  );
+  const [targets, setTargets] = useState<SalesTargetsConfig>(() => posService.getLocalTargets());
+
+  // Live local date & month ticker for automatic midnight / monthly rollover
+  const [todayKey, setTodayKey] = useState<string>(() => getLocalDateKey());
+  const [monthKey, setMonthKey] = useState<string>(() => getLocalMonthKey());
+
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>('');
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const nextDay = getLocalDateKey();
+      const nextMonth = getLocalMonthKey();
+      setTodayKey((prev) => (prev !== nextDay ? nextDay : prev));
+      setMonthKey((prev) => (prev !== nextMonth ? nextMonth : prev));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const withTimeout = <T,>(promise: Promise<T>, ms = 5000): Promise<T> =>
     Promise.race([
@@ -137,28 +178,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
     window.addEventListener('selvee_products_updated', handleProductUpdate);
     window.addEventListener('mf_products_updated', handleProductUpdate);
 
-    // Live remote Firestore listeners
+    // Live full remote Firestore listeners (no 50-order truncation so monthly & all-time accounting stay exact)
     let unsubOrders: (() => void) | null = null;
     const unsubProducts = productService.subscribeToAllProductsAdmin((prods) => {
       setProducts(prods);
     });
 
     try {
-      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
-      unsubOrders = onSnapshot(qOrders, (snap) => {
-        const list: Order[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Order));
-        const localOrders = orderService.getLocalOrders();
-        const map = new Map<string, Order>();
-        list.forEach((o) => map.set(o.id, o));
-        localOrders.forEach((o) => {
-          if (!map.has(o.id)) map.set(o.id, o);
-        });
-        setOrders(Array.from(map.values()));
-      }, (err) => console.warn('Live orders dashboard notice:', err));
+      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      unsubOrders = onSnapshot(
+        qOrders,
+        (snap) => {
+          const map = new Map<string, Order>();
+          orderService.getLocalOrders().forEach((o) => map.set(o.id, o));
+          snap.forEach((d) => map.set(d.id, { id: d.id, ...d.data() } as Order));
+          setOrders(Array.from(map.values()));
+        },
+        (err) => console.warn('Live orders dashboard notice:', err)
+      );
     } catch {
       // ignore
     }
+
+    const unsubExp = posService.subscribeToExpenses(setExpenses);
+    const unsubPur = posService.subscribeToPurchases(setPurchases);
+    const unsubSup = posService.subscribeToSuppliers(setSuppliers);
+    const unsubDesks = posService.subscribeToPartnerDesks(setPartnerDesks);
+    const unsubTargets = posService.subscribeToTargets(setTargets);
 
     return () => {
       window.removeEventListener('mf_orders_updated', handleOrderUpdate);
@@ -166,6 +212,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
       window.removeEventListener('mf_products_updated', handleProductUpdate);
       if (unsubOrders) unsubOrders();
       unsubProducts();
+      unsubExp();
+      unsubPur();
+      unsubSup();
+      unsubDesks();
+      unsubTargets();
     };
   }, [loadAllDashboardData]);
 
@@ -173,297 +224,517 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
     loadAllDashboardData();
   };
 
-  // Helper to parse date from order createdAt
-  const getOrderDate = (ord: Order): Date | null => {
-    if (!ord.createdAt) return null;
-    if (typeof (ord.createdAt as any).toDate === 'function') {
-      return (ord.createdAt as any).toDate();
-    }
-    if (typeof (ord.createdAt as any).toMillis === 'function') {
-      return new Date((ord.createdAt as any).toMillis());
-    }
-    if ((ord.createdAt as any).seconds) {
-      return new Date((ord.createdAt as any).seconds * 1000);
-    }
-    const d = new Date(ord.createdAt as any);
-    return isNaN(d.getTime()) ? null : d;
-  };
+  // Accurate local-calendar accounting stats (Today, This Month, All-Time, Daily Trend, Stock Audit)
+  const monthBounds = useMemo(() => getMonthDateBounds(monthKey), [monthKey]);
 
-  const now = new Date();
-  const isToday = (d: Date | null) => {
-    if (!d) return false;
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth() === now.getMonth() &&
-           d.getDate() === now.getDate();
-  };
-  const isThisMonth = (d: Date | null) => {
-    if (!d) return false;
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth() === now.getMonth();
-  };
+  const todayStats = useMemo(
+    () =>
+      computePeriodAccounting({
+        orders,
+        products,
+        expenses,
+        purchases,
+        startDateKey: todayKey,
+        endDateKey: todayKey,
+      }),
+    [orders, products, expenses, purchases, todayKey]
+  );
 
-  const validOrders = orders.filter((o) => o.orderStatus !== 'cancelled');
+  const monthStats = useMemo(
+    () =>
+      computePeriodAccounting({
+        orders,
+        products,
+        expenses,
+        purchases,
+        startDateKey: monthBounds.startKey,
+        endDateKey: monthBounds.endKey,
+      }),
+    [orders, products, expenses, purchases, monthBounds]
+  );
 
-  // Product cost lookup map
-  const productCostMap = new Map<string, number>();
-  products.forEach((p) => {
-    if (p.id && typeof p.costPrice === 'number') {
-      productCostMap.set(p.id, p.costPrice);
-    }
-  });
+  const allTimeStats = useMemo(
+    () =>
+      computePeriodAccounting({
+        orders,
+        products,
+        expenses,
+        purchases,
+      }),
+    [orders, products, expenses, purchases]
+  );
 
-  const getOrderCost = (ord: Order): number => {
-    return (ord.items || []).reduce((sum, item) => {
-      const unitPrice = Number(item.unitPrice) || 0;
-      const unitCost = productCostMap.get(item.productId) ?? (unitPrice * 0.6);
-      return sum + (unitCost * (Number(item.quantity) || 1));
-    }, 0);
-  };
+  const dailySeries = useMemo(
+    () =>
+      computeDailySeries({
+        orders,
+        products,
+        expenses,
+        days: 14,
+        endDateKey: todayKey,
+      }),
+    [orders, products, expenses, todayKey]
+  );
 
-  // 1. Today's Metrics
-  const todayOrders = validOrders.filter((o) => isToday(getOrderDate(o)));
-  const todayRevenue = todayOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-  const todayCost = todayOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
-  const todayProfit = Math.max(0, todayRevenue - todayCost);
-  const todayOrdersCount = todayOrders.length;
+  const stockAudit = useMemo(
+    () => computeStockAudit({ products, purchases, orders }),
+    [products, purchases, orders]
+  );
 
-  // 2. This Month's Metrics
-  const monthOrders = validOrders.filter((o) => isThisMonth(getOrderDate(o)));
-  const monthRevenue = monthOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-  const monthCost = monthOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
-  const monthProfit = Math.max(0, monthRevenue - monthCost);
-  const monthOrdersCount = monthOrders.length;
-
-  // 3. All-Time Operational Metrics
+  const totalSupplierDue = suppliers.reduce((sum, s) => sum + (Number(s.dueAmount) || 0), 0);
   const totalOrders = orders.length;
   const pendingOrders = orders.filter((o) => o.orderStatus === 'pending').length;
-  const processingOrders = orders.filter((o) => o.orderStatus === 'processing' || o.orderStatus === 'confirmed').length;
   const deliveredOrders = orders.filter((o) => o.orderStatus === 'delivered').length;
-  const totalRevenue = validOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-  const totalCost = validOrders.reduce((sum, o) => sum + getOrderCost(o), 0);
-  const totalProfit = Math.max(0, totalRevenue - totalCost);
   const totalProducts = products.length;
-  const lowStockProducts = products.filter((p) => (p.totalStock || 0) < 5).length;
+
+  // 4-Desk Order Workflow Counts
+  const pipelineCounts = {
+    order_verification: orders.filter(
+      (o) => orderService.getOrderPipelineStage(o) === 'order_verification'
+    ).length,
+    payment_verification: orders.filter(
+      (o) => orderService.getOrderPipelineStage(o) === 'payment_verification'
+    ).length,
+    inventory_packing: orders.filter(
+      (o) => orderService.getOrderPipelineStage(o) === 'inventory_packing'
+    ).length,
+    delivery_dispatch: orders.filter(
+      (o) => orderService.getOrderPipelineStage(o) === 'delivery_dispatch'
+    ).length,
+  };
 
   return (
-    <div className="space-y-8">
-      
-      {/* Title & Live Controls */}
+    <div className="space-y-6">
+      {/* Title & Live POS Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-              Store Performance & Financials
-            </h1>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Live synchronized" />
-          </div>
+          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
+            POS Financial Overview &amp; Store Control
+          </h1>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Real-time store metrics, sales revenue, costs, and profit calculated directly from orders.
-            {lastRefreshed && <span className="ml-2 font-mono text-[11px] text-neutral-400">Synced at {lastRefreshed}</span>}
+            Live Today ({todayKey}) &amp; Monthly ({monthBounds.label}) sales, exact net profit, targets &amp; stock match · Auto-resets at local midnight &amp; 1st of month.
+            {lastRefreshed && <span className="ml-2 font-mono text-[11px] text-neutral-400">Synced {lastRefreshed}</span>}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleManualRefresh}
             disabled={refreshing}
-            className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-2 bg-white border border-neutral-200 hover:border-black text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             <span>{refreshing ? 'Syncing...' : 'Refresh'}</span>
           </button>
 
-          <button
-            onClick={() => onNavigateTab('products')}
-            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Add Product</span>
-          </button>
+          {hasMenuPermission('expenses') && (
+            <button
+              onClick={() => onNavigateTab('expenses')}
+              className="px-3 py-2 bg-white border border-neutral-200 hover:border-black text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Add Expense</span>
+            </button>
+          )}
+
+          {hasMenuPermission('purchases') && (
+            <button
+              onClick={() => onNavigateTab('purchases')}
+              className="px-3 py-2 bg-white border border-neutral-200 hover:border-black text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>Add Purchase</span>
+            </button>
+          )}
+
+          {hasMenuPermission('pos') && (
+            <button
+              onClick={() => onNavigateTab('pos')}
+              className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Receipt className="w-3.5 h-3.5" />
+              <span>Open POS Terminal</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* PRIMARY SALES & FINANCIAL METRICS (Today Sales, Monthly Sales, COGS Cost, Net Profit) */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
+      {/* Warning Banner if Products are missing costPrice */}
+      {stockAudit.productsMissingCost.length > 0 && (
+        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-amber-900">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <b>{stockAudit.productsMissingCost.length}</b> products do not have a buying Cost Price (৳) set. Add cost prices so P&amp;L and Stock Value are 100% accurate.
+            </span>
+          </div>
+          {hasMenuPermission('pnl') && (
+            <button
+              type="button"
+              onClick={() => onNavigateTab('pnl')}
+              className="px-3 py-1.5 bg-amber-600 text-white font-bold uppercase tracking-wider rounded-lg hover:bg-amber-700 cursor-pointer w-fit text-[11px]"
+            >
+              Set Cost Prices &amp; Audit →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* PRIMARY POS SALES & PROFIT METRICS */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
           <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 flex items-center gap-1.5">
             <BarChart3 className="w-3.5 h-3.5" />
-            <span>Sales & Profit Overview</span>
+            <span>Today &amp; Monthly Sales / Net Profit (Real COGS &amp; Expenses)</span>
           </span>
-          <span className="text-[11px] text-neutral-400 font-mono">Currency: ৳ (BDT)</span>
+          {hasMenuPermission('pnl') && (
+            <button
+              type="button"
+              onClick={() => onNavigateTab('pnl')}
+              className="text-xs font-bold text-neutral-900 hover:underline cursor-pointer"
+            >
+              Full Profit &amp; Loss Statement →
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          
-          {/* Today's Sales */}
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black transition-all">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 tabular-nums">
+          {/* Today's Sale */}
+          <div className="bg-white p-5 rounded-xl border border-neutral-200">
             <div className="flex items-center justify-between text-neutral-500 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Today's Sales</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider">Today&apos;s Sale</span>
               <Calendar className="w-4 h-4 text-neutral-700" />
             </div>
             <p className="text-2xl font-black text-neutral-900 font-mono">
-              ৳{todayRevenue.toLocaleString('en-BD')}
-            </p>
-            <p className="text-[11px] text-neutral-500 mt-1 flex items-center justify-between">
-              <span>{todayOrdersCount} orders placed today</span>
-              <span className="font-semibold text-emerald-700">Profit: ৳{todayProfit.toLocaleString('en-BD')}</span>
-            </p>
-          </div>
-
-          {/* This Month's Sales */}
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black transition-all">
-            <div className="flex items-center justify-between text-neutral-500 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">This Month's Sales</span>
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
-            </div>
-            <p className="text-2xl font-black text-neutral-900 font-mono">
-              ৳{monthRevenue.toLocaleString('en-BD')}
-            </p>
-            <p className="text-[11px] text-neutral-500 mt-1 flex items-center justify-between">
-              <span>{monthOrdersCount} monthly orders</span>
-              <span className="font-semibold text-emerald-700">Profit: ৳{monthProfit.toLocaleString('en-BD')}</span>
-            </p>
-          </div>
-
-          {/* Product Cost (COGS) */}
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-neutral-400 transition-all">
-            <div className="flex items-center justify-between text-neutral-500 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Total Product Cost</span>
-              <Coins className="w-4 h-4 text-amber-600" />
-            </div>
-            <p className="text-2xl font-black text-neutral-900 font-mono">
-              ৳{totalCost.toLocaleString('en-BD')}
+              ৳{todayStats.totalBilledRevenue.toLocaleString('en-BD')}
             </p>
             <p className="text-[11px] text-neutral-500 mt-1">
-              Manufacturing & unit purchase cost (COGS)
+              {todayStats.validOrderCount} orders · {todayStats.unitsSold} pcs
             </p>
           </div>
 
-          {/* Net Profit */}
-          <div className="bg-emerald-50/60 p-5 rounded-xl border border-emerald-300 shadow-xs hover:border-emerald-600 transition-all">
-            <div className="flex items-center justify-between text-emerald-800 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Estimated Net Profit</span>
-              <Wallet className="w-4 h-4 text-emerald-700" />
+          {/* Today's Net Profit */}
+          <div
+            className={`p-5 rounded-xl border ${
+              todayStats.netProfit >= 0
+                ? 'bg-emerald-50/50 border-emerald-200'
+                : 'bg-red-50/50 border-red-200'
+            }`}
+          >
+            <div
+              className={`flex items-center justify-between mb-2 ${
+                todayStats.netProfit >= 0 ? 'text-emerald-800' : 'text-red-800'
+              }`}
+            >
+              <span className="text-[11px] font-bold uppercase tracking-wider">
+                Today&apos;s {todayStats.netProfit >= 0 ? 'Net Profit' : 'Net Loss'}
+              </span>
+              <Wallet className="w-4 h-4" />
             </div>
-            <p className="text-2xl font-black text-emerald-950 font-mono">
-              ৳{totalProfit.toLocaleString('en-BD')}
+            <p
+              className={`text-2xl font-black font-mono ${
+                todayStats.netProfit >= 0 ? 'text-emerald-950' : 'text-red-700'
+              }`}
+            >
+              {todayStats.netProfit < 0 ? '-' : ''}৳{Math.abs(todayStats.netProfit).toLocaleString('en-BD')}
             </p>
-            <p className="text-[11px] text-emerald-800 font-semibold mt-1">
-              Gross Revenue minus Product Costs ({totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0}% margin)
+            <p className={`text-[11px] mt-1 ${todayStats.netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+              Gross ৳{todayStats.grossProfit.toLocaleString('en-BD')} − Exp ৳{todayStats.totalExpenses.toLocaleString('en-BD')}
             </p>
           </div>
 
+          {/* Monthly Sale */}
+          <div className="bg-white p-5 rounded-xl border border-neutral-200">
+            <div className="flex items-center justify-between text-neutral-500 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Monthly Sale</span>
+              <TrendingUp className="w-4 h-4 text-neutral-800" />
+            </div>
+            <p className="text-2xl font-black text-neutral-900 font-mono">
+              ৳{monthStats.totalBilledRevenue.toLocaleString('en-BD')}
+            </p>
+            <p className="text-[11px] text-neutral-500 mt-1">
+              {monthStats.validOrderCount} orders · {monthStats.unitsSold} pcs ({monthBounds.label})
+            </p>
+          </div>
+
+          {/* Monthly Net Profit */}
+          <div
+            className={`p-5 rounded-xl border ${
+              monthStats.netProfit >= 0
+                ? 'bg-emerald-50/50 border-emerald-200'
+                : 'bg-red-50/50 border-red-200'
+            }`}
+          >
+            <div
+              className={`flex items-center justify-between mb-2 ${
+                monthStats.netProfit >= 0 ? 'text-emerald-800' : 'text-red-800'
+              }`}
+            >
+              <span className="text-[11px] font-bold uppercase tracking-wider">
+                Monthly {monthStats.netProfit >= 0 ? 'Net Profit' : 'Net Loss'}
+              </span>
+              <DollarSign className="w-4 h-4" />
+            </div>
+            <p
+              className={`text-2xl font-black font-mono ${
+                monthStats.netProfit >= 0 ? 'text-emerald-950' : 'text-red-700'
+              }`}
+            >
+              {monthStats.netProfit < 0 ? '-' : ''}৳{Math.abs(monthStats.netProfit).toLocaleString('en-BD')}
+            </p>
+            <p className={`text-[11px] mt-1 ${monthStats.netProfit >= 0 ? 'text-emerald-800' : 'text-red-700'}`}>
+              Gross ৳{monthStats.grossProfit.toLocaleString('en-BD')} − Exp ৳{monthStats.totalExpenses.toLocaleString('en-BD')}
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* SECONDARY OPERATIONAL METRICS (Total Orders, Pending, Revenue, Inventory) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        {/* Total Orders */}
-        <div 
-          onClick={() => onNavigateTab('orders')}
-          className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black cursor-pointer transition-all"
-        >
-          <div className="flex items-center justify-between text-neutral-500 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Total Orders</span>
-            <ShoppingBag className="w-4 h-4 text-neutral-700" />
+      {/* DAILY & MONTHLY TARGETS PROGRESS CARD */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+          <div>
+            <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
+              <Target className="w-4 h-4" />
+              <span>Daily &amp; Monthly Targets Progress</span>
+            </h3>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Real-time achievement tracking for Sales Amount (৳), Pieces Sold (Pcs), and Monthly Net Profit
+            </p>
           </div>
-          <p className="text-2xl font-black text-neutral-900 font-mono">{totalOrders}</p>
-          <p className="text-[11px] text-neutral-400 mt-1 flex items-center justify-between">
-            <span>{deliveredOrders} Delivered</span>
-            <span className="text-black font-semibold hover:underline">View →</span>
+          {hasMenuPermission('pnl') && (
+            <button
+              type="button"
+              onClick={() => onNavigateTab('pnl')}
+              className="px-3.5 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5 w-fit"
+            >
+              <span>Configure Targets &amp; P&amp;L</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <TargetProgressRow
+            label="Today Amount"
+            currentValue={todayStats.totalBilledRevenue}
+            targetValue={targets.dailyAmountTarget}
+            unitPrefix="৳"
+            accentColor="neutral"
+          />
+          <TargetProgressRow
+            label="Today Pieces"
+            currentValue={todayStats.unitsSold}
+            targetValue={targets.dailyPcsTarget}
+            unitSuffix=" pcs"
+            accentColor="blue"
+          />
+          <TargetProgressRow
+            label="Monthly Amount"
+            currentValue={monthStats.totalBilledRevenue}
+            targetValue={targets.monthlyAmountTarget}
+            unitPrefix="৳"
+            accentColor="neutral"
+          />
+          <TargetProgressRow
+            label="Monthly Profit"
+            currentValue={monthStats.netProfit}
+            targetValue={targets.monthlyProfitTarget}
+            unitPrefix="৳"
+            accentColor="emerald"
+          />
+        </div>
+      </div>
+
+      {/* PURCHASES, EXPENSES, SUPPLIER DUE & STOCK VALUATION */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 tabular-nums">
+        <div
+          onClick={() => onNavigateTab('purchases')}
+          className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
+        >
+          <div className="flex items-center justify-between text-neutral-500 mb-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Monthly Purchases</span>
+            <ShoppingCart className="w-4 h-4 text-neutral-700" />
+          </div>
+          <p className="text-xl font-black text-neutral-900 font-mono">
+            ৳{monthStats.purchasesTotal.toLocaleString('en-BD')}
+          </p>
+          <p className="text-[11px] text-neutral-500 mt-1">
+            All-time: ৳{stockAudit.totalPurchasedAmount.toLocaleString('en-BD')} →
           </p>
         </div>
 
-        {/* Pending Orders */}
-        <div 
-          onClick={() => onNavigateTab('orders')}
-          className={`p-5 rounded-xl border shadow-xs hover:border-amber-500 cursor-pointer transition-all ${
-            pendingOrders > 0 ? 'bg-amber-50/50 border-amber-300' : 'bg-white border-neutral-200'
-          }`}
+        <div
+          onClick={() => onNavigateTab('expenses')}
+          className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
         >
-          <div className="flex items-center justify-between text-amber-600 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Pending Orders</span>
-            <Clock className="w-4 h-4" />
+          <div className="flex items-center justify-between text-neutral-500 mb-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Monthly Expenses</span>
+            <Coins className="w-4 h-4 text-red-600" />
           </div>
-          <p className="text-2xl font-black text-amber-900 font-mono">{pendingOrders}</p>
-          <p className="text-[11px] text-amber-700 font-medium mt-1">
-            {pendingOrders > 0 ? 'Action required: Confirm orders' : 'All clear • No pending orders'}
+          <p className="text-xl font-black text-red-700 font-mono">
+            ৳{monthStats.totalExpenses.toLocaleString('en-BD')}
+          </p>
+          <p className="text-[11px] text-neutral-500 mt-1">
+            Today: ৳{todayStats.totalExpenses.toLocaleString('en-BD')} · Log entry →
           </p>
         </div>
 
-        {/* Real Revenue */}
-        <div className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs">
-          <div className="flex items-center justify-between text-emerald-700 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">All-Time Revenue</span>
-            <DollarSign className="w-4 h-4" />
+        <div
+          onClick={() => onNavigateTab('suppliers')}
+          className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
+        >
+          <div className="flex items-center justify-between text-neutral-500 mb-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Supplier Dues</span>
+            <Building2 className="w-4 h-4 text-amber-600" />
           </div>
-          <p className="text-2xl font-black text-neutral-900 font-mono">
-            ৳{totalRevenue.toLocaleString('en-BD')}
+          <p className="text-xl font-black text-amber-700 font-mono">
+            ৳{totalSupplierDue.toLocaleString('en-BD')}
           </p>
-          <p className="text-[11px] text-neutral-400 mt-1">Net of cancelled orders</p>
+          <p className="text-[11px] text-neutral-500 mt-1">{suppliers.length} suppliers registered →</p>
         </div>
 
-        {/* Total Products & Low Stock */}
-        <div 
-          onClick={() => onNavigateTab('products')}
-          className="bg-white p-5 rounded-xl border border-neutral-200 shadow-xs hover:border-black cursor-pointer transition-all"
+        <div
+          onClick={() => (hasMenuPermission('pnl') ? onNavigateTab('pnl') : onNavigateTab('products'))}
+          className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
         >
-          <div className="flex items-center justify-between text-neutral-500 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Catalog Inventory</span>
+          <div className="flex items-center justify-between text-neutral-500 mb-1.5">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Live Stock Value</span>
             <Package className="w-4 h-4 text-neutral-700" />
           </div>
-          <p className="text-2xl font-black text-neutral-900 font-mono">{totalProducts}</p>
-          <p className="text-[11px] font-semibold mt-1">
-            {lowStockProducts > 0 ? (
-              <span className="text-red-600">⚠️ {lowStockProducts} Low Stock Items</span>
+          <p className="text-xl font-black text-neutral-900 font-mono">
+            ৳{stockAudit.stockCostValue.toLocaleString('en-BD')}
+          </p>
+          <p className="text-[11px] font-semibold mt-1 text-neutral-600">
+            {stockAudit.totalProducts} products · {stockAudit.totalStockPcs.toLocaleString('en-BD')} pcs ·{' '}
+            {stockAudit.matchStatus === 'matched' ? (
+              <span className="text-emerald-700">Matched ✓</span>
             ) : (
-              <span className="text-emerald-700">✓ All Stock Healthy</span>
+              <span className="text-blue-700">Audit Stock →</span>
             )}
           </p>
         </div>
-
       </div>
 
-      {/* Secondary Metrics: Customers & Deliveries */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div 
+      {/* LIVE 14-DAY PERFORMANCE GRAPH */}
+      <DailyPerformanceChart
+        data={dailySeries}
+        dailyAmountTarget={targets.dailyAmountTarget}
+        dailyPcsTarget={targets.dailyPcsTarget}
+      />
+
+      {/* STAFF DESK ORDER WORKFLOW SNAPSHOT */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
+              Order Workflow &amp; Staff Desk Queue
+            </h3>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Live breakdown of active orders across each desk · All-time Net Profit:{' '}
+              <b className={`font-mono ${allTimeStats.netProfit >= 0 ? 'text-neutral-900' : 'text-red-700'}`}>
+                {allTimeStats.netProfit < 0 ? '-' : ''}৳{Math.abs(allTimeStats.netProfit).toLocaleString('en-BD')}
+              </b>
+            </p>
+          </div>
+          {hasMenuPermission('pipeline') && (
+            <button
+              onClick={() => onNavigateTab('pipeline')}
+              className="px-3.5 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5 w-fit"
+            >
+              <span>Open Workflow Board</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
+          {([
+            {
+              stage: 'order_verification',
+              step: '01',
+              title: 'Order Verification',
+              count: pipelineCounts.order_verification,
+            },
+            {
+              stage: 'payment_verification',
+              step: '02',
+              title: 'Payment Verification',
+              count: pipelineCounts.payment_verification,
+            },
+            {
+              stage: 'inventory_packing',
+              step: '03',
+              title: 'Packaging & Stock',
+              count: pipelineCounts.inventory_packing,
+            },
+            {
+              stage: 'delivery_dispatch',
+              step: '04',
+              title: 'Delivery Dispatch',
+              count: pipelineCounts.delivery_dispatch,
+            },
+          ] as const).map((item) => {
+            const desk = partnerDesks.find((d) => d.stage === item.stage);
+            return (
+              <button
+                key={item.stage}
+                type="button"
+                onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
+                className="text-left p-3.5 rounded-lg border border-neutral-200 hover:border-black transition-colors cursor-pointer bg-neutral-50/50"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                    Stage {item.step}
+                  </span>
+                  <span className="text-lg font-black font-mono text-neutral-900">{item.count}</span>
+                </div>
+                <p className="text-xs font-bold text-neutral-900 mt-1">{item.title}</p>
+                <p className="text-[11px] text-neutral-500 mt-0.5 truncate">
+                  Desk: <b>{desk?.partnerName || item.title}</b>
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Quick Operational Summary Strip */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 tabular-nums">
+        <div
           onClick={() => onNavigateTab('customers')}
-          className="p-4 bg-white border border-neutral-200 rounded-xl shadow-xs flex items-center justify-between hover:border-neutral-400 cursor-pointer"
+          className="p-4 bg-white border border-neutral-200 rounded-xl flex items-center justify-between hover:border-black cursor-pointer"
         >
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Total Customers</span>
             <p className="text-xl font-black text-neutral-900 font-mono mt-0.5">{customerCount}</p>
           </div>
-          <div className="w-9 h-9 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-700">
-            <Users className="w-4 h-4" />
-          </div>
+          <Users className="w-5 h-5 text-neutral-400" />
         </div>
 
-        <div 
+        <div
           onClick={() => onNavigateTab('orders')}
-          className="p-4 bg-white border border-neutral-200 rounded-xl shadow-xs flex items-center justify-between hover:border-neutral-400 cursor-pointer"
+          className="p-4 bg-white border border-neutral-200 rounded-xl flex items-center justify-between hover:border-black cursor-pointer"
         >
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">In-Processing / Packaging</span>
-            <p className="text-xl font-black text-neutral-900 font-mono mt-0.5">{processingOrders}</p>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+              Pending / Active Orders
+            </span>
+            <p className="text-xl font-black text-neutral-900 font-mono mt-0.5">
+              {pendingOrders} pending · {deliveredOrders} delivered
+            </p>
           </div>
-          <div className="w-9 h-9 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-700">
-            <Truck className="w-4 h-4" />
-          </div>
+          <ShoppingBag className="w-5 h-5 text-neutral-400" />
         </div>
 
-        <div 
+        <div
           onClick={() => onNavigateTab('delivery')}
-          className="p-4 bg-white border border-neutral-200 rounded-xl shadow-xs flex items-center justify-between hover:border-neutral-400 cursor-pointer"
+          className="p-4 bg-white border border-neutral-200 rounded-xl flex items-center justify-between hover:border-black cursor-pointer"
         >
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Delivery Status</span>
-            <p className="text-sm font-extrabold text-neutral-900 mt-0.5">Steadfast / Pathao</p>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Delivery Network</span>
+            <p className="text-sm font-extrabold text-neutral-900 mt-0.5">Steadfast / Pathao / COD</p>
           </div>
-          <div className="w-9 h-9 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-700">
-            <CheckCircle2 className="w-4 h-4" />
-          </div>
+          <Truck className="w-5 h-5 text-neutral-400" />
         </div>
       </div>
 
@@ -511,7 +782,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                 <span>Verify Delivery Zones</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </p>
-              <p className="text-[11px] text-neutral-400 mt-1">Dhaka & Nationwide rates</p>
+              <p className="text-[11px] text-neutral-400 mt-1">Dhaka &amp; Nationwide rates</p>
             </button>
 
             <button

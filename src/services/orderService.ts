@@ -141,6 +141,7 @@ export const orderService = {
       const orderNumber = `#${Math.floor(100000 + Math.random() * 900000)}`;
       const orderDocRef = doc(collection(db, 'orders'));
       let transactionGrandTotal = 0;
+      let committedOrder: Order | null = null;
 
       // Use Firestore transaction to verify prices and decrement inventory atomically
       // Strictly separating: ALL READS FIRST -> CALCULATIONS -> ALL WRITES
@@ -363,10 +364,19 @@ export const orderService = {
           }
 
           // 3. Write order document
-          this.saveLocalOrder(newOrder);
+          committedOrder = newOrder;
           const sanitizedOrder = sanitizeForFirestore(newOrder);
           transaction.set(orderDocRef, sanitizedOrder);
         });
+
+        if (committedOrder) {
+          const nowIso = new Date().toISOString();
+          this.saveLocalOrder({
+            ...(committedOrder as Order),
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        }
 
         // Mark coupon consumed locally right away (0ms sync)
         if (freeDeliveryCouponId || couponCode) {
@@ -513,7 +523,12 @@ export const orderService = {
           updatedAt: serverTimestamp(),
         };
 
-        this.saveLocalOrder(fallbackOrder);
+        const nowIso = new Date().toISOString();
+        this.saveLocalOrder({
+          ...fallbackOrder,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
 
         try {
           const sanitizedOrder = sanitizeForFirestore(fallbackOrder);

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { 
   User, 
   onAuthStateChanged, 
@@ -209,21 +209,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Explicit 1-click user action: authorize current PC or Mobile device for a verified customer account
-  const enableCurrentDeviceForVerifiedUser = async () => {
+  const enableCurrentDeviceForVerifiedUser = useCallback(async () => {
     const user = auth.currentUser;
     if (!user?.uid || !user.emailVerified) return;
     const deviceId = getLocalCustomerDeviceId();
     const docRef = doc(db, 'users', user.uid);
 
-    const existingList = Array.from(
-      new Set([
-        ...(customerProfile?.verifiedDeviceIds || []),
-        ...(customerProfile?.verifiedDeviceId ? [customerProfile.verifiedDeviceId] : []),
-        deviceId,
-      ])
-    );
-
     setCustomerProfile((prev) => {
+      const existing = new Set([
+        ...(prev?.verifiedDeviceIds || []),
+        ...(prev?.verifiedDeviceId ? [prev.verifiedDeviceId] : []),
+      ]);
+      if (existing.has(deviceId)) return prev;
+      existing.add(deviceId);
       const next: CustomerProfile = {
         ...(prev || {
           uid: user.uid,
@@ -232,7 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: new Date().toISOString(),
         }),
         verifiedDeviceId: prev?.verifiedDeviceId || deviceId,
-        verifiedDeviceIds: existingList,
+        verifiedDeviceIds: Array.from(existing),
       };
       saveLocalCustomer(next);
       return next;
@@ -241,18 +239,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const snap = await getDoc(docRef);
       const remote = snap.exists() ? (snap.data() as CustomerProfile) : null;
-      const mergedList = Array.from(
-        new Set([
-          ...(remote?.verifiedDeviceIds || []),
-          ...(remote?.verifiedDeviceId ? [remote.verifiedDeviceId] : []),
-          ...existingList,
-        ])
-      );
+      const remoteSet = new Set([
+        ...(remote?.verifiedDeviceIds || []),
+        ...(remote?.verifiedDeviceId ? [remote.verifiedDeviceId] : []),
+      ]);
+      if (remoteSet.has(deviceId)) return;
+      remoteSet.add(deviceId);
       await setDoc(
         docRef,
         {
           verifiedDeviceId: remote?.verifiedDeviceId || deviceId,
-          verifiedDeviceIds: mergedList,
+          verifiedDeviceIds: Array.from(remoteSet),
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -260,7 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // Local state still persists
     }
-  };
+  }, []);
 
   const loadCustomerProfile = async (uid: string, userObj?: User | null) => {
     try {

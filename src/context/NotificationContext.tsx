@@ -143,89 +143,29 @@ export const NotificationProvider: React.FC<{
     }, 6500);
   }, []);
 
-  const autoTriedRef = useRef<boolean>(false);
-  const gestureTriedRef = useRef<boolean>(false);
-
-  // Direct browser notification permission prompt on website entry (Desktop immediate + Mobile first-tap)
+  // Passively keep browser notification permission state in sync (never triggers loops or un-gestured prompts)
   useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
-    const current = getBrowserNotificationPermission();
-    setPermission(current);
-
-    if (current === 'granted') {
-      setNotificationsMuted(false);
-      setIsMuted(false);
-      setInAppAlertsActive(true);
-      try {
-        localStorage.setItem(INAPP_ALERTS_KEY, '1');
-      } catch {
-        // ignore
-      }
-      if (currentUser?.emailVerified) {
-        enableCurrentDeviceForVerifiedUser().catch(() => {});
-      }
-      return;
-    }
-
-    if (current !== 'default') return;
-
-    const activateAfterGrant = (res: NotificationPermission | 'unsupported') => {
-      setPermission(res);
-      if (res === 'granted') {
-        setNotificationsMuted(false);
-        setIsMuted(false);
+    const syncPermission = () => {
+      const current = getBrowserNotificationPermission();
+      setPermission(current);
+      if (current === 'granted') {
         setInAppAlertsActive(true);
         try {
           localStorage.setItem(INAPP_ALERTS_KEY, '1');
         } catch {
           // ignore
         }
-        if (currentUser?.emailVerified) {
-          enableCurrentDeviceForVerifiedUser().catch(() => {});
-        }
       }
     };
-
-    const isMobileViewport =
-      window.innerWidth < 768 ||
-      window.matchMedia?.('(pointer: coarse)').matches ||
-      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-
-    // 1. On desktop, trigger native browser prompt immediately on load (mobile browsers ignore non-gesture calls)
-    if (!isMobileViewport && !autoTriedRef.current) {
-      autoTriedRef.current = true;
-      requestMobileNotificationPermission()
-        .then((res) => activateAfterGrant(res))
-        .catch(() => {});
-    }
-
-    // 2. On Mobile / Mobile View (or if desktop prompt stayed 'default'), trigger synchronously on very first tap/click
-    const onFirstUserGesture = (e: Event) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.('[data-notif-trigger="true"]')) {
-        return;
-      }
-      if (gestureTriedRef.current || getBrowserNotificationPermission() !== 'default') {
-        cleanupGestureListeners();
-        return;
-      }
-      gestureTriedRef.current = true;
-      cleanupGestureListeners();
-
-      requestMobileNotificationPermission()
-        .then((res) => activateAfterGrant(res))
-        .catch(() => {});
-    };
-
-    const cleanupGestureListeners = () => {
-      window.removeEventListener('click', onFirstUserGesture, true);
-    };
-
-    window.addEventListener('click', onFirstUserGesture, true);
+    syncPermission();
+    window.addEventListener('focus', syncPermission);
+    document.addEventListener('visibilitychange', syncPermission);
     return () => {
-      cleanupGestureListeners();
+      window.removeEventListener('focus', syncPermission);
+      document.removeEventListener('visibilitychange', syncPermission);
     };
-  }, [currentUser?.emailVerified, enableCurrentDeviceForVerifiedUser]);
+  }, []);
 
   // Track stored admin device ID across tabs / when /admin creates an ID
   useEffect(() => {

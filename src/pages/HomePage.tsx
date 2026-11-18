@@ -51,7 +51,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const activeBanner = banners.length > 0 ? banners[0] : null;
 
   return (
-    <div className="space-y-16 sm:space-y-24 pb-16">
+    <div className="space-y-16 sm:space-y-24">
       
       {/* Hero Section */}
       <section className="relative bg-neutral-950 text-white overflow-hidden min-h-[460px] sm:min-h-[560px] flex items-center">
@@ -199,7 +199,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       </section>
 
       {/* Brand Craftsmanship Spotlight */}
-      <section className="bg-neutral-50 border-y border-neutral-200 py-16 sm:py-20">
+      <section className="bg-neutral-50 border-t border-neutral-200 py-16 sm:py-20">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 sm:gap-12 text-center md:text-left">
             <div className="space-y-3">

@@ -786,7 +786,8 @@ export const productService = {
 
   // Automatically decrement product inventory when an order is placed
   async decrementProductStock(
-    items: { productId: string; size?: string; color?: string; quantity: number }[]
+    items: { productId: string; size?: string; color?: string; quantity: number }[],
+    syncLocalOnly = false
   ): Promise<void> {
     if (!items || items.length === 0) return;
 
@@ -828,6 +829,8 @@ export const productService = {
 
     // 1. Immediately update persistent local catalog and dispatch event for instant UI update
     this.saveLocalProducts(updatedProducts);
+
+    if (syncLocalOnly) return;
 
     // 2. Persist to Firestore for all affected products
     for (const it of items) {

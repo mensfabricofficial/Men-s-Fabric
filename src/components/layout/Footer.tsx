@@ -30,7 +30,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   }, []);
 
   return (
-    <footer className="bg-black text-white border-t border-neutral-800">
+    <footer className="bg-black text-white border-t border-neutral-800 pb-20 md:pb-0">
       {/* Trust Badges Bar */}
       <div className="border-b border-neutral-800 py-8 px-4 sm:px-6 lg:px-8 2xl:px-12">
         <div className="max-w-[1600px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">

@@ -3,6 +3,7 @@ import { CartItem, Coupon, DeliveryZone } from '../types';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { getLocalDeliveryZones, settingsService, sortDeliveryZones } from '../services/settingsService';
+import { orderService } from '../services/orderService';
 import { useAuth } from './AuthContext';
 
 interface CartContextType {
@@ -60,6 +61,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return initial[0] || null;
   });
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
+  const [orderConsumedCodes, setOrderConsumedCodes] = useState<string[]>([]);
 
   // Real-time synchronization of coupons (for auto free delivery & one-time voucher checks)
   useEffect(() => {
@@ -69,7 +71,66 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsub();
   }, []);
 
-  // Automatically invalidate stored appliedCoupon if exhausted/disabled or belongs to another user
+  // Track coupons already used in non-cancelled orders so 1-time Free Delivery never returns
+  useEffect(() => {
+    let active = true;
+    const collectFromLocal = () => {
+      const codes = orderService
+        .getLocalOrders()
+        .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+        .map((o) => o.couponCode!.trim().toUpperCase());
+      if (active) setOrderConsumedCodes(Array.from(new Set(codes)));
+    };
+    collectFromLocal();
+
+    const syncRemoteOrders = async () => {
+      if (!currentUser?.uid) return;
+      try {
+        const remoteOrders = await orderService.getCustomerOrders(
+          currentUser.uid,
+          currentUser.email || undefined,
+          customerProfile?.phone || undefined
+        );
+        if (!active) return;
+        const localCodes = orderService
+          .getLocalOrders()
+          .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+          .map((o) => o.couponCode!.trim().toUpperCase());
+        const remoteCodes = remoteOrders
+          .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+          .map((o) => o.couponCode!.trim().toUpperCase());
+        setOrderConsumedCodes(Array.from(new Set([...localCodes, ...remoteCodes])));
+      } catch {
+        // ignore
+      }
+    };
+    syncRemoteOrders();
+
+    const onOrdersUpdated = () => collectFromLocal();
+    window.addEventListener('mf_orders_updated', onOrdersUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener('mf_orders_updated', onOrdersUpdated);
+    };
+  }, [currentUser?.uid, currentUser?.email, customerProfile?.phone]);
+
+  const consumedCouponTokens = React.useMemo(() => {
+    const set = new Set<string>();
+    (customerProfile?.consumedCoupons || []).forEach((t) => {
+      if (t) set.add(t.trim().toUpperCase());
+    });
+    orderConsumedCodes.forEach((code) => {
+      const matched = coupons.find((c) => c.code.toUpperCase() === code);
+      // Mark consumed if free_delivery or 1-time voucher
+      if (!matched || matched.discountType === 'free_delivery' || (matched.usageLimit || 0) <= 1) {
+        set.add(code);
+        if (matched?.id) set.add(matched.id.trim().toUpperCase());
+      }
+    });
+    return set;
+  }, [customerProfile?.consumedCoupons, orderConsumedCodes, coupons]);
+
+  // Automatically invalidate stored appliedCoupon if exhausted/disabled/consumed or belongs to another user
   useEffect(() => {
     if (!appliedCoupon) return;
     const latest = coupons.find((c) => c.id === appliedCoupon.id || c.code === appliedCoupon.code);
@@ -78,15 +139,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: currentUser?.email,
       phone: customerProfile?.phone,
     };
-    if (latest) {
-      if (
-        !settingsService.isCouponValidForUse(latest) ||
-        !settingsService.doesCouponMatchCustomer(latest, identity)
-      ) {
-        setAppliedCoupon(null);
-      }
+    const targetCoupon = latest || appliedCoupon;
+    if (
+      !settingsService.isCouponValidForUse(targetCoupon, consumedCouponTokens) ||
+      !settingsService.doesCouponMatchCustomer(targetCoupon, identity)
+    ) {
+      setAppliedCoupon(null);
     }
-  }, [coupons, appliedCoupon, currentUser?.uid, currentUser?.email, customerProfile?.phone]);
+  }, [coupons, appliedCoupon, consumedCouponTokens, currentUser?.uid, currentUser?.email, customerProfile?.phone]);
 
   // Real-time synchronization of delivery zones from local event and Firestore
   useEffect(() => {
@@ -253,9 +313,16 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   // Check manual or auto-applied 1-time Free Delivery voucher
-  const autoFreeDeliveryCoupon = settingsService.getActiveFreeDeliveryForUser(coupons, userIdentity);
+  const autoFreeDeliveryCoupon = settingsService.getActiveFreeDeliveryForUser(
+    coupons,
+    userIdentity,
+    consumedCouponTokens
+  );
   const activeFreeDeliveryCoupon =
-    appliedCoupon && appliedCoupon.discountType === 'free_delivery' && subtotal >= (appliedCoupon.minOrderAmount || 0)
+    appliedCoupon &&
+    appliedCoupon.discountType === 'free_delivery' &&
+    settingsService.isCouponValidForUse(appliedCoupon, consumedCouponTokens) &&
+    subtotal >= (appliedCoupon.minOrderAmount || 0)
       ? appliedCoupon
       : autoFreeDeliveryCoupon && subtotal >= (autoFreeDeliveryCoupon.minOrderAmount || 0)
       ? autoFreeDeliveryCoupon
@@ -263,28 +330,17 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isFreeDelivery = Boolean(activeFreeDeliveryCoupon);
 
   const applyCoupon = (coupon: Coupon): { success: boolean; message: string } => {
-    if (!coupon.active) {
-      return { success: false, message: 'This coupon is no longer active.' };
+    if (!settingsService.isCouponValidForUse(coupon, consumedCouponTokens)) {
+      return { success: false, message: 'This coupon has already been used or expired.' };
     }
     if (!settingsService.doesCouponMatchCustomer(coupon, userIdentity)) {
       return { success: false, message: 'This coupon is assigned to a specific customer account.' };
-    }
-    if (coupon.expiryDate) {
-      const exp = coupon.expiryDate.includes('T')
-        ? new Date(coupon.expiryDate)
-        : new Date(`${coupon.expiryDate}T23:59:59`);
-      if (!isNaN(exp.getTime()) && exp < new Date()) {
-        return { success: false, message: 'This coupon has expired.' };
-      }
     }
     if (subtotal < (coupon.minOrderAmount || 0)) {
       return {
         success: false,
         message: `Minimum order amount of ৳${coupon.minOrderAmount} required for this coupon.`,
       };
-    }
-    if (coupon.usageLimit && (coupon.usedCount || 0) >= coupon.usageLimit) {
-      return { success: false, message: 'Coupon usage limit has been reached.' };
     }
     setAppliedCoupon(coupon);
     if (coupon.discountType === 'free_delivery') {

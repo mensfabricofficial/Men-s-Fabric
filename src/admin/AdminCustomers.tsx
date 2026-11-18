@@ -227,6 +227,11 @@ export const AdminCustomers: React.FC = () => {
   }, []);
 
   const getCustomerFreeDeliveryCoupon = (c: AggregatedCustomer): Coupon | undefined => {
+    const usedOrderCodes = new Set(
+      (c.orders || [])
+        .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+        .map((o) => o.couponCode!.trim().toUpperCase())
+    );
     return coupons.find((cpn) => {
       if (cpn.discountType !== 'free_delivery') return false;
       const hasTarget = Boolean(
@@ -235,8 +240,9 @@ export const AdminCustomers: React.FC = () => {
         cpn.targetCustomerPhone
       );
       if (!hasTarget) return false;
+      if (usedOrderCodes.has(cpn.code.trim().toUpperCase())) return false;
       return (
-        settingsService.isCouponValidForUse(cpn) &&
+        settingsService.isCouponValidForUse(cpn, usedOrderCodes) &&
         settingsService.doesCouponMatchCustomer(cpn, {
           uid: c.uid,
           email: c.email,

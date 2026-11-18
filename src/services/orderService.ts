@@ -23,6 +23,12 @@ import { notificationService } from './notificationService';
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
 const cachedOrdersMap = new Map<string, Order>();
 
+const withTimeout = <T,>(promise: Promise<T>, ms: number, label = 'Request timed out'): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+  ]);
+
 export const cacheOrderRecord = (ord: Order) => {
   if (!ord) return;
   if (ord.id) {
@@ -128,7 +134,7 @@ export const orderService = {
             where('active', '==', true),
             limit(1)
           );
-          const couponSnap = await getDocs(couponQuery);
+          const couponSnap = await withTimeout(getDocs(couponQuery), 2500, 'Coupon lookup timeout');
           if (!couponSnap.empty) {
             validCouponDocId = couponSnap.docs[0].id;
           }
@@ -146,7 +152,7 @@ export const orderService = {
       // Use Firestore transaction to verify prices and decrement inventory atomically
       // Strictly separating: ALL READS FIRST -> CALCULATIONS -> ALL WRITES
       try {
-        await runTransaction(db, async (transaction) => {
+        await withTimeout(runTransaction(db, async (transaction) => {
           // --- PHASE 1: ALL READS ---
           const productSnapshots: { cartItem: CartItem; productRef: any; productData: any }[] = [];
           for (const cartItem of items) {
@@ -232,7 +238,10 @@ export const orderService = {
           let couponIsFreeDelivery = false;
           if (couponDoc && couponDoc.exists()) {
             const couponData = couponDoc.data();
-            const isValid = couponData.active !== false && (!couponData.usageLimit || (couponData.usedCount || 0) < couponData.usageLimit);
+            const isValid =
+              couponData.active !== false &&
+              (!couponData.usageLimit || (couponData.usedCount || 0) < couponData.usageLimit) &&
+              settingsService.isCouponValidForUse({ id: couponDoc.id, ...couponData } as any);
             if (isValid && calculatedSubtotal >= (couponData.minOrderAmount || 0)) {
               if (couponData.discountType === 'free_delivery') {
                 couponIsFreeDelivery = true;
@@ -350,12 +359,18 @@ export const orderService = {
             });
           }
 
-          // 2. Increment coupon usage & auto-deactivate if usage limit reached
+          // 2. Increment coupon usage & auto-deactivate if usage limit reached (or free_delivery 1-time coupon)
           if (couponDoc && couponDoc.exists() && validCouponDocId) {
             const couponRef = doc(db, 'coupons', validCouponDocId);
             const cData = couponDoc.data();
-            const nextUsed = (cData?.usedCount || 0) + 1;
-            const exhausted = Boolean(cData?.usageLimit && nextUsed >= cData.usageLimit);
+            const effLimit =
+              cData?.discountType === 'free_delivery'
+                ? cData?.usageLimit || 1
+                : cData?.usageLimit;
+            const nextUsed = Math.max((cData?.usedCount || 0) + 1, cData?.discountType === 'free_delivery' ? (effLimit || 1) : 1);
+            const exhausted = Boolean(
+              (effLimit && nextUsed >= effLimit) || cData?.discountType === 'free_delivery'
+            );
             transaction.update(couponRef, {
               usedCount: nextUsed,
               ...(exhausted ? { active: false } : {}),
@@ -367,7 +382,7 @@ export const orderService = {
           committedOrder = newOrder;
           const sanitizedOrder = sanitizeForFirestore(newOrder);
           transaction.set(orderDocRef, sanitizedOrder);
-        });
+        }), 5500, 'Transaction timeout');
 
         if (committedOrder) {
           const nowIso = new Date().toISOString();
@@ -378,24 +393,32 @@ export const orderService = {
           });
         }
 
-        // Mark coupon consumed locally right away (0ms sync)
-        if (freeDeliveryCouponId || couponCode) {
-          await settingsService.markCouponUsed(freeDeliveryCouponId || couponCode || '', true);
+        // Permanently mark coupon / free-delivery voucher consumed locally + on Firestore & user profile
+        const tokensToConsume = Array.from(new Set([freeDeliveryCouponId, couponCode].filter(Boolean) as string[]));
+        if (tokensToConsume.length > 0) {
+          await withTimeout(
+            Promise.all(
+              tokensToConsume.map((tok) =>
+                settingsService.markCouponUsed(tok, false, customerId).catch(() => {})
+              )
+            ),
+            1800,
+            'Coupon consume sync'
+          ).catch(() => {});
         }
 
-        // Automatically decrement inventory across local catalog & broadcast to Admin Panel
-        try {
-          await productService.decrementProductStock(
+        // Sync stock decrement locally without blocking checkout redirect (Firestore transaction already committed inventory)
+        productService
+          .decrementProductStock(
             items.map((i) => ({
               productId: i.productId,
               size: i.size,
               color: i.color,
               quantity: i.quantity,
-            }))
-          );
-        } catch (stockErr) {
-          console.warn('Stock decrement notice:', stockErr);
-        }
+            })),
+            true
+          )
+          .catch(() => {});
 
         // Notify customer + authorized admin devices (in-app & mobile push alert)
         const totalItemsCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
@@ -532,29 +555,38 @@ export const orderService = {
 
         try {
           const sanitizedOrder = sanitizeForFirestore(fallbackOrder);
-          await setDoc(orderDocRef, sanitizedOrder);
+          const writePromise = setDoc(orderDocRef, sanitizedOrder);
+          writePromise.catch(() => {});
+          await withTimeout(writePromise, 2500, 'Order sync queued in background');
         } catch (setDocErr) {
-          console.warn('Remote setDoc notice, order preserved in persistent storage:', setDocErr);
+          console.warn('Remote setDoc queued in persistent storage:', setDocErr);
         }
 
-        // Consume one-time coupon / free delivery reward in fallback path too
-        if (freeDeliveryCouponId || couponCode) {
-          await settingsService.markCouponUsed(freeDeliveryCouponId || couponCode || '', false);
+        // Consume one-time coupon / free delivery reward locally & remotely on user profile
+        const fallbackTokens = Array.from(new Set([freeDeliveryCouponId, couponCode].filter(Boolean) as string[]));
+        if (fallbackTokens.length > 0) {
+          await withTimeout(
+            Promise.all(
+              fallbackTokens.map((tok) =>
+                settingsService.markCouponUsed(tok, false, customerId).catch(() => {})
+              )
+            ),
+            1800,
+            'Fallback coupon consume sync'
+          ).catch(() => {});
         }
 
-        // Automatically decrement inventory across local catalog & broadcast to Admin Panel in fallback mode
-        try {
-          await productService.decrementProductStock(
+        // Sync inventory decrement in background so checkout navigation is instant
+        productService
+          .decrementProductStock(
             items.map((i) => ({
               productId: i.productId,
               size: i.size,
               color: i.color,
               quantity: i.quantity,
             }))
-          );
-        } catch (stockErr) {
-          console.warn('Fallback stock decrement notice:', stockErr);
-        }
+          )
+          .catch(() => {});
 
         // Notify customer + authorized admin devices in fallback checkout path
         const fallbackItemCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
@@ -694,22 +726,44 @@ export const orderService = {
     }
   },
 
-  // Get order by ID or Order Number (Live Firestore-first with local fallback)
+  // Get order by ID or Order Number (Live Firestore-first with local fallback & timeout safety)
   async getOrderById(id: string): Promise<Order | null> {
     if (!id) return null;
     const cleanId = id.trim();
     const cleanNum = cleanId.replace(/^[#]/, '').replace(/^MF-/, '').trim();
 
-    // 1. Query Firestore by doc ID (live status)
+    const localOrders = this.getLocalOrders();
+    const localMatch =
+      localOrders.find((o) => {
+        const oNum = (o.orderNumber || '').replace(/^[#]/, '').replace(/^MF-/, '').trim();
+        return o.id === cleanId || oNum === cleanNum || o.orderNumber === cleanId;
+      }) ||
+      cachedOrdersMap.get(cleanId) ||
+      cachedOrdersMap.get(cleanNum) ||
+      cachedOrdersMap.get(`#${cleanNum}`) ||
+      cachedOrdersMap.get(`MF-${cleanNum}`);
+
+    const pickFresher = (remoteOrd: Order): Order => {
+      if (localMatch && (localMatch.timeline?.length || 0) > (remoteOrd.timeline?.length || 0)) {
+        return localMatch;
+      }
+      this.saveLocalOrder(remoteOrd);
+      return remoteOrd;
+    };
+
+    // 1. Query Firestore by doc ID (live status, bounded timeout)
     try {
-      const snap = await getDoc(doc(db, 'orders', cleanId));
+      const snap = await withTimeout(getDoc(doc(db, 'orders', cleanId)), 2500, 'Order fetch timeout');
       if (snap.exists()) {
-        const ord = { id: snap.id, ...snap.data() } as Order;
-        this.saveLocalOrder(ord);
-        return ord;
+        return pickFresher({ id: snap.id, ...snap.data() } as Order);
       }
     } catch {
-      // Continue
+      // Continue to fallback / orderNumber lookup
+    }
+
+    if (localMatch) {
+      cacheOrderRecord(localMatch);
+      return localMatch;
     }
 
     // 2. Query Firestore by orderNumber (live status)
@@ -723,32 +777,13 @@ export const orderService = {
     for (const v of searchVariants) {
       try {
         const q = query(collection(db, 'orders'), where('orderNumber', '==', v), limit(1));
-        const snap = await getDocs(q);
+        const snap = await withTimeout(getDocs(q), 2000, 'Order lookup timeout');
         if (!snap.empty) {
-          const ord = { id: snap.docs[0].id, ...snap.docs[0].data() } as Order;
-          this.saveLocalOrder(ord);
-          return ord;
+          return pickFresher({ id: snap.docs[0].id, ...snap.docs[0].data() } as Order);
         }
       } catch {
         // Continue
       }
-    }
-
-    // 3. Offline / local fallback
-    const cached = cachedOrdersMap.get(cleanId) ||
-                   cachedOrdersMap.get(cleanNum) ||
-                   cachedOrdersMap.get(`#${cleanNum}`) ||
-                   cachedOrdersMap.get(`MF-${cleanNum}`);
-    if (cached) return cached;
-
-    const localOrders = this.getLocalOrders();
-    const localMatch = localOrders.find((o) => {
-      const oNum = (o.orderNumber || '').replace(/^[#]/, '').replace(/^MF-/, '').trim();
-      return o.id === cleanId || oNum === cleanNum || o.orderNumber === cleanId;
-    });
-    if (localMatch) {
-      cacheOrderRecord(localMatch);
-      return localMatch;
     }
 
     return null;
@@ -909,7 +944,7 @@ export const orderService = {
       orderMap.set(ord.id, ord);
     });
 
-    // 2. Fetch remote orders from Firestore
+    // 2. Fetch remote orders from Firestore (preserve newer local updates if still syncing)
     try {
       let q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
       if (status && status !== 'all') {
@@ -919,9 +954,13 @@ export const orderService = {
           orderBy('createdAt', 'desc')
         );
       }
-      const snap = await getDocs(q);
+      const snap = await withTimeout(getDocs(q), 4500, 'Admin orders sync timeout');
       snap.forEach((d) => {
         const ord = { id: d.id, ...d.data() } as Order;
+        const existingLocal = orderMap.get(d.id);
+        if (existingLocal && (existingLocal.timeline?.length || 0) > (ord.timeline?.length || 0)) {
+          return;
+        }
         orderMap.set(d.id, ord);
         cacheOrderRecord(ord);
       });
@@ -958,41 +997,58 @@ export const orderService = {
   // Admin: Update order status
   async updateOrderStatus(orderId: string, status: OrderStatus, note?: string) {
     let notifiedOrderInfo: Partial<Order> | null = null;
+    const timestamp = new Date().toISOString();
+    const resolvedNote = note || `Status updated to ${status} by Administrator.`;
 
     // 1. Update local copy immediately
     const localOrders = this.getLocalOrders();
     const target = localOrders.find((o) => o.id === orderId);
     if (target) {
       target.orderStatus = status;
-      target.timeline = target.timeline || [];
+      target.timeline = [...(target.timeline || [])];
       target.timeline.push({
         status,
-        timestamp: new Date().toISOString(),
-        note: note || `Status updated to ${status} by Administrator.`,
+        timestamp,
+        note: resolvedNote,
       });
       this.saveLocalOrder(target);
       notifiedOrderInfo = { ...target };
     }
 
-    // 2. Update remote Firestore
+    // 2. Update remote Firestore with bounded wait (never blocks UI indefinitely)
     try {
       const orderRef = doc(db, 'orders', orderId);
-      const snap = await getDoc(orderRef);
+      const snap = await withTimeout(getDoc(orderRef), 2500, 'Fetch order timeout');
       if (snap.exists()) {
         const data = snap.data() as Order;
         if (!notifiedOrderInfo) notifiedOrderInfo = { ...data, id: snap.id };
-        const timeline = data.timeline || [];
+        const timeline = [...(data.timeline || [])];
         timeline.push({
           status,
-          timestamp: new Date().toISOString(),
-          note: note || `Status updated to ${status} by Administrator.`,
+          timestamp,
+          note: resolvedNote,
         });
 
-        await updateDoc(orderRef, {
+        const updPromise = updateDoc(orderRef, {
           orderStatus: status,
           timeline,
           updatedAt: serverTimestamp(),
         });
+        updPromise.catch(() => {});
+        await withTimeout(updPromise, 2500, 'Update queued in background');
+      } else if (target) {
+        const setPromise = setDoc(
+          orderRef,
+          sanitizeForFirestore({
+            ...target,
+            orderStatus: status,
+            timeline: target.timeline,
+            updatedAt: serverTimestamp(),
+          }),
+          { merge: true }
+        );
+        setPromise.catch(() => {});
+        await withTimeout(setPromise, 2500, 'Save queued in background');
       }
     } catch (e) {
       console.warn('Remote updateOrderStatus notice (updated in local store):', e);
@@ -1016,41 +1072,58 @@ export const orderService = {
   // Admin: Update payment status
   async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus, note?: string) {
     let notifiedOrderInfo: Partial<Order> | null = null;
+    const timestamp = new Date().toISOString();
+    const resolvedNote = note || `Payment marked as "${paymentStatus.toUpperCase()}" by Administrator.`;
 
     // 1. Update local copy immediately
     const localOrders = this.getLocalOrders();
     const target = localOrders.find((o) => o.id === orderId);
     if (target) {
       target.paymentStatus = paymentStatus;
-      target.timeline = target.timeline || [];
+      target.timeline = [...(target.timeline || [])];
       target.timeline.push({
         status: target.orderStatus,
-        timestamp: new Date().toISOString(),
-        note: note || `Payment marked as "${paymentStatus.toUpperCase()}" by Administrator.`,
+        timestamp,
+        note: resolvedNote,
       });
       this.saveLocalOrder(target);
       notifiedOrderInfo = { ...target };
     }
 
-    // 2. Update remote Firestore
+    // 2. Update remote Firestore with bounded wait (never blocks UI indefinitely)
     try {
       const orderRef = doc(db, 'orders', orderId);
-      const snap = await getDoc(orderRef);
+      const snap = await withTimeout(getDoc(orderRef), 2500, 'Fetch payment order timeout');
       if (snap.exists()) {
         const data = snap.data() as Order;
         if (!notifiedOrderInfo) notifiedOrderInfo = { ...data, id: snap.id };
-        const timeline = data.timeline || [];
+        const timeline = [...(data.timeline || [])];
         timeline.push({
           status: data.orderStatus,
-          timestamp: new Date().toISOString(),
-          note: note || `Payment marked as "${paymentStatus.toUpperCase()}" by Administrator.`,
+          timestamp,
+          note: resolvedNote,
         });
 
-        await updateDoc(orderRef, {
+        const updPromise = updateDoc(orderRef, {
           paymentStatus,
           timeline,
           updatedAt: serverTimestamp(),
         });
+        updPromise.catch(() => {});
+        await withTimeout(updPromise, 2500, 'Payment update queued in background');
+      } else if (target) {
+        const setPromise = setDoc(
+          orderRef,
+          sanitizeForFirestore({
+            ...target,
+            paymentStatus,
+            timeline: target.timeline,
+            updatedAt: serverTimestamp(),
+          }),
+          { merge: true }
+        );
+        setPromise.catch(() => {});
+        await withTimeout(setPromise, 2500, 'Payment save queued in background');
       }
     } catch (e) {
       console.warn('Remote updatePaymentStatus notice (updated in local store):', e);

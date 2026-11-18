@@ -10,13 +10,11 @@ import {
   ShieldCheck,
   Package,
   LogOut,
-  SlidersHorizontal,
-  Bell
+  SlidersHorizontal
 } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useAuth } from '../../context/AuthContext';
-import { useNotifications } from '../../context/NotificationContext';
 import { Category } from '../../types';
 import { productService } from '../../services/productService';
 import { settingsService, getLocalSettings } from '../../services/settingsService';
@@ -34,7 +32,6 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
   const { totalItems, setIsCartDrawerOpen } = useCart();
   const { wishlistIds } = useWishlist();
   const { currentUser, isAdmin, logOut } = useAuth();
-  const { unreadCount, setIsDrawerOpen } = useNotifications();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -183,21 +180,6 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
                 className="p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >
                 <Search className="w-5 h-5" />
-              </button>
-
-              {/* Notifications Bell (Mobile & Desktop) */}
-              <button
-                type="button"
-                onClick={() => setIsDrawerOpen(true)}
-                aria-label="Notifications"
-                className="relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
-              >
-                <Bell className="w-5 h-5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 min-w-4 h-4 px-1 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center tabular-nums">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
               </button>
 
               {/* Wishlist (Desktop header only) */}
@@ -365,23 +347,6 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
                   <span>{link.label}</span>
                 </button>
               ))}
-
-              {/* Notifications Shortcut on Mobile */}
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  setIsDrawerOpen(true);
-                }}
-                className="w-full text-left py-3 text-xs font-semibold uppercase tracking-wider text-neutral-700 hover:text-black border-b border-neutral-100 transition-colors cursor-pointer flex items-center justify-between"
-              >
-                <span>Notifications &amp; Offers</span>
-                {unreadCount > 0 && (
-                  <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold rounded-full tabular-nums">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
 
               {/* Wishlist Shortcut on Mobile */}
               <button

@@ -83,24 +83,32 @@ export const AdminOrders: React.FC = () => {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleUpdateStatus = async () => {
+  const handleUpdateStatus = async (overrideStatus?: OrderStatus) => {
     if (!selectedOrder) return;
+    const targetStatus = overrideStatus || newStatus;
     setUpdating(true);
     try {
-      await orderService.updateOrderStatus(selectedOrder.id, newStatus, statusNote);
+      await orderService.updateOrderStatus(selectedOrder.id, targetStatus, statusNote);
+      setNewStatus(targetStatus);
+      setSelectedOrder((prev) => (prev ? { ...prev, orderStatus: targetStatus } : prev));
+      setOrders((prev) =>
+        prev.map((o) => (o.id === selectedOrder.id ? { ...o, orderStatus: targetStatus } : o))
+      );
       if (currentUser) {
-        await settingsService.logAdminAction(
-          currentUser.uid,
-          currentUser.email || '',
-          'UPDATE_ORDER_STATUS',
-          selectedOrder.orderNumber,
-          `Status changed to ${newStatus}`
-        );
+        settingsService
+          .logAdminAction(
+            currentUser.uid,
+            currentUser.email || '',
+            'UPDATE_ORDER_STATUS',
+            selectedOrder.orderNumber,
+            `Status changed to ${targetStatus}`
+          )
+          .catch(() => {});
       }
       const refreshed = await orderService.getOrderById(selectedOrder.id);
-      setSelectedOrder(refreshed);
-      await loadOrders();
-      setActionToast(`Order #${selectedOrder.orderNumber} status updated to ${newStatus}`);
+      if (refreshed) setSelectedOrder(refreshed);
+      loadOrders().catch(() => {});
+      setActionToast(`Order ${selectedOrder.orderNumber} status updated to ${targetStatus}`);
       setTimeout(() => setActionToast(null), 3500);
     } catch {
       setActionToast('Failed to update order status.');
@@ -114,18 +122,24 @@ export const AdminOrders: React.FC = () => {
     if (!selectedOrder) return;
     try {
       await orderService.updatePaymentStatus(selectedOrder.id, payStatus);
+      setSelectedOrder((prev) => (prev ? { ...prev, paymentStatus: payStatus } : prev));
+      setOrders((prev) =>
+        prev.map((o) => (o.id === selectedOrder.id ? { ...o, paymentStatus: payStatus } : o))
+      );
       if (currentUser) {
-        await settingsService.logAdminAction(
-          currentUser.uid,
-          currentUser.email || '',
-          'UPDATE_PAYMENT_STATUS',
-          selectedOrder.orderNumber,
-          `Payment status set to ${payStatus}`
-        );
+        settingsService
+          .logAdminAction(
+            currentUser.uid,
+            currentUser.email || '',
+            'UPDATE_PAYMENT_STATUS',
+            selectedOrder.orderNumber,
+            `Payment status set to ${payStatus}`
+          )
+          .catch(() => {});
       }
       const refreshed = await orderService.getOrderById(selectedOrder.id);
-      setSelectedOrder(refreshed);
-      await loadOrders();
+      if (refreshed) setSelectedOrder(refreshed);
+      loadOrders().catch(() => {});
       setActionToast(`Payment status updated to ${payStatus.toUpperCase()}`);
       setTimeout(() => setActionToast(null), 3500);
     } catch {
@@ -835,14 +849,27 @@ export const AdminOrders: React.FC = () => {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleUpdateStatus}
-                  disabled={updating}
-                  className="px-5 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
-                >
-                  {updating ? 'Updating...' : 'Save Fulfillment Status'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {selectedOrder.orderStatus === 'pending' && (
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateStatus('confirmed')}
+                      disabled={updating}
+                      className="px-5 py-2.5 bg-emerald-600 text-white font-bold uppercase tracking-wider rounded hover:bg-emerald-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>{updating ? 'Updating...' : 'Confirm Order Now'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateStatus()}
+                    disabled={updating}
+                    className="px-5 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
+                  >
+                    {updating ? 'Updating...' : 'Save Fulfillment Status'}
+                  </button>
+                </div>
               </div>
 
             </div>

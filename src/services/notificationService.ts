@@ -48,6 +48,7 @@ export interface CustomerIdentity {
   email?: string;
   phone?: string;
   orderNumbers?: string[];
+  isAdmin?: boolean;
   isApprovedAdminDevice?: boolean;
   emailVerified?: boolean;
   verifiedDeviceId?: string;
@@ -184,29 +185,37 @@ export const isNotificationForCustomer = (
   identity: CustomerIdentity
 ): boolean => {
   if (!notif) return false;
-  if (notif.audience === 'authorized_devices') {
-    return Boolean(identity.isApprovedAdminDevice);
+
+  // Strictly no notifications unless logged in
+  if (!identity.uid || identity.uid === 'guest') {
+    return false;
   }
 
-  // Strict customer verified-device rule:
-  // If signed in as a customer (not an approved admin device):
-  // - Must have emailVerified === true
-  // - If verified device(s) are bound, currentDeviceId must be in the verified list
-  if (identity.uid && !identity.isApprovedAdminDevice) {
-    if (!identity.emailVerified) {
-      return false;
-    }
-    const allowedDevices = new Set<string>([
-      ...(identity.verifiedDeviceIds || []),
-      ...(identity.verifiedDeviceId ? [identity.verifiedDeviceId] : []),
-    ]);
-    if (
-      allowedDevices.size > 0 &&
-      identity.currentDeviceId &&
-      !allowedDevices.has(identity.currentDeviceId)
-    ) {
-      return false;
-    }
+  // Logged into Admin Panel -> ONLY approved admin device notifications (admin_new_order)
+  if (identity.isAdmin) {
+    return Boolean(identity.isApprovedAdminDevice && notif.audience === 'authorized_devices');
+  }
+
+  // Logged into User Panel (regular customer) -> NEVER receive admin new-order notifications,
+  // even if this browser was previously approved as an admin device
+  if (notif.audience === 'authorized_devices') {
+    return false;
+  }
+
+  // Verified customer rule: must have emailVerified === true and bound device match
+  if (!identity.emailVerified) {
+    return false;
+  }
+  const allowedDevices = new Set<string>([
+    ...(identity.verifiedDeviceIds || []),
+    ...(identity.verifiedDeviceId ? [identity.verifiedDeviceId] : []),
+  ]);
+  if (
+    allowedDevices.size > 0 &&
+    identity.currentDeviceId &&
+    !allowedDevices.has(identity.currentDeviceId)
+  ) {
+    return false;
   }
 
   if (notif.audience === 'all') return true;

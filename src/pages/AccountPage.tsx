@@ -32,7 +32,6 @@ import { orderService } from '../services/orderService';
 import { EmptyState } from '../components/common/EmptyState';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { BrandLogo } from '../components/common/BrandLogo';
-import { PWAInstallButton } from '../components/common/PWAInstallButton';
 import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
 import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
 
@@ -1064,7 +1063,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
               )}
             </div>
 
-            {/* Card 4: Simple Browser Notifications (PC & Mobile) */}
+            {/* Card 4: Browser Notifications (User Panel) */}
             <div className="bg-white rounded-xl border border-neutral-200/80 p-6 sm:p-7 shadow-[0_1px_2px_rgba(0,0,0,0.03)] space-y-4">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -1076,29 +1075,33 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                 <span className={`text-[11px] font-medium px-2.5 py-0.5 rounded-full shrink-0 ${
                   allNotificationsActive && notifPermission === 'granted'
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : notifMuted
-                    ? 'bg-neutral-100 text-neutral-600'
-                    : 'bg-neutral-100 text-neutral-700'
+                    : notifPermission === 'denied'
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : 'bg-neutral-100 text-neutral-600'
                 }`}>
                   {allNotificationsActive && notifPermission === 'granted'
                     ? 'On'
                     : notifMuted
                     ? 'Paused'
-                    : allNotificationsActive
-                    ? 'In-App On'
+                    : notifPermission === 'denied'
+                    ? 'Blocked'
                     : 'Off'}
                 </span>
               </div>
 
               <p className="text-[13px] text-neutral-600 leading-relaxed">
-                Receive order updates and special offer notifications directly from your browser on both PC and Mobile.
+                Receive order updates and special offer notifications directly from your browser.
               </p>
 
               {customerVerificationBlockReason === 'unverified_email' ? (
                 <p className="text-xs text-amber-800">
-                  Verify your email address first to enable notifications.
+                  Verify your email address first to enable browser notifications.
                 </p>
-              ) : (!allNotificationsActive || isCustomerDeviceBlocked || notifPermission === 'default') ? (
+              ) : notifPermission === 'denied' ? (
+                <p className="text-xs text-neutral-600">
+                  Browser notifications are blocked in your browser settings. Allow notifications for this site to receive updates.
+                </p>
+              ) : notifPermission !== 'granted' || isCustomerDeviceBlocked ? (
                 <button
                   type="button"
                   data-notif-trigger="true"
@@ -1114,29 +1117,18 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                   className="px-5 py-2.5 bg-black text-white text-xs font-semibold rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
                 >
                   <BellRing className="w-4 h-4" />
-                  <span>{enablingNotifs ? 'Enabling...' : 'Enable Notifications'}</span>
+                  <span>{enablingNotifs ? 'Enabling...' : 'Enable Browser Notifications'}</span>
                 </button>
               ) : (
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={toggleNotifMute}
-                    className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                  >
-                    {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-                    <span>{notifMuted ? 'Turn On' : 'Pause'}</span>
-                  </button>
-                  {notifPermission === 'denied' && (
-                    <span className="text-[11px] text-neutral-500">
-                      Allow notifications in browser site settings for system popups.
-                    </span>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={toggleNotifMute}
+                  className="px-4 py-2 border border-neutral-300 text-neutral-800 text-xs font-medium rounded-[6px] hover:border-black transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  {notifMuted ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+                  <span>{notifMuted ? 'Turn On' : 'Pause'}</span>
+                </button>
               )}
-
-              <div className="pt-1">
-                <PWAInstallButton />
-              </div>
             </div>
           </div>
         )}

@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Check, ShieldAlert, FileText, BellRing, RefreshCw } from 'lucide-react';
+import { Search, Check, ShieldAlert, FileText, RefreshCw } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Order, OrderStatus } from '../types';
 import { orderService } from '../services/orderService';
 import { useAuth } from '../context/AuthContext';
-import { useNotifications } from '../context/NotificationContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { FloatingInput } from '../components/common/FloatingInput';
-import { PWAInstallButton } from '../components/common/PWAInstallButton';
 
 interface TrackOrderPageProps {
   currentRoute: string;
@@ -37,7 +35,6 @@ const formatDate = (ts: any): string => {
 
 export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) => {
   const { currentUser } = useAuth();
-  const { allNotificationsActive, enableAllNotificationsOneClick } = useNotifications();
   const [orderNumber, setOrderNumber] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
@@ -295,25 +292,6 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute }) 
                 </button>
               </div>
             </div>
-
-            {!allNotificationsActive && (
-              <div className="px-5 sm:px-7 py-3.5 bg-neutral-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2.5 text-neutral-700">
-                  <BellRing className="w-4 h-4 text-neutral-900 shrink-0" />
-                  <span>Turn on alerts with 1 click to get notified automatically when this order updates.</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => enableAllNotificationsOneClick()}
-                    className="px-3 py-1.5 bg-neutral-900 text-white text-[11px] font-semibold rounded-md hover:bg-black transition-colors cursor-pointer"
-                  >
-                    Turn On Notifications (1-Click)
-                  </button>
-                  <PWAInstallButton compact />
-                </div>
-              </div>
-            )}
 
             {/* Minimal Progress Stepper */}
             <div className="p-5 sm:p-7">

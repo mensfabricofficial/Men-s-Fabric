@@ -188,10 +188,10 @@ export const AdminNotifications: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Mobile &amp; Customer Notifications
+            Browser Notifications
           </h1>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Send real-time offers, promo codes, and important store alerts to customer phones &amp; in-app bells.
+            Send real-time offers, promo codes, and important store browser notifications to logged-in customers.
           </p>
         </div>
 

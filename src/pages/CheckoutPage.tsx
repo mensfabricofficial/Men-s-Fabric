@@ -202,6 +202,22 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     });
   }, []);
 
+  // Auto-fill empty checkout fields once customer profile or user auth finishes loading
+  useEffect(() => {
+    if (customerProfile?.name || currentUser?.displayName) {
+      setFullName((prev) => prev || customerProfile?.name || currentUser?.displayName || '');
+    }
+    if (customerProfile?.phone) {
+      setPhone((prev) => prev || customerProfile.phone || '');
+    }
+    if (currentUser?.email || customerProfile?.email) {
+      setEmail((prev) => prev || currentUser?.email || customerProfile?.email || '');
+    }
+    if (customerProfile?.address) {
+      setAddress((prev) => prev || customerProfile.address || '');
+    }
+  }, [customerProfile, currentUser]);
+
   useEffect(() => {
     if (!gatewayDropdownOpen) return;
     const handleOutside = (e: MouseEvent) => {
@@ -344,7 +360,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage('');
+
+    if (!fullName.trim()) {
+      setErrorMessage('Please enter your full name.');
+      return;
+    }
 
     // Phone validation
     const cleanPhone = phone.trim().replace(/[^0-9+]/g, '');
@@ -360,8 +382,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
     // Require Sender Number and TrxID when advance or full online payment is required
     const activeGwName = onlineGateway.toUpperCase();
+    const cleanSenderDigits = senderNumber.trim().replace(/[^0-9+]/g, '');
     if (needsAdvancePayment) {
-      if (!senderNumber.trim() || senderNumber.trim().length < 11) {
+      if (!cleanSenderDigits || cleanSenderDigits.length < 11) {
         setErrorMessage(
           paymentMode === 'cod'
             ? `Please enter your ${activeGwName} number used to pay the ৳${effectiveDeliveryCharge} advance delivery fee.`
@@ -487,7 +510,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      <form onSubmit={handleSubmitOrder} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <form onSubmit={handleSubmitOrder} noValidate className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
         {/* Left Column: Form Fields */}
         <div className="lg:col-span-7 space-y-6">
@@ -628,18 +651,20 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
               <div className="grid grid-cols-1 gap-3">
                 {[...deliveryZones]
                   .sort((a, b) => {
-                    const aInside = a.id === 'dhaka' || a.name.toLowerCase().includes('inside');
-                    const bInside = b.id === 'dhaka' || b.name.toLowerCase().includes('inside');
+                    const aName = (a.name || '').toLowerCase();
+                    const bName = (b.name || '').toLowerCase();
+                    const aInside = a.id === 'dhaka' || aName.includes('inside');
+                    const bInside = b.id === 'dhaka' || bName.includes('inside');
                     if (aInside && !bInside) return -1;
                     if (!aInside && bInside) return 1;
-                    const aOutside = a.id === 'outside-dhaka' || a.name.toLowerCase().includes('outside');
-                    const bOutside = b.id === 'outside-dhaka' || b.name.toLowerCase().includes('outside');
+                    const aOutside = a.id === 'outside-dhaka' || aName.includes('outside');
+                    const bOutside = b.id === 'outside-dhaka' || bName.includes('outside');
                     if (aOutside && !bOutside) return -1;
                     if (!aOutside && bOutside) return 1;
                     return 0;
                   })
                   .map((zone) => {
-                    const isInside = zone.id === 'dhaka' || zone.name.toLowerCase().includes('inside');
+                    const isInside = zone.id === 'dhaka' || (zone.name || '').toLowerCase().includes('inside');
                     const isSelected = selectedZone?.id === zone.id;
                     const zoneTitle = isInside ? 'Inside Dhaka' : 'Outside Dhaka';
                     const zoneSubtext = isInside
@@ -1094,7 +1119,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
               <div className="flex items-center justify-between text-neutral-600">
                 <span>
-                  Delivery Fee ({selectedZone?.id === 'dhaka' || selectedZone?.name.toLowerCase().includes('inside') ? 'Inside Dhaka' : 'Outside Dhaka'})
+                  Delivery Fee ({selectedZone?.id === 'dhaka' || (selectedZone?.name || '').toLowerCase().includes('inside') ? 'Inside Dhaka' : 'Outside Dhaka'})
                 </span>
                 {effectiveFreeDelivery ? (
                   <span className="font-bold text-emerald-700">
@@ -1155,6 +1180,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 </div>
               )}
             </div>
+
+            {errorMessage && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
             {/* Submit Button */}
             <button

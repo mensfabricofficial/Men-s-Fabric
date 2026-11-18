@@ -267,6 +267,7 @@ export interface CustomerProfile {
   verifiedDeviceId?: string;
   verifiedDeviceIds?: string[];
   emailVerifiedAt?: string;
+  consumedCoupons?: string[];
 }
 
 export interface AuditLog {

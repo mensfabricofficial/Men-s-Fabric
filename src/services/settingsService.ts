@@ -14,6 +14,7 @@ import {
   limit,
   onSnapshot,
   Unsubscribe,
+  arrayUnion,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Banner, Coupon, DeliveryZone, Review, SiteSettings, AuditLog, PaymentSettings } from '../types';
@@ -71,6 +72,38 @@ const LOCAL_SETTINGS_KEY = 'selvee_site_settings_v3';
 const LOCAL_DELIVERY_ZONES_KEY = 'selvee_delivery_zones_v3';
 const LOCAL_BANNERS_KEY = 'selvee_banners_catalog_v3';
 const LOCAL_COUPONS_KEY = 'selvee_coupons_catalog_v3';
+const LOCAL_CONSUMED_COUPONS_KEY = 'mf_consumed_coupons_v1';
+
+export const getConsumedCouponSet = (): Set<string> => {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(LOCAL_CONSUMED_COUPONS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.map((v) => String(v).trim().toUpperCase()).filter(Boolean));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+};
+
+export const addConsumedCouponTokens = (tokens: (string | undefined | null)[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const set = getConsumedCouponSet();
+    tokens.forEach((t) => {
+      if (t && t.trim()) {
+        set.add(t.trim().toUpperCase());
+      }
+    });
+    localStorage.setItem(LOCAL_CONSUMED_COUPONS_KEY, JSON.stringify(Array.from(set).slice(-300)));
+  } catch {
+    // ignore
+  }
+};
 
 // Purge legacy MEN'S FABRIC localStorage caches so old demo items never load
 if (typeof window !== 'undefined') {
@@ -466,12 +499,35 @@ export const settingsService = {
   },
 
   // Coupons
+  normalizeCouponState(coupon: Coupon, consumedSet = getConsumedCouponSet()): Coupon {
+    const idUpper = (coupon.id || '').trim().toUpperCase();
+    const codeUpper = (coupon.code || '').trim().toUpperCase();
+    const isConsumed =
+      (idUpper && consumedSet.has(idUpper)) || (codeUpper && consumedSet.has(codeUpper));
+    const effectiveLimit =
+      coupon.discountType === 'free_delivery'
+        ? coupon.usageLimit || 1
+        : coupon.usageLimit || 0;
+    const reachedLimit = Boolean(effectiveLimit > 0 && (coupon.usedCount || 0) >= effectiveLimit);
+    if (isConsumed || reachedLimit) {
+      return {
+        ...coupon,
+        usedCount: Math.max(coupon.usedCount || 0, effectiveLimit || 1),
+        active: false,
+      };
+    }
+    return coupon;
+  },
+
   getLocalCoupons(): Coupon[] {
     try {
       const raw = localStorage.getItem(LOCAL_COUPONS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const consumed = getConsumedCouponSet();
+          return parsed.map((c) => this.normalizeCouponState(c, consumed));
+        }
       }
     } catch {
       // ignore
@@ -481,12 +537,14 @@ export const settingsService = {
 
   saveLocalCoupons(list: Coupon[]) {
     try {
-      localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(list));
+      const consumed = getConsumedCouponSet();
+      const normalized = list.map((c) => this.normalizeCouponState(c, consumed));
+      localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(normalized));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mf_coupons_updated', { detail: normalized }));
+      }
     } catch {
       // ignore
-    }
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('mf_coupons_updated', { detail: list }));
     }
   },
 
@@ -505,27 +563,35 @@ export const settingsService = {
       firestoreUnsub = onSnapshot(
         collection(db, 'coupons'),
         (snap) => {
+          const consumed = getConsumedCouponSet();
           const remoteList: Coupon[] = [];
           snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
           const local = this.getLocalCoupons();
           const mergedMap = new Map<string, Coupon>();
-          remoteList.forEach((c) => mergedMap.set(c.id, c));
+          remoteList.forEach((c) => mergedMap.set(c.id, this.normalizeCouponState(c, consumed)));
           local.forEach((c) => {
             if (!mergedMap.has(c.id)) {
-              mergedMap.set(c.id, c);
+              mergedMap.set(c.id, this.normalizeCouponState(c, consumed));
             } else {
               const remoteItem = mergedMap.get(c.id)!;
               const maxUsed = Math.max(remoteItem.usedCount || 0, c.usedCount || 0);
-              const reachedLimit = Boolean(
-                (remoteItem.usageLimit || c.usageLimit) &&
-                maxUsed >= (remoteItem.usageLimit || c.usageLimit || 0)
+              const effLimit =
+                (remoteItem.discountType || c.discountType) === 'free_delivery'
+                  ? remoteItem.usageLimit || c.usageLimit || 1
+                  : remoteItem.usageLimit || c.usageLimit || 0;
+              const reachedLimit = Boolean(effLimit > 0 && maxUsed >= effLimit);
+              mergedMap.set(
+                c.id,
+                this.normalizeCouponState(
+                  {
+                    ...c,
+                    ...remoteItem,
+                    usedCount: maxUsed,
+                    active: reachedLimit ? false : remoteItem.active && c.active,
+                  },
+                  consumed
+                )
               );
-              mergedMap.set(c.id, {
-                ...c,
-                ...remoteItem,
-                usedCount: maxUsed,
-                active: reachedLimit ? false : remoteItem.active,
-              });
             }
           });
           const combined = Array.from(mergedMap.values());
@@ -550,29 +616,37 @@ export const settingsService = {
 
   async getCoupons(): Promise<Coupon[]> {
     const local = this.getLocalCoupons();
+    const consumed = getConsumedCouponSet();
     try {
       const snap = await getDocs(collection(db, 'coupons'));
       const remoteList: Coupon[] = [];
       snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
 
       const mergedMap = new Map<string, Coupon>();
-      remoteList.forEach((c) => mergedMap.set(c.id, c));
+      remoteList.forEach((c) => mergedMap.set(c.id, this.normalizeCouponState(c, consumed)));
       local.forEach((c) => {
         if (!mergedMap.has(c.id)) {
-          mergedMap.set(c.id, c);
+          mergedMap.set(c.id, this.normalizeCouponState(c, consumed));
         } else {
           const remoteItem = mergedMap.get(c.id)!;
           const maxUsed = Math.max(remoteItem.usedCount || 0, c.usedCount || 0);
-          const reachedLimit = Boolean(
-            (remoteItem.usageLimit || c.usageLimit) &&
-            maxUsed >= (remoteItem.usageLimit || c.usageLimit || 0)
+          const effLimit =
+            (remoteItem.discountType || c.discountType) === 'free_delivery'
+              ? remoteItem.usageLimit || c.usageLimit || 1
+              : remoteItem.usageLimit || c.usageLimit || 0;
+          const reachedLimit = Boolean(effLimit > 0 && maxUsed >= effLimit);
+          mergedMap.set(
+            c.id,
+            this.normalizeCouponState(
+              {
+                ...c,
+                ...remoteItem,
+                usedCount: maxUsed,
+                active: reachedLimit ? false : remoteItem.active && c.active,
+              },
+              consumed
+            )
           );
-          mergedMap.set(c.id, {
-            ...c,
-            ...remoteItem,
-            usedCount: maxUsed,
-            active: reachedLimit ? false : remoteItem.active,
-          });
         }
       });
       const combined = Array.from(mergedMap.values());
@@ -616,15 +690,26 @@ export const settingsService = {
     return false;
   },
 
-  isCouponValidForUse(coupon: Coupon): boolean {
-    if (!coupon.active) return false;
+  isCouponValidForUse(coupon: Coupon, extraConsumed?: Set<string>): boolean {
+    if (!coupon || !coupon.active) return false;
+    const consumed = getConsumedCouponSet();
+    const idUpper = (coupon.id || '').trim().toUpperCase();
+    const codeUpper = (coupon.code || '').trim().toUpperCase();
+    if (
+      (idUpper && (consumed.has(idUpper) || extraConsumed?.has(idUpper))) ||
+      (codeUpper && (consumed.has(codeUpper) || extraConsumed?.has(codeUpper)))
+    ) {
+      return false;
+    }
     if (coupon.expiryDate) {
       const exp = coupon.expiryDate.includes('T')
         ? new Date(coupon.expiryDate)
         : new Date(`${coupon.expiryDate}T23:59:59`);
       if (!isNaN(exp.getTime()) && exp < new Date()) return false;
     }
-    if (coupon.usageLimit && (coupon.usedCount || 0) >= coupon.usageLimit) {
+    const effectiveLimit =
+      coupon.discountType === 'free_delivery' ? coupon.usageLimit || 1 : coupon.usageLimit;
+    if (effectiveLimit && (coupon.usedCount || 0) >= effectiveLimit) {
       return false;
     }
     return true;
@@ -632,7 +717,8 @@ export const settingsService = {
 
   getActiveFreeDeliveryForUser(
     coupons: Coupon[],
-    user?: { uid?: string; email?: string | null; phone?: string | null }
+    user?: { uid?: string; email?: string | null; phone?: string | null },
+    extraConsumed?: Set<string>
   ): Coupon | null {
     if (!user) return null;
     for (const c of coupons) {
@@ -644,26 +730,33 @@ export const settingsService = {
         c.targetCustomerPhone
       );
       if (!hasTarget) continue;
-      if (this.isCouponValidForUse(c) && this.doesCouponMatchCustomer(c, user)) {
+      if (this.isCouponValidForUse(c, extraConsumed) && this.doesCouponMatchCustomer(c, user)) {
         return c;
       }
     }
     return null;
   },
 
-  async markCouponUsed(couponIdOrCode: string, syncLocalOnly = false) {
-    if (!couponIdOrCode) return;
-    const needle = couponIdOrCode.trim().toUpperCase();
+  async markCouponUsed(couponIdOrCode: string, syncLocalOnly = false, customerUid?: string) {
+    if (!couponIdOrCode || !couponIdOrCode.trim()) return;
+    const rawNeedle = couponIdOrCode.trim();
+    const needle = rawNeedle.toUpperCase();
     const current = this.getLocalCoupons();
-    let matchedId = '';
+    const matchedCoupon = current.find(
+      (c) => c.id === rawNeedle || c.id.toUpperCase() === needle || c.code.toUpperCase() === needle
+    );
     let nextUsedCount = 1;
     let shouldDeactivate = false;
 
     const updated = current.map((c) => {
-      if (c.id === couponIdOrCode || c.code.toUpperCase() === needle) {
-        matchedId = c.id;
-        nextUsedCount = (c.usedCount || 0) + 1;
-        shouldDeactivate = Boolean(c.usageLimit && nextUsedCount >= c.usageLimit);
+      if (matchedCoupon && c.id === matchedCoupon.id) {
+        const effectiveLimit =
+          c.discountType === 'free_delivery' ? c.usageLimit || 1 : c.usageLimit;
+        nextUsedCount = Math.max((c.usedCount || 0) + 1, effectiveLimit || 1);
+        shouldDeactivate = Boolean(
+          (effectiveLimit && nextUsedCount >= effectiveLimit) ||
+          c.discountType === 'free_delivery'
+        );
         return {
           ...c,
           usedCount: nextUsedCount,
@@ -673,12 +766,29 @@ export const settingsService = {
       return c;
     });
 
-    if (matchedId) {
+    const tokensToRecord = [
+      rawNeedle,
+      needle,
+      matchedCoupon?.id,
+      matchedCoupon?.code,
+    ].filter(Boolean) as string[];
+
+    // Only permanently blacklist in local consumed set if it's a 1-time / free_delivery coupon or reached its limit
+    if (shouldDeactivate || !matchedCoupon || matchedCoupon.discountType === 'free_delivery' || (matchedCoupon.usageLimit || 0) <= 1) {
+      addConsumedCouponTokens(tokensToRecord);
+    }
+
+    if (matchedCoupon) {
       this.saveLocalCoupons(updated);
-      if (syncLocalOnly) return;
+    }
+
+    if (syncLocalOnly) return;
+
+    // Persist coupon update to Firestore (both by doc ID and by code query as backup)
+    if (matchedCoupon) {
       try {
         await setDoc(
-          doc(db, 'coupons', matchedId),
+          doc(db, 'coupons', matchedCoupon.id),
           {
             usedCount: nextUsedCount,
             ...(shouldDeactivate ? { active: false } : {}),
@@ -689,32 +799,65 @@ export const settingsService = {
       } catch (e) {
         console.warn('Remote markCouponUsed notice:', e);
       }
-      return;
+    } else {
+      try {
+        const directSnap = await getDoc(doc(db, 'coupons', rawNeedle));
+        if (directSnap.exists()) {
+          const data = directSnap.data() as Coupon;
+          const effLimit = data.discountType === 'free_delivery' ? data.usageLimit || 1 : data.usageLimit;
+          const used = Math.max((data.usedCount || 0) + 1, effLimit || 1);
+          const deactivate = Boolean((effLimit && used >= effLimit) || data.discountType === 'free_delivery');
+          await setDoc(
+            doc(db, 'coupons', directSnap.id),
+            {
+              usedCount: used,
+              ...(deactivate ? { active: false } : {}),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } else {
+          const q = query(collection(db, 'coupons'), where('code', '==', needle), limit(5));
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            const data = d.data() as Coupon;
+            const effLimit = data.discountType === 'free_delivery' ? data.usageLimit || 1 : data.usageLimit;
+            const used = Math.max((data.usedCount || 0) + 1, effLimit || 1);
+            const deactivate = Boolean((effLimit && used >= effLimit) || data.discountType === 'free_delivery');
+            await setDoc(
+              doc(db, 'coupons', d.id),
+              {
+                usedCount: used,
+                ...(deactivate ? { active: false } : {}),
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
 
-    if (syncLocalOnly) return;
-
-    // Also try remote lookup by code if not cached locally
-    try {
-      const q = query(collection(db, 'coupons'), where('code', '==', needle), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        const data = d.data() as Coupon;
-        const used = (data.usedCount || 0) + 1;
-        const limitReached = Boolean(data.usageLimit && used >= data.usageLimit);
-        await setDoc(
-          doc(db, 'coupons', d.id),
-          {
-            usedCount: used,
-            ...(limitReached ? { active: false } : {}),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
+    // Also record consumed tokens on customer's Firestore profile for cross-device permanence
+    if (customerUid && customerUid !== 'guest') {
+      const upperTokens = Array.from(
+        new Set(tokensToRecord.map((t) => t.trim().toUpperCase()).filter(Boolean))
+      );
+      if (upperTokens.length > 0) {
+        try {
+          await setDoc(
+            doc(db, 'users', customerUid),
+            {
+              consumedCoupons: arrayUnion(...upperTokens),
+            },
+            { merge: true }
+          );
+        } catch {
+          // ignore
+        }
       }
-    } catch {
-      // ignore
     }
   },
 

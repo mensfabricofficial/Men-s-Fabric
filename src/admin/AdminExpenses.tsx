@@ -10,10 +10,11 @@ import {
   getLocalMonthKey,
   normalizeEntryDateKey,
 } from '../lib/accountingUtils';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminExpenses: React.FC = () => {
   const { currentUser, staffProfile } = useAuth();
-  const [expenses, setExpenses] = useState<ExpenseEntry[]>(() => posService.getLocalExpenses());
+  const [expenses, setExpenses] = useState<ExpenseEntry[]>(() => posService.getInstantExpenses());
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState<string>('all');
   const [dateScope, setDateScope] = useState<'all' | 'today' | 'month'>('all');
@@ -29,6 +30,10 @@ export const AdminExpenses: React.FC = () => {
   const [category, setCategory] = useState<ExpenseCategory>('packaging_courier');
   const [amount, setAmount] = useState<number>(0);
   const [date, setDate] = useState(() => getLocalDateKey());
+  const [time, setTime] = useState(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
   const [paymentMethod, setPaymentMethod] = useState<ExpenseEntry['paymentMethod']>('cash');
   const [paidBy, setPaidBy] = useState('');
   const [reference, setReference] = useState('');
@@ -83,11 +88,13 @@ export const AdminExpenses: React.FC = () => {
   }, [monthExpenses]);
 
   const openCreateModal = () => {
+    const now = new Date();
     setEditingId(null);
     setTitle('');
     setCategory('packaging_courier');
     setAmount(0);
     setDate(getLocalDateKey());
+    setTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
     setPaymentMethod('cash');
     setPaidBy(staffProfile?.name || currentUser?.displayName || '');
     setReference('');
@@ -101,6 +108,7 @@ export const AdminExpenses: React.FC = () => {
     setCategory(exp.category);
     setAmount(exp.amount);
     setDate(normalizeEntryDateKey(exp.date) || getLocalDateKey());
+    setTime(exp.time || '');
     setPaymentMethod(exp.paymentMethod || 'cash');
     setPaidBy(exp.paidBy || '');
     setReference(exp.reference || '');
@@ -126,6 +134,7 @@ export const AdminExpenses: React.FC = () => {
           category,
           amount,
           date,
+          time: time.trim() || undefined,
           paymentMethod,
           paidBy: paidBy.trim() || actorName,
           reference: reference.trim(),
@@ -137,6 +146,7 @@ export const AdminExpenses: React.FC = () => {
           category,
           amount,
           date,
+          time: time.trim() || undefined,
           paymentMethod,
           paidBy: paidBy.trim() || actorName,
           reference,
@@ -172,24 +182,20 @@ export const AdminExpenses: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            All Expenses, Charges &amp; Operating Cost Entry
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Log Rent, Salaries, Ad Spend, Courier/COD Charges, Cashout Fees, Transport, Packaging &amp; Utilities. Automatically deducted in Net Profit.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-2 w-fit shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Expense / Charge</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Expenses & Operating Costs"
+        subtitle="Rent, salaries, ads, courier/COD & operating charges"
+        actions={
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Expense / Charge</span>
+          </button>
+        }
+      />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 tabular-nums">
@@ -326,7 +332,8 @@ export const AdminExpenses: React.FC = () => {
                   return (
                     <tr key={exp.id} className="hover:bg-neutral-50/50">
                       <td className="p-3.5 font-mono text-neutral-600 whitespace-nowrap">
-                        {normalizeEntryDateKey(exp.date)}
+                        <span className="block">{normalizeEntryDateKey(exp.date)}</span>
+                        {exp.time && <span className="text-[10px] text-neutral-400">{exp.time}</span>}
                       </td>
                       <td className="p-3.5">
                         <p className="font-semibold text-neutral-900">{exp.title}</p>
@@ -470,7 +477,7 @@ export const AdminExpenses: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">Date</label>
                   <input
@@ -478,6 +485,15 @@ export const AdminExpenses: React.FC = () => {
                     required
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
                     className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono"
                   />
                 </div>

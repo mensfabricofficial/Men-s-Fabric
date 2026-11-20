@@ -36,6 +36,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminSettings: React.FC = () => {
   const { currentUser } = useAuth();
@@ -283,15 +284,10 @@ export const AdminSettings: React.FC = () => {
   return (
     <div className="max-w-5xl space-y-6">
       
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-          Store & System Configuration
-        </h1>
-        <p className="text-xs text-neutral-500 mt-0.5">
-          Manage payment gateways, custom size charts, Google Cloud & Firebase API keys, and device security.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Store & System Configuration"
+        subtitle="Manage payment gateways, size charts, API keys & device security."
+      />
 
       {/* Tabs Navigation */}
       <div className="flex border-b border-neutral-200 gap-2 overflow-x-auto text-xs font-bold uppercase tracking-wider">

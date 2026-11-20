@@ -1,9 +1,13 @@
 import {
+  CustomerProfile,
   ExpenseCategory,
   ExpenseEntry,
   Order,
   Product,
   PurchaseEntry,
+  SalesReturnEntry,
+  SalesTargetsConfig,
+  TargetArchiveRecord,
 } from '../types';
 
 export const EXPENSE_CATEGORY_META: Record<
@@ -37,8 +41,32 @@ export const EXPENSE_QUICK_PRESETS: Array<{
   { title: 'Electricity & Wi-Fi Bill', category: 'utilities', paymentMethod: 'bkash' },
   { title: 'Showroom / Warehouse Monthly Rent', category: 'rent', paymentMethod: 'bank' },
   { title: 'Staff Salary / Daily Lunch', category: 'salary', paymentMethod: 'cash' },
+  { title: 'Product Photography & Studio Shoot', category: 'marketing_ads', paymentMethod: 'cash' },
+  { title: 'Website, Domain & Cloud Maintenance', category: 'utilities', paymentMethod: 'bkash' },
   { title: 'Shop Maintenance & Lighting', category: 'maintenance', paymentMethod: 'cash' },
 ];
+
+export function getOrderPaidAndDue(ord: Order): { total: number; paid: number; due: number } {
+  const total = Math.max(0, Number(ord.total) || 0);
+  if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') {
+    const refundedPaid = ord.paymentStatus === 'refunded' ? 0 : Math.max(0, Number(ord.paidAmount) || 0);
+    return { total, paid: refundedPaid, due: 0 };
+  }
+  if (typeof ord.paidAmount === 'number' && typeof ord.dueAmount === 'number') {
+    const paid = Math.max(0, Math.min(total, ord.paidAmount));
+    const due = Math.max(0, ord.dueAmount);
+    return { total, paid, due };
+  }
+  if (ord.paymentStatus === 'paid' || ord.orderStatus === 'delivered') {
+    return { total, paid: total, due: 0 };
+  }
+  const advance = Math.max(0, Number(ord.advanceAmount ?? ord.paymentDetails?.advanceAmount) || 0);
+  const due =
+    typeof ord.dueOnDelivery === 'number'
+      ? Math.max(0, ord.dueOnDelivery)
+      : Math.max(0, total - advance);
+  return { total, paid: Math.min(total, advance), due };
+}
 
 export function getLocalDateKey(d: Date = new Date()): string {
   const yyyy = d.getFullYear();
@@ -84,24 +112,53 @@ export function getMonthDateBounds(monthKey: string): {
   };
 }
 
-export function parseOrderDate(ord: Order): Date | null {
-  if (!ord?.createdAt) return null;
-  if (typeof (ord.createdAt as any).toDate === 'function') {
-    return (ord.createdAt as any).toDate();
+export function parseDateValue(val: any): Date | null {
+  if (!val) return null;
+  if (typeof val?.toDate === 'function') {
+    const dt = val.toDate();
+    return dt instanceof Date && !isNaN(dt.getTime()) ? dt : null;
   }
-  if (typeof (ord.createdAt as any).toMillis === 'function') {
-    return new Date((ord.createdAt as any).toMillis());
+  if (typeof val?.toMillis === 'function') {
+    const dt = new Date(val.toMillis());
+    return isNaN(dt.getTime()) ? null : dt;
   }
-  if (typeof (ord.createdAt as any).seconds === 'number') {
-    return new Date((ord.createdAt as any).seconds * 1000);
+  if (typeof val?.seconds === 'number') {
+    const dt = new Date(val.seconds * 1000);
+    return isNaN(dt.getTime()) ? null : dt;
   }
-  const d = new Date(ord.createdAt as any);
+  const d = new Date(val);
   return isNaN(d.getTime()) ? null : d;
+}
+
+export function getTimestampDateKey(val: any): string | null {
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
+    return val.trim();
+  }
+  const dt = parseDateValue(val);
+  return dt ? getLocalDateKey(dt) : null;
+}
+
+export function parseOrderDate(ord: Order): Date | null {
+  return parseDateValue(ord?.createdAt);
 }
 
 export function getOrderDateKey(ord: Order): string | null {
   const dt = parseOrderDate(ord);
   return dt ? getLocalDateKey(dt) : null;
+}
+
+export function isCompletedSaleOrder(ord: Order): boolean {
+  if (!ord) return false;
+  if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') return false;
+  return ord.orderStatus === 'delivered';
+}
+
+export function getCompletedSaleDateKey(ord: Order): string | null {
+  return (
+    getTimestampDateKey(ord?.pipeline?.deliveredAt) ||
+    getTimestampDateKey(ord?.updatedAt) ||
+    getOrderDateKey(ord)
+  );
 }
 
 export function normalizeEntryDateKey(dateStr?: string): string {
@@ -170,12 +227,27 @@ export interface PeriodAccountingSummary {
   cancelledAmount: number;
   returnedCount: number;
   returnedAmount: number;
+  deliveredCount: number;
+  deliveredAmount: number;
+  pendingOrdersCount: number;
+  processingOrdersCount: number;
+  completedOrdersCount: number;
+  orderStatusCounts: Record<
+    'pending' | 'processing' | 'packed' | 'shipped' | 'delivered' | 'cancelled' | 'returned',
+    number
+  >;
+  salesReturnsCount: number;
+  salesReturnsAmount: number;
+  salesReturnsPcs: number;
+  salesReturnsRestockedPcs: number;
   // Revenue breakdown
   grossMerchandiseValue: number; // subtotal before discounts
-  totalDiscounts: number; // coupon + online prepayment discounts
-  netMerchandiseSales: number; // subtotal - discounts
+  totalDiscounts: number; // manual + coupon + online prepayment discounts
+  couponDiscounts: number;
+  otherDiscounts: number;
+  netMerchandiseSales: number; // subtotal - discounts - partial return adjustments
   deliveryCollected: number; // shipping charges collected
-  totalBilledRevenue: number; // netMerchandiseSales + deliveryCollected (actual order total)
+  totalBilledRevenue: number; // netMerchandiseSales + deliveryCollected (actual order total net of returns)
   // Profitability
   cogs: number;
   missingCostItemsCount: number;
@@ -191,6 +263,14 @@ export interface PeriodAccountingSummary {
   // Cash & Payments
   paidRevenue: number;
   pendingCollectionRevenue: number;
+  collectedPaidRevenue: number;
+  outstandingDueRevenue: number;
+  cashSales: number;
+  codPendingSales: number;
+  bkashSales: number;
+  nagadSales: number;
+  rocketSales: number;
+  dueSales: number;
   paymentBreakdown: Record<'cod' | 'bkash' | 'nagad' | 'rocket', number>;
   // Purchases in period
   purchasesTotal: number;
@@ -204,20 +284,48 @@ export function computePeriodAccounting(params: {
   products: Product[];
   expenses: ExpenseEntry[];
   purchases: PurchaseEntry[];
+  salesReturns?: SalesReturnEntry[];
   startDateKey?: string;
   endDateKey?: string;
 }): PeriodAccountingSummary {
-  const { orders, products, expenses, purchases, startDateKey, endDateKey } = params;
+  const { orders, products, expenses, purchases, salesReturns = [], startDateKey, endDateKey } = params;
   const costMap = buildProductCostMap(products);
 
-  const periodOrders = orders.filter((o) =>
+  const periodCreatedOrders = orders.filter((o) =>
     isDateKeyInRange(getOrderDateKey(o), startDateKey, endDateKey)
   );
+  const periodDeliveredSales = orders.filter(
+    (o) =>
+      isCompletedSaleOrder(o) &&
+      isDateKeyInRange(getCompletedSaleDateKey(o), startDateKey, endDateKey)
+  );
+  const periodCancelledOrders = orders.filter(
+    (o) =>
+      o.orderStatus === 'cancelled' &&
+      isDateKeyInRange(
+        getTimestampDateKey(o.pipeline?.cancelledAt) || getOrderDateKey(o),
+        startDateKey,
+        endDateKey
+      )
+  );
+  const periodReturnedOrders = orders.filter(
+    (o) =>
+      o.orderStatus === 'returned' &&
+      isDateKeyInRange(
+        getTimestampDateKey(o.pipeline?.returnedAt) || getOrderDateKey(o),
+        startDateKey,
+        endDateKey
+      )
+  );
+
   const periodExpenses = expenses.filter((e) =>
     isDateKeyInRange(normalizeEntryDateKey(e.date), startDateKey, endDateKey)
   );
   const periodPurchases = purchases.filter((p) =>
     isDateKeyInRange(normalizeEntryDateKey(p.date), startDateKey, endDateKey)
+  );
+  const periodReturns = salesReturns.filter((r) =>
+    isDateKeyInRange(normalizeEntryDateKey(r.date), startDateKey, endDateKey)
   );
 
   let validOrderCount = 0;
@@ -228,9 +336,25 @@ export function computePeriodAccounting(params: {
   let cancelledAmount = 0;
   let returnedCount = 0;
   let returnedAmount = 0;
+  let deliveredCount = 0;
+  let deliveredAmount = 0;
+  let pendingOrdersCount = 0;
+  let processingOrdersCount = 0;
+  let completedOrdersCount = 0;
+  const orderStatusCounts: PeriodAccountingSummary['orderStatusCounts'] = {
+    pending: 0,
+    processing: 0,
+    packed: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0,
+    returned: 0,
+  };
 
   let grossMerchandiseValue = 0;
   let totalDiscounts = 0;
+  let couponDiscounts = 0;
+  let otherDiscounts = 0;
   let netMerchandiseSales = 0;
   let deliveryCollected = 0;
   let totalBilledRevenue = 0;
@@ -240,6 +364,12 @@ export function computePeriodAccounting(params: {
 
   let paidRevenue = 0;
   let pendingCollectionRevenue = 0;
+  let cashSales = 0;
+  let codPendingSales = 0;
+  let bkashSales = 0;
+  let nagadSales = 0;
+  let rocketSales = 0;
+  let dueSales = 0;
   const paymentBreakdown: Record<'cod' | 'bkash' | 'nagad' | 'rocket', number> = {
     cod: 0,
     bkash: 0,
@@ -247,18 +377,42 @@ export function computePeriodAccounting(params: {
     rocket: 0,
   };
 
-  periodOrders.forEach((ord) => {
+  // Track order pipeline counts placed during the period (without recognizing un-delivered orders as sales)
+  periodCreatedOrders.forEach((ord) => {
+    if (ord.orderStatus === 'pending') {
+      pendingOrdersCount += 1;
+      orderStatusCounts.pending += 1;
+    } else if (ord.orderStatus === 'confirmed' || ord.orderStatus === 'processing') {
+      processingOrdersCount += 1;
+      orderStatusCounts.processing += 1;
+    } else if (ord.orderStatus === 'packed') {
+      processingOrdersCount += 1;
+      orderStatusCounts.packed += 1;
+    } else if (ord.orderStatus === 'shipped') {
+      processingOrdersCount += 1;
+      orderStatusCounts.shipped += 1;
+    }
+  });
+
+  periodCancelledOrders.forEach((ord) => {
+    cancelledCount += 1;
+    cancelledAmount += Number(ord.total) || 0;
+    orderStatusCounts.cancelled += 1;
+  });
+
+  periodReturnedOrders.forEach((ord) => {
+    returnedCount += 1;
+    returnedAmount += Number(ord.total) || 0;
+    orderStatusCounts.returned += 1;
+  });
+
+  // Sales, Revenue, COGS & Profit are ONLY completed when delivery is completed (orderStatus === 'delivered')
+  periodDeliveredSales.forEach((ord) => {
     const orderTotal = Number(ord.total) || 0;
-    if (ord.orderStatus === 'cancelled') {
-      cancelledCount += 1;
-      cancelledAmount += orderTotal;
-      return;
-    }
-    if (ord.orderStatus === 'returned') {
-      returnedCount += 1;
-      returnedAmount += orderTotal;
-      return;
-    }
+    deliveredCount += 1;
+    completedOrdersCount += 1;
+    deliveredAmount += orderTotal;
+    orderStatusCounts.delivered += 1;
 
     validOrderCount += 1;
     if (ord.orderChannel === 'pos') posOrderCount += 1;
@@ -266,6 +420,12 @@ export function computePeriodAccounting(params: {
 
     const subtotal = Number(ord.subtotal) || 0;
     const disc = (Number(ord.discount) || 0) + (Number(ord.onlineDiscount) || 0);
+    if (ord.couponCode && Number(ord.discount) > 0) {
+      couponDiscounts += Number(ord.discount) || 0;
+      otherDiscounts += Number(ord.onlineDiscount) || 0;
+    } else {
+      otherDiscounts += disc;
+    }
     const deliv = Number(ord.deliveryCharge) || 0;
     const netMerch = Math.max(0, subtotal - disc);
 
@@ -281,17 +441,43 @@ export function computePeriodAccounting(params: {
     missingCostSalesAmount += costInfo.missingCostValue;
     unitsSold += costInfo.units;
 
-    const method = (ord.paymentMethod || 'cod') as 'cod' | 'bkash' | 'nagad' | 'rocket';
-    if (paymentBreakdown[method] !== undefined) {
-      paymentBreakdown[method] += orderTotal;
+    const { paid, due } = getOrderPaidAndDue(ord);
+    paidRevenue += paid;
+    pendingCollectionRevenue += due;
+    if (due > 0) {
+      dueSales += due;
     }
 
-    if (ord.paymentStatus === 'paid' || ord.orderStatus === 'delivered') {
-      paidRevenue += orderTotal;
-    } else {
-      const adv = Number(ord.advanceAmount) || 0;
-      paidRevenue += adv;
-      pendingCollectionRevenue += Math.max(0, orderTotal - adv);
+    const rawMethod = ord.paymentMethod || 'cod';
+    if (rawMethod === 'cash') {
+      paymentBreakdown.cod += orderTotal;
+      cashSales += paid > 0 ? paid : orderTotal;
+    } else if (rawMethod === 'due') {
+      paymentBreakdown.cod += orderTotal;
+      if (paid > 0) cashSales += paid;
+    } else if (rawMethod === 'cod') {
+      paymentBreakdown.cod += orderTotal;
+      if (ord.paymentStatus === 'paid' || ord.orderStatus === 'delivered') {
+        cashSales += orderTotal;
+      } else {
+        codPendingSales += due;
+        if (paid > 0) {
+          const advGw = ord.advanceGateway || ord.paymentDetails?.advanceGateway;
+          if (advGw === 'bkash') bkashSales += paid;
+          else if (advGw === 'nagad') nagadSales += paid;
+          else if (advGw === 'rocket') rocketSales += paid;
+          else cashSales += paid;
+        }
+      }
+    } else if (rawMethod === 'bkash') {
+      paymentBreakdown.bkash += orderTotal;
+      bkashSales += paid > 0 || ord.paymentStatus === 'paid' ? (paid || orderTotal) : orderTotal;
+    } else if (rawMethod === 'nagad') {
+      paymentBreakdown.nagad += orderTotal;
+      nagadSales += paid > 0 || ord.paymentStatus === 'paid' ? (paid || orderTotal) : orderTotal;
+    } else if (rawMethod === 'rocket') {
+      paymentBreakdown.rocket += orderTotal;
+      rocketSales += paid > 0 || ord.paymentStatus === 'paid' ? (paid || orderTotal) : orderTotal;
     }
   });
 
@@ -319,6 +505,34 @@ export function computePeriodAccounting(params: {
     }
   });
 
+  // Apply partial Sales Return entries (avoid double counting orders whose status is already 'returned')
+  const fullReturnedOrderIds = new Set(
+    orders.filter((o) => o.orderStatus === 'returned').map((o) => o.id)
+  );
+
+  let salesReturnsCount = 0;
+  let salesReturnsAmount = 0;
+  let salesReturnsPcs = 0;
+  let salesReturnsRestockedPcs = 0;
+
+  periodReturns.forEach((ret) => {
+    const amt = Math.max(0, Number(ret.totalRefundAmount) || 0);
+    const pcs = Math.max(0, Number(ret.totalReturnedPcs) || 0);
+    const costRev = Math.max(0, Number(ret.totalCostReversed) || 0);
+    salesReturnsCount += 1;
+    salesReturnsAmount += amt;
+    salesReturnsPcs += pcs;
+    if (ret.restocked) salesReturnsRestockedPcs += pcs;
+
+    // Only deduct from revenue/COGS if linked order wasn't already fully excluded as 'returned'
+    if (!fullReturnedOrderIds.has(ret.orderId)) {
+      netMerchandiseSales = Math.max(0, netMerchandiseSales - amt);
+      totalBilledRevenue = Math.max(0, totalBilledRevenue - amt);
+      unitsSold = Math.max(0, unitsSold - pcs);
+      cogs = Math.max(0, cogs - costRev);
+    }
+  });
+
   const grossProfit = totalBilledRevenue - cogs;
   const merchandiseGrossProfit = netMerchandiseSales - cogs;
   const netProfit = grossProfit - totalExpenses;
@@ -337,7 +551,7 @@ export function computePeriodAccounting(params: {
   return {
     startKey: startDateKey,
     endKey: endDateKey,
-    totalOrdersAll: periodOrders.length,
+    totalOrdersAll: periodCreatedOrders.length,
     validOrderCount,
     onlineOrderCount,
     posOrderCount,
@@ -346,8 +560,20 @@ export function computePeriodAccounting(params: {
     cancelledAmount,
     returnedCount,
     returnedAmount,
+    deliveredCount,
+    deliveredAmount,
+    pendingOrdersCount,
+    processingOrdersCount,
+    completedOrdersCount,
+    orderStatusCounts,
+    salesReturnsCount,
+    salesReturnsAmount,
+    salesReturnsPcs,
+    salesReturnsRestockedPcs,
     grossMerchandiseValue,
     totalDiscounts,
+    couponDiscounts,
+    otherDiscounts,
     netMerchandiseSales,
     deliveryCollected,
     totalBilledRevenue,
@@ -364,6 +590,14 @@ export function computePeriodAccounting(params: {
     netMarginPct,
     paidRevenue,
     pendingCollectionRevenue,
+    collectedPaidRevenue: paidRevenue,
+    outstandingDueRevenue: pendingCollectionRevenue,
+    cashSales,
+    codPendingSales,
+    bkashSales,
+    nagadSales,
+    rocketSales,
+    dueSales,
     paymentBreakdown,
     purchasesTotal,
     purchasesPaid,
@@ -388,10 +622,11 @@ export function computeDailySeries(params: {
   orders: Order[];
   products: Product[];
   expenses: ExpenseEntry[];
+  salesReturns?: SalesReturnEntry[];
   days?: number;
   endDateKey?: string;
 }): DailySeriesPoint[] {
-  const { orders, products, expenses, days = 14, endDateKey = getLocalDateKey() } = params;
+  const { orders, products, expenses, salesReturns = [], days = 14, endDateKey = getLocalDateKey() } = params;
   const costMap = buildProductCostMap(products);
   const buckets = new Map<string, DailySeriesPoint>();
 
@@ -412,9 +647,13 @@ export function computeDailySeries(params: {
     });
   }
 
+  const fullReturnedOrderIds = new Set(
+    orders.filter((o) => o.orderStatus === 'returned').map((o) => o.id)
+  );
+
   orders.forEach((ord) => {
-    if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') return;
-    const dk = getOrderDateKey(ord);
+    if (!isCompletedSaleOrder(ord)) return;
+    const dk = getCompletedSaleDateKey(ord);
     if (!dk) return;
     const b = buckets.get(dk);
     if (!b) return;
@@ -423,6 +662,16 @@ export function computeDailySeries(params: {
     b.pcs += costInfo.units;
     b.cogs += costInfo.cogs;
     b.orderCount += 1;
+  });
+
+  salesReturns.forEach((ret) => {
+    if (fullReturnedOrderIds.has(ret.orderId)) return;
+    const dk = normalizeEntryDateKey(ret.date);
+    const b = buckets.get(dk);
+    if (!b) return;
+    b.sales = Math.max(0, b.sales - (Number(ret.totalRefundAmount) || 0));
+    b.pcs = Math.max(0, b.pcs - (Number(ret.totalReturnedPcs) || 0));
+    b.cogs = Math.max(0, b.cogs - (Number(ret.totalCostReversed) || 0));
   });
 
   expenses.forEach((exp) => {
@@ -457,10 +706,19 @@ export function computeMonthlySeries(params: {
   products: Product[];
   expenses: ExpenseEntry[];
   purchases: PurchaseEntry[];
+  salesReturns?: SalesReturnEntry[];
   months?: number;
   endMonthKey?: string;
 }): MonthlySeriesPoint[] {
-  const { orders, products, expenses, purchases, months = 6, endMonthKey = getLocalMonthKey() } = params;
+  const {
+    orders,
+    products,
+    expenses,
+    purchases,
+    salesReturns = [],
+    months = 6,
+    endMonthKey = getLocalMonthKey(),
+  } = params;
   const costMap = buildProductCostMap(products);
   const buckets = new Map<string, MonthlySeriesPoint>();
 
@@ -483,9 +741,13 @@ export function computeMonthlySeries(params: {
     });
   }
 
+  const fullReturnedOrderIds = new Set(
+    orders.filter((o) => o.orderStatus === 'returned').map((o) => o.id)
+  );
+
   orders.forEach((ord) => {
-    if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') return;
-    const dk = getOrderDateKey(ord);
+    if (!isCompletedSaleOrder(ord)) return;
+    const dk = getCompletedSaleDateKey(ord);
     if (!dk) return;
     const mk = dk.slice(0, 7);
     const b = buckets.get(mk);
@@ -495,6 +757,16 @@ export function computeMonthlySeries(params: {
     b.pcs += costInfo.units;
     b.cogs += costInfo.cogs;
     b.orderCount += 1;
+  });
+
+  salesReturns.forEach((ret) => {
+    if (fullReturnedOrderIds.has(ret.orderId)) return;
+    const mk = normalizeEntryDateKey(ret.date).slice(0, 7);
+    const b = buckets.get(mk);
+    if (!b) return;
+    b.sales = Math.max(0, b.sales - (Number(ret.totalRefundAmount) || 0));
+    b.pcs = Math.max(0, b.pcs - (Number(ret.totalReturnedPcs) || 0));
+    b.cogs = Math.max(0, b.cogs - (Number(ret.totalCostReversed) || 0));
   });
 
   expenses.forEach((exp) => {
@@ -522,8 +794,11 @@ export interface StockAuditSummary {
   totalProducts: number;
   activeProducts: number;
   totalStockPcs: number;
+  soldQty: number;
   lowStockCount: number;
   outOfStockCount: number;
+  lowStockProducts: Product[];
+  outOfStockProducts: Product[];
   stockCostValue: number;
   stockSellingValue: number;
   expectedStockProfit: number;
@@ -546,8 +821,9 @@ export function computeStockAudit(params: {
   products: Product[];
   purchases: PurchaseEntry[];
   orders: Order[];
+  lowStockThreshold?: number;
 }): StockAuditSummary {
-  const { products, purchases, orders } = params;
+  const { products, purchases, orders, lowStockThreshold = 5 } = params;
   const costMap = buildProductCostMap(products);
 
   let activeProducts = 0;
@@ -556,14 +832,22 @@ export function computeStockAudit(params: {
   let outOfStockCount = 0;
   let stockCostValue = 0;
   let stockSellingValue = 0;
+  const lowStockProducts: Product[] = [];
+  const outOfStockProducts: Product[] = [];
   const productsMissingCost: Product[] = [];
 
   products.forEach((p) => {
     if (p.active !== false) activeProducts += 1;
     const stock = Math.max(0, Number(p.totalStock) || 0);
+    const threshold = typeof p.minStock === 'number' && p.minStock > 0 ? p.minStock : lowStockThreshold;
     totalStockPcs += stock;
-    if (stock <= 0) outOfStockCount += 1;
-    else if (stock < 5) lowStockCount += 1;
+    if (stock <= 0) {
+      outOfStockCount += 1;
+      outOfStockProducts.push(p);
+    } else if (stock <= threshold) {
+      lowStockCount += 1;
+      lowStockProducts.push(p);
+    }
 
     const unitCost = typeof p.costPrice === 'number' && p.costPrice > 0 ? p.costPrice : 0;
     const unitSell = p.salePrice && p.salePrice > 0 ? p.salePrice : Number(p.price) || 0;
@@ -596,6 +880,12 @@ export function computeStockAudit(params: {
   let totalSoldPcs = 0;
   orders.forEach((ord) => {
     if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') return;
+    const hasStockDeducted =
+      ord.pipeline?.stockDeducted === true ||
+      ord.orderStatus === 'packed' ||
+      ord.orderStatus === 'shipped' ||
+      ord.orderStatus === 'delivered';
+    if (!hasStockDeducted) return;
     const info = getOrderCOGS(ord, costMap);
     totalSoldCOGS += info.cogs;
     totalSoldPcs += info.units;
@@ -621,8 +911,11 @@ export function computeStockAudit(params: {
     totalProducts: products.length,
     activeProducts,
     totalStockPcs,
+    soldQty: totalSoldPcs,
     lowStockCount,
     outOfStockCount,
+    lowStockProducts,
+    outOfStockProducts,
     stockCostValue,
     stockSellingValue,
     expectedStockProfit: stockSellingValue - stockCostValue,
@@ -639,4 +932,280 @@ export function computeStockAudit(params: {
     pcsVariance,
     matchStatus,
   };
+}
+
+export interface CustomerMetricsSummary {
+  totalCustomers: number;
+  newToday: number;
+  newThisMonth: number;
+  activeCustomers: number;
+  returningCustomers: number;
+  customersWithDue: number;
+  totalCustomerDue: number;
+  todayDue: number;
+  monthlyDue: number;
+  totalPaidByCustomers: number;
+}
+
+export function computeCustomerMetrics(params: {
+  orders: Order[];
+  customers?: CustomerProfile[];
+  todayKey?: string;
+  monthKey?: string;
+}): CustomerMetricsSummary {
+  const {
+    orders,
+    customers = [],
+    todayKey = getLocalDateKey(),
+    monthKey = getLocalMonthKey(),
+  } = params;
+
+  const customerMap = new Map<
+    string,
+    {
+      firstSeenDate: string;
+      validOrders: number;
+      totalDue: number;
+      totalPaid: number;
+    }
+  >();
+
+  customers.forEach((c) => {
+    const key = (c.phone || '').replace(/[\s\-+()]/g, '').replace(/^88/, '') || c.uid || c.email;
+    if (!key) return;
+    const dk = normalizeEntryDateKey(typeof c.createdAt === 'string' ? c.createdAt : '');
+    customerMap.set(key, {
+      firstSeenDate: dk || '',
+      validOrders: 0,
+      totalDue: 0,
+      totalPaid: 0,
+    });
+  });
+
+  let todayDue = 0;
+  let monthlyDue = 0;
+
+  orders.forEach((ord) => {
+    const phoneKey = (ord.customerPhone || ord.shippingAddress?.phone || '')
+      .replace(/[\s\-+()]/g, '')
+      .replace(/^88/, '');
+    const key = phoneKey || ord.customerId || ord.customerEmail || ord.customerName;
+    if (!key) return;
+
+    const ordDate = getOrderDateKey(ord) || '';
+    const existing = customerMap.get(key) || {
+      firstSeenDate: ordDate,
+      validOrders: 0,
+      totalDue: 0,
+      totalPaid: 0,
+    };
+
+    if (ordDate && (!existing.firstSeenDate || ordDate < existing.firstSeenDate)) {
+      existing.firstSeenDate = ordDate;
+    }
+
+    if (ord.orderStatus !== 'cancelled' && ord.orderStatus !== 'returned') {
+      existing.validOrders += 1;
+    }
+
+    const { paid, due } = getOrderPaidAndDue(ord);
+    existing.totalPaid += paid;
+    existing.totalDue += due;
+
+    if (ordDate === todayKey) todayDue += due;
+    if (ordDate && ordDate.slice(0, 7) === monthKey) monthlyDue += due;
+
+    customerMap.set(key, existing);
+  });
+
+  let newToday = 0;
+  let newThisMonth = 0;
+  let activeCustomers = 0;
+  let returningCustomers = 0;
+  let customersWithDue = 0;
+  let totalCustomerDue = 0;
+  let totalPaidByCustomers = 0;
+
+  customerMap.forEach((entry) => {
+    if (entry.firstSeenDate === todayKey) newToday += 1;
+    if (entry.firstSeenDate && entry.firstSeenDate.slice(0, 7) === monthKey) newThisMonth += 1;
+    if (entry.validOrders >= 1) activeCustomers += 1;
+    if (entry.validOrders >= 2) returningCustomers += 1;
+    if (entry.totalDue > 0) customersWithDue += 1;
+    totalCustomerDue += entry.totalDue;
+    totalPaidByCustomers += entry.totalPaid;
+  });
+
+  return {
+    totalCustomers: customerMap.size,
+    newToday,
+    newThisMonth,
+    activeCustomers,
+    returningCustomers,
+    customersWithDue,
+    totalCustomerDue,
+    todayDue,
+    monthlyDue,
+    totalPaidByCustomers,
+  };
+}
+
+/**
+ * Generates persistent Daily (30d) and Monthly (12m) Target Achievement Archive records.
+ * Completed days & months are automatically saved with locked historical targets once closed.
+ */
+export function buildTargetArchivesSnapshot(params: {
+  orders: Order[];
+  products: Product[];
+  expenses: ExpenseEntry[];
+  purchases: PurchaseEntry[];
+  salesReturns?: SalesReturnEntry[];
+  targets: SalesTargetsConfig;
+  existingArchives?: TargetArchiveRecord[];
+  todayKey?: string;
+  monthKey?: string;
+}): TargetArchiveRecord[] {
+  const {
+    orders,
+    products,
+    expenses,
+    purchases,
+    salesReturns = [],
+    targets,
+    existingArchives = [],
+    todayKey = getLocalDateKey(),
+    monthKey = getLocalMonthKey(),
+  } = params;
+
+  const existingMap = new Map<string, TargetArchiveRecord>();
+  existingArchives.forEach((rec) => existingMap.set(rec.id, rec));
+
+  const records: TargetArchiveRecord[] = [];
+  const nowIso = new Date().toISOString();
+
+  // 1. Daily Records (last 21 days including today)
+  for (let i = 0; i < 21; i++) {
+    const dk = addLocalDays(todayKey, -i);
+    const id = `daily_${dk}`;
+    const prev = existingMap.get(id);
+    const isToday = dk === todayKey;
+
+    const stats = computePeriodAccounting({
+      orders,
+      products,
+      expenses,
+      purchases,
+      salesReturns,
+      startDateKey: dk,
+      endDateKey: dk,
+    });
+
+    const targetAmount = !isToday && prev?.targetAmount !== undefined ? prev.targetAmount : targets.dailyAmountTarget;
+    const targetPcs = !isToday && prev?.targetPcs !== undefined ? prev.targetPcs : targets.dailyPcsTarget;
+    const targetProfit =
+      !isToday && prev?.targetProfit !== undefined
+        ? prev.targetProfit
+        : targets.dailyProfitTarget || 0;
+
+    const amountPct = targetAmount > 0 ? Math.min(999, (stats.totalBilledRevenue / targetAmount) * 100) : 0;
+    const pcsPct = targetPcs > 0 ? Math.min(999, (stats.unitsSold / targetPcs) * 100) : 0;
+    const profitPct = targetProfit > 0 ? Math.max(-999, Math.min(999, (stats.netProfit / targetProfit) * 100)) : 0;
+
+    let status: TargetArchiveRecord['status'] = 'in_progress';
+    if (!isToday) {
+      status = amountPct >= 100 && (targetPcs <= 0 || pcsPct >= 100) ? 'achieved' : stats.totalBilledRevenue >= targetAmount ? 'achieved' : 'missed';
+    } else if (amountPct >= 100) {
+      status = 'achieved';
+    }
+
+    const [y, m, d] = dk.split('-').map(Number);
+    const label = new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('en-US', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    // Only keep days with activity or within last 7 days or today
+    if (i <= 7 || stats.validOrderCount > 0 || stats.totalExpenses > 0 || prev) {
+      records.push({
+        id,
+        periodType: 'daily',
+        periodKey: dk,
+        label,
+        targetAmount,
+        achievedAmount: stats.totalBilledRevenue,
+        targetPcs,
+        achievedPcs: stats.unitsSold,
+        targetProfit,
+        achievedProfit: stats.netProfit,
+        amountPct,
+        pcsPct,
+        profitPct,
+        orderCount: stats.validOrderCount,
+        status,
+        closedAt: !isToday && prev?.closedAt ? prev.closedAt : isToday ? 'Live' : nowIso,
+      });
+    }
+  }
+
+  // 2. Monthly Records (last 12 months including current month)
+  for (let i = 0; i < 12; i++) {
+    const mk = addLocalMonths(monthKey, -i);
+    const id = `monthly_${mk}`;
+    const prev = existingMap.get(id);
+    const isCurrentMonth = mk === monthKey;
+    const bounds = getMonthDateBounds(mk);
+
+    const stats = computePeriodAccounting({
+      orders,
+      products,
+      expenses,
+      purchases,
+      salesReturns,
+      startDateKey: bounds.startKey,
+      endDateKey: bounds.endKey,
+    });
+
+    const targetAmount =
+      !isCurrentMonth && prev?.targetAmount !== undefined ? prev.targetAmount : targets.monthlyAmountTarget;
+    const targetPcs =
+      !isCurrentMonth && prev?.targetPcs !== undefined ? prev.targetPcs : targets.monthlyPcsTarget;
+    const targetProfit =
+      !isCurrentMonth && prev?.targetProfit !== undefined ? prev.targetProfit : targets.monthlyProfitTarget;
+
+    const amountPct = targetAmount > 0 ? Math.min(999, (stats.totalBilledRevenue / targetAmount) * 100) : 0;
+    const pcsPct = targetPcs > 0 ? Math.min(999, (stats.unitsSold / targetPcs) * 100) : 0;
+    const profitPct = targetProfit > 0 ? Math.max(-999, Math.min(999, (stats.netProfit / targetProfit) * 100)) : 0;
+
+    let status: TargetArchiveRecord['status'] = 'in_progress';
+    if (!isCurrentMonth) {
+      status = stats.totalBilledRevenue >= targetAmount ? 'achieved' : 'missed';
+    } else if (stats.totalBilledRevenue >= targetAmount) {
+      status = 'achieved';
+    }
+
+    if (i <= 2 || stats.validOrderCount > 0 || stats.totalExpenses > 0 || prev) {
+      records.push({
+        id,
+        periodType: 'monthly',
+        periodKey: mk,
+        label: bounds.label,
+        targetAmount,
+        achievedAmount: stats.totalBilledRevenue,
+        targetPcs,
+        achievedPcs: stats.unitsSold,
+        targetProfit,
+        achievedProfit: stats.netProfit,
+        amountPct,
+        pcsPct,
+        profitPct,
+        orderCount: stats.validOrderCount,
+        status,
+        closedAt: !isCurrentMonth && prev?.closedAt ? prev.closedAt : isCurrentMonth ? 'Live' : nowIso,
+      });
+    }
+  }
+
+  return records;
 }

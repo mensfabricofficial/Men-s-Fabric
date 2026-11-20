@@ -17,6 +17,14 @@ import {
   PartnerDeskConfig,
   Product,
   SalesTargetsConfig,
+  SalesReturnEntry,
+  SalesReturnItem,
+  TargetArchiveRecord,
+  HeldPosSale,
+  CustomerProfile,
+  CustomerPaymentLog,
+  PaymentMethod,
+  Order,
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { productService } from './productService';
@@ -26,17 +34,26 @@ const LOCAL_PURCHASES_KEY = 'mf_pos_purchases_v1';
 const LOCAL_EXPENSES_KEY = 'mf_pos_expenses_v1';
 const LOCAL_PARTNERS_KEY = 'mf_partner_desks_v1';
 const LOCAL_TARGETS_KEY = 'mf_pos_sales_targets_v1';
+const LOCAL_RETURNS_KEY = 'mf_pos_sales_returns_v1';
+const LOCAL_TARGET_ARCHIVES_KEY = 'mf_pos_target_archives_v1';
+const LOCAL_HELD_SALES_KEY = 'mf_pos_held_sales_v1';
+const LOCAL_CRM_CUSTOMERS_KEY = 'mf_crm_customers_v1';
 
 const LEDGER_DOC = doc(db, 'settings', 'pos_ledger');
 const PARTNERS_DOC = doc(db, 'settings', 'partnerPipeline');
 const TARGETS_DOC = doc(db, 'settings', 'sales_targets');
+const TARGET_ARCHIVES_DOC = doc(db, 'settings', 'target_archives');
 
 export const DEFAULT_SALES_TARGETS: SalesTargetsConfig = {
   dailyAmountTarget: 25000,
   dailyPcsTarget: 20,
+  dailyProfitTarget: 6000,
+  dailyOrderTarget: 15,
   monthlyAmountTarget: 600000,
   monthlyPcsTarget: 500,
   monthlyProfitTarget: 150000,
+  monthlyOrderTarget: 400,
+  lowStockThresholdDefault: 5,
 };
 
 export const DEFAULT_PARTNER_DESKS: PartnerDeskConfig[] = [
@@ -84,18 +101,6 @@ const readLocalList = <T,>(key: string, fallback: T[] = []): T[] => {
   return fallback;
 };
 
-const writeLocalList = <T,>(key: string, list: T[], eventName?: string) => {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(key, JSON.stringify(list));
-    if (eventName) {
-      window.dispatchEvent(new CustomEvent(eventName, { detail: list }));
-    }
-  } catch {
-    // ignore
-  }
-};
-
 const withTimeout = <T,>(promise: Promise<T>, ms = 3000): Promise<T> =>
   Promise.race([
     promise,
@@ -109,6 +114,9 @@ const syncLedgerMirror = (partial: {
   purchases?: PurchaseEntry[];
   expenses?: ExpenseEntry[];
   targets?: SalesTargetsConfig;
+  returns?: SalesReturnEntry[];
+  heldSales?: HeldPosSale[];
+  crmCustomers?: CustomerProfile[];
 }) => {
   ledgerWriteChain = ledgerWriteChain.then(async () => {
     try {
@@ -127,9 +135,193 @@ const syncLedgerMirror = (partial: {
   return ledgerWriteChain;
 };
 
+// Shared singleton live state (never emits stale localStorage before Firestore onSnapshot)
+let liveTargets: SalesTargetsConfig | null = null;
+let livePartnerDesks: PartnerDeskConfig[] | null = null;
+let liveSuppliers: Supplier[] | null = null;
+let livePurchases: PurchaseEntry[] | null = null;
+let liveExpenses: ExpenseEntry[] | null = null;
+let liveReturns: SalesReturnEntry[] | null = null;
+let liveTargetArchives: TargetArchiveRecord[] | null = null;
+let liveHeldSales: HeldPosSale[] | null = null;
+let liveCrmCustomers: CustomerProfile[] | null = null;
+let liveRegisteredUsers: Array<Partial<CustomerProfile>> | null = null;
+
+const targetsListeners = new Set<(targets: SalesTargetsConfig) => void>();
+const partnerDesksListeners = new Set<(desks: PartnerDeskConfig[]) => void>();
+const suppliersListeners = new Set<(list: Supplier[]) => void>();
+const purchasesListeners = new Set<(list: PurchaseEntry[]) => void>();
+const expensesListeners = new Set<(list: ExpenseEntry[]) => void>();
+const returnsListeners = new Set<(list: SalesReturnEntry[]) => void>();
+const targetArchivesListeners = new Set<(list: TargetArchiveRecord[]) => void>();
+const heldSalesListeners = new Set<(list: HeldPosSale[]) => void>();
+const crmCustomersListeners = new Set<(list: CustomerProfile[]) => void>();
+const registeredUsersListeners = new Set<(list: Array<Partial<CustomerProfile>>) => void>();
+
+let sharedLedgerUnsub: Unsubscribe | null = null;
+let sharedTargetsUnsub: Unsubscribe | null = null;
+let sharedPartnersUnsub: Unsubscribe | null = null;
+let sharedArchivesUnsub: Unsubscribe | null = null;
+let sharedUsersUnsub: Unsubscribe | null = null;
+let targetsDocHasAuthoritativeData = false;
+
+const writeBackupList = <T,>(key: string, list: T[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(list));
+  } catch {
+    // ignore
+  }
+};
+
+const ensureSharedLedgerListener = () => {
+  if (sharedLedgerUnsub) return;
+  try {
+    sharedLedgerUnsub = onSnapshot(
+      LEDGER_DOC,
+      (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+
+        if (data && Array.isArray(data.suppliers)) {
+          liveSuppliers = data.suppliers as Supplier[];
+          writeBackupList(LOCAL_SUPPLIERS_KEY, liveSuppliers);
+          suppliersListeners.forEach((cb) => cb(liveSuppliers!));
+        } else if (liveSuppliers === null) {
+          liveSuppliers = [];
+          suppliersListeners.forEach((cb) => cb([]));
+        }
+
+        if (data && Array.isArray(data.purchases)) {
+          livePurchases = data.purchases as PurchaseEntry[];
+          writeBackupList(LOCAL_PURCHASES_KEY, livePurchases);
+          purchasesListeners.forEach((cb) => cb(livePurchases!));
+        } else if (livePurchases === null) {
+          livePurchases = [];
+          purchasesListeners.forEach((cb) => cb([]));
+        }
+
+        if (data && Array.isArray(data.expenses)) {
+          liveExpenses = data.expenses as ExpenseEntry[];
+          writeBackupList(LOCAL_EXPENSES_KEY, liveExpenses);
+          expensesListeners.forEach((cb) => cb(liveExpenses!));
+        } else if (liveExpenses === null) {
+          liveExpenses = [];
+          expensesListeners.forEach((cb) => cb([]));
+        }
+
+        if (data && Array.isArray(data.returns)) {
+          liveReturns = data.returns as SalesReturnEntry[];
+          writeBackupList(LOCAL_RETURNS_KEY, liveReturns);
+          returnsListeners.forEach((cb) => cb(liveReturns!));
+        } else if (liveReturns === null) {
+          liveReturns = [];
+          returnsListeners.forEach((cb) => cb([]));
+        }
+
+        if (data && Array.isArray(data.heldSales)) {
+          liveHeldSales = data.heldSales as HeldPosSale[];
+          writeBackupList(LOCAL_HELD_SALES_KEY, liveHeldSales);
+          heldSalesListeners.forEach((cb) => cb(liveHeldSales!));
+        } else if (liveHeldSales === null) {
+          liveHeldSales = [];
+          heldSalesListeners.forEach((cb) => cb([]));
+        }
+
+        if (data && Array.isArray(data.crmCustomers)) {
+          liveCrmCustomers = data.crmCustomers as CustomerProfile[];
+          writeBackupList(LOCAL_CRM_CUSTOMERS_KEY, liveCrmCustomers);
+          crmCustomersListeners.forEach((cb) => cb(liveCrmCustomers!));
+        } else if (liveCrmCustomers === null) {
+          liveCrmCustomers = [];
+          crmCustomersListeners.forEach((cb) => cb([]));
+        }
+
+        if (!targetsDocHasAuthoritativeData && data?.targets) {
+          liveTargets = { ...DEFAULT_SALES_TARGETS, ...(data.targets as SalesTargetsConfig) };
+          try {
+            localStorage.setItem(LOCAL_TARGETS_KEY, JSON.stringify(liveTargets));
+          } catch {
+            // ignore
+          }
+          targetsListeners.forEach((cb) => cb(liveTargets!));
+        }
+      },
+      () => {
+        if (liveSuppliers === null) {
+          liveSuppliers = readLocalList<Supplier>(LOCAL_SUPPLIERS_KEY);
+          suppliersListeners.forEach((cb) => cb(liveSuppliers!));
+        }
+        if (livePurchases === null) {
+          livePurchases = readLocalList<PurchaseEntry>(LOCAL_PURCHASES_KEY);
+          purchasesListeners.forEach((cb) => cb(livePurchases!));
+        }
+        if (liveExpenses === null) {
+          liveExpenses = readLocalList<ExpenseEntry>(LOCAL_EXPENSES_KEY);
+          expensesListeners.forEach((cb) => cb(liveExpenses!));
+        }
+        if (liveReturns === null) {
+          liveReturns = readLocalList<SalesReturnEntry>(LOCAL_RETURNS_KEY);
+          returnsListeners.forEach((cb) => cb(liveReturns!));
+        }
+        if (liveHeldSales === null) {
+          liveHeldSales = readLocalList<HeldPosSale>(LOCAL_HELD_SALES_KEY);
+          heldSalesListeners.forEach((cb) => cb(liveHeldSales!));
+        }
+        if (liveCrmCustomers === null) {
+          liveCrmCustomers = readLocalList<CustomerProfile>(LOCAL_CRM_CUSTOMERS_KEY);
+          crmCustomersListeners.forEach((cb) => cb(liveCrmCustomers!));
+        }
+      }
+    );
+  } catch {
+    // ignore
+  }
+};
+
 export const posService = {
+  // ======================== REGISTERED USERS (SHARED) ========================
+  getInstantRegisteredUsers(): Array<Partial<CustomerProfile>> {
+    return liveRegisteredUsers ?? [];
+  },
+
+  subscribeToRegisteredUsers(cb: (list: Array<Partial<CustomerProfile>>) => void): Unsubscribe {
+    registeredUsersListeners.add(cb);
+    if (liveRegisteredUsers !== null) {
+      cb(liveRegisteredUsers);
+    }
+    if (!sharedUsersUnsub) {
+      try {
+        sharedUsersUnsub = onSnapshot(
+          collection(db, 'users'),
+          (snap) => {
+            const list: Array<Partial<CustomerProfile>> = [];
+            snap.forEach((d) => list.push({ ...(d.data() as CustomerProfile), uid: d.id }));
+            liveRegisteredUsers = list;
+            registeredUsersListeners.forEach((listener) => listener(list));
+          },
+          () => {
+            if (liveRegisteredUsers === null) {
+              liveRegisteredUsers = [];
+              registeredUsersListeners.forEach((listener) => listener([]));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+    return () => {
+      registeredUsersListeners.delete(cb);
+    };
+  },
+
   // ======================== SALES TARGETS ========================
+  getInstantTargets(): SalesTargetsConfig {
+    return liveTargets ?? DEFAULT_SALES_TARGETS;
+  },
+
   getLocalTargets(): SalesTargetsConfig {
+    if (liveTargets !== null) return liveTargets;
     try {
       const raw = localStorage.getItem(LOCAL_TARGETS_KEY);
       if (raw) {
@@ -148,15 +340,20 @@ export const posService = {
     const clean: SalesTargetsConfig = {
       dailyAmountTarget: Math.max(0, Number(targets.dailyAmountTarget) || 0),
       dailyPcsTarget: Math.max(0, Number(targets.dailyPcsTarget) || 0),
+      dailyProfitTarget: Math.max(0, Number(targets.dailyProfitTarget) || 0),
+      dailyOrderTarget: Math.max(0, Number(targets.dailyOrderTarget) || 0),
       monthlyAmountTarget: Math.max(0, Number(targets.monthlyAmountTarget) || 0),
       monthlyPcsTarget: Math.max(0, Number(targets.monthlyPcsTarget) || 0),
       monthlyProfitTarget: Math.max(0, Number(targets.monthlyProfitTarget) || 0),
+      monthlyOrderTarget: Math.max(0, Number(targets.monthlyOrderTarget) || 0),
+      lowStockThresholdDefault: Math.max(1, Number(targets.lowStockThresholdDefault) || 5),
       updatedAt: new Date().toISOString(),
     };
 
+    liveTargets = clean;
+    targetsListeners.forEach((cb) => cb(clean));
     try {
       localStorage.setItem(LOCAL_TARGETS_KEY, JSON.stringify(clean));
-      window.dispatchEvent(new CustomEvent('mf_targets_updated', { detail: clean }));
     } catch {
       // ignore
     }
@@ -171,61 +368,66 @@ export const posService = {
   },
 
   subscribeToTargets(cb: (targets: SalesTargetsConfig) => void): Unsubscribe {
-    cb(this.getLocalTargets());
+    targetsListeners.add(cb);
+    if (liveTargets !== null) {
+      cb(liveTargets);
+    }
 
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<SalesTargetsConfig>).detail;
-      if (detail) cb({ ...DEFAULT_SALES_TARGETS, ...detail });
-    };
-    window.addEventListener('mf_targets_updated', handleLocal);
-
-    const unsubTargetsDoc = onSnapshot(
-      TARGETS_DOC,
-      (snap) => {
-        if (snap.exists()) {
-          const data = { ...DEFAULT_SALES_TARGETS, ...(snap.data() as SalesTargetsConfig) };
-          try {
-            localStorage.setItem(LOCAL_TARGETS_KEY, JSON.stringify(data));
-          } catch {
-            // ignore
+    if (!sharedTargetsUnsub) {
+      try {
+        sharedTargetsUnsub = onSnapshot(
+          TARGETS_DOC,
+          (snap) => {
+            if (snap.exists()) {
+              targetsDocHasAuthoritativeData = true;
+              const data = { ...DEFAULT_SALES_TARGETS, ...(snap.data() as SalesTargetsConfig) };
+              liveTargets = data;
+              try {
+                localStorage.setItem(LOCAL_TARGETS_KEY, JSON.stringify(data));
+              } catch {
+                // ignore
+              }
+              targetsListeners.forEach((listener) => listener(data));
+            } else if (liveTargets === null) {
+              liveTargets = DEFAULT_SALES_TARGETS;
+              targetsListeners.forEach((listener) => listener(DEFAULT_SALES_TARGETS));
+            }
+          },
+          () => {
+            if (liveTargets === null) {
+              const fallback = this.getLocalTargets();
+              liveTargets = fallback;
+              targetsListeners.forEach((listener) => listener(fallback));
+            }
           }
-          cb(data);
-        }
-      },
-      () => {}
-    );
-
-    const unsubLedger = onSnapshot(
-      LEDGER_DOC,
-      (snap) => {
-        if (snap.exists() && snap.data()?.targets) {
-          const data = { ...DEFAULT_SALES_TARGETS, ...(snap.data().targets as SalesTargetsConfig) };
-          try {
-            localStorage.setItem(LOCAL_TARGETS_KEY, JSON.stringify(data));
-          } catch {
-            // ignore
-          }
-          cb(data);
-        }
-      },
-      () => {}
-    );
+        );
+      } catch {
+        // ignore
+      }
+    }
+    ensureSharedLedgerListener();
 
     return () => {
-      window.removeEventListener('mf_targets_updated', handleLocal);
-      unsubTargetsDoc();
-      unsubLedger();
+      targetsListeners.delete(cb);
     };
   },
+
   // ======================== 4 PARTNER DESKS ========================
+  getInstantPartnerDesks(): PartnerDeskConfig[] {
+    return livePartnerDesks ?? DEFAULT_PARTNER_DESKS;
+  },
+
   getLocalPartnerDesks(): PartnerDeskConfig[] {
+    if (livePartnerDesks !== null) return livePartnerDesks;
     const saved = readLocalList<PartnerDeskConfig>(LOCAL_PARTNERS_KEY);
     if (saved.length === 4) return saved;
     return DEFAULT_PARTNER_DESKS;
   },
 
   async savePartnerDesks(desks: PartnerDeskConfig[]): Promise<void> {
-    writeLocalList(LOCAL_PARTNERS_KEY, desks, 'mf_partners_updated');
+    livePartnerDesks = desks;
+    partnerDesksListeners.forEach((cb) => cb(desks));
+    writeBackupList(LOCAL_PARTNERS_KEY, desks);
     try {
       await withTimeout(
         setDoc(
@@ -244,75 +446,62 @@ export const posService = {
   },
 
   subscribeToPartnerDesks(cb: (desks: PartnerDeskConfig[]) => void): Unsubscribe {
-    cb(this.getLocalPartnerDesks());
+    partnerDesksListeners.add(cb);
+    if (livePartnerDesks !== null) {
+      cb(livePartnerDesks);
+    }
 
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<PartnerDeskConfig[]>).detail;
-      if (Array.isArray(detail) && detail.length > 0) cb(detail);
-    };
-    window.addEventListener('mf_partners_updated', handleLocal);
-
-    const unsubRemote = onSnapshot(
-      PARTNERS_DOC,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.desks) && snap.data()?.desks.length === 4) {
-          const remoteDesks = snap.data().desks as PartnerDeskConfig[];
-          writeLocalList(LOCAL_PARTNERS_KEY, remoteDesks);
-          cb(remoteDesks);
-        }
-      },
-      () => {}
-    );
+    if (!sharedPartnersUnsub) {
+      try {
+        sharedPartnersUnsub = onSnapshot(
+          PARTNERS_DOC,
+          (snap) => {
+            if (snap.exists() && Array.isArray(snap.data()?.desks) && snap.data()?.desks.length === 4) {
+              const remoteDesks = snap.data().desks as PartnerDeskConfig[];
+              livePartnerDesks = remoteDesks;
+              writeBackupList(LOCAL_PARTNERS_KEY, remoteDesks);
+              partnerDesksListeners.forEach((listener) => listener(remoteDesks));
+            } else if (livePartnerDesks === null) {
+              livePartnerDesks = DEFAULT_PARTNER_DESKS;
+              partnerDesksListeners.forEach((listener) => listener(DEFAULT_PARTNER_DESKS));
+            }
+          },
+          () => {
+            if (livePartnerDesks === null) {
+              const fallback = this.getLocalPartnerDesks();
+              livePartnerDesks = fallback;
+              partnerDesksListeners.forEach((listener) => listener(fallback));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
 
     return () => {
-      window.removeEventListener('mf_partners_updated', handleLocal);
-      unsubRemote();
+      partnerDesksListeners.delete(cb);
     };
   },
 
   // ======================== SUPPLIERS ========================
+  getInstantSuppliers(): Supplier[] {
+    return liveSuppliers ?? [];
+  },
+
   getLocalSuppliers(): Supplier[] {
+    if (liveSuppliers !== null) return liveSuppliers;
     return readLocalList<Supplier>(LOCAL_SUPPLIERS_KEY);
   },
 
   subscribeToSuppliers(cb: (list: Supplier[]) => void): Unsubscribe {
-    cb(this.getLocalSuppliers());
-
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<Supplier[]>).detail;
-      if (Array.isArray(detail)) cb(detail);
-    };
-    window.addEventListener('mf_suppliers_updated', handleLocal);
-
-    const unsubLedger = onSnapshot(
-      LEDGER_DOC,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.suppliers)) {
-          const remote = snap.data().suppliers as Supplier[];
-          writeLocalList(LOCAL_SUPPLIERS_KEY, remote);
-          cb(remote);
-        }
-      },
-      () => {}
-    );
-
-    // Also try root collection sync once
-    getDocs(collection(db, 'suppliers'))
-      .then((snap) => {
-        if (!snap.empty) {
-          const map = new Map<string, Supplier>();
-          this.getLocalSuppliers().forEach((s) => map.set(s.id, s));
-          snap.forEach((d) => map.set(d.id, { id: d.id, ...(d.data() as Omit<Supplier, 'id'>) }));
-          const merged = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-          writeLocalList(LOCAL_SUPPLIERS_KEY, merged);
-          cb(merged);
-        }
-      })
-      .catch(() => {});
-
+    suppliersListeners.add(cb);
+    if (liveSuppliers !== null) {
+      cb(liveSuppliers);
+    }
+    ensureSharedLedgerListener();
     return () => {
-      window.removeEventListener('mf_suppliers_updated', handleLocal);
-      unsubLedger();
+      suppliersListeners.delete(cb);
     };
   },
 
@@ -342,7 +531,9 @@ export const posService = {
       ? list.map((s) => (s.id === id ? record : s))
       : [record, ...list];
 
-    writeLocalList(LOCAL_SUPPLIERS_KEY, next, 'mf_suppliers_updated');
+    liveSuppliers = next;
+    suppliersListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
       setDoc(doc(db, 'suppliers', id), sanitizeForFirestore(record), { merge: true }).catch(() => {}),
@@ -352,7 +543,9 @@ export const posService = {
 
   async deleteSupplier(supplierId: string): Promise<void> {
     const next = this.getLocalSuppliers().filter((s) => s.id !== supplierId);
-    writeLocalList(LOCAL_SUPPLIERS_KEY, next, 'mf_suppliers_updated');
+    liveSuppliers = next;
+    suppliersListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
       deleteDoc(doc(db, 'suppliers', supplierId)).catch(() => {}),
@@ -372,7 +565,9 @@ export const posService = {
       updatedAt: new Date().toISOString(),
     };
     const next = list.map((s) => (s.id === supplierId ? updated : s));
-    writeLocalList(LOCAL_SUPPLIERS_KEY, next, 'mf_suppliers_updated');
+    liveSuppliers = next;
+    suppliersListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
       setDoc(doc(db, 'suppliers', supplierId), sanitizeForFirestore(updated), { merge: true }).catch(() => {}),
@@ -381,34 +576,23 @@ export const posService = {
   },
 
   // ======================== PURCHASES ========================
+  getInstantPurchases(): PurchaseEntry[] {
+    return livePurchases ?? [];
+  },
+
   getLocalPurchases(): PurchaseEntry[] {
+    if (livePurchases !== null) return livePurchases;
     return readLocalList<PurchaseEntry>(LOCAL_PURCHASES_KEY);
   },
 
   subscribeToPurchases(cb: (list: PurchaseEntry[]) => void): Unsubscribe {
-    cb(this.getLocalPurchases());
-
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<PurchaseEntry[]>).detail;
-      if (Array.isArray(detail)) cb(detail);
-    };
-    window.addEventListener('mf_purchases_updated', handleLocal);
-
-    const unsubLedger = onSnapshot(
-      LEDGER_DOC,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.purchases)) {
-          const remote = snap.data().purchases as PurchaseEntry[];
-          writeLocalList(LOCAL_PURCHASES_KEY, remote);
-          cb(remote);
-        }
-      },
-      () => {}
-    );
-
+    purchasesListeners.add(cb);
+    if (livePurchases !== null) {
+      cb(livePurchases);
+    }
+    ensureSharedLedgerListener();
     return () => {
-      window.removeEventListener('mf_purchases_updated', handleLocal);
-      unsubLedger();
+      purchasesListeners.delete(cb);
     };
   },
 
@@ -448,7 +632,9 @@ export const posService = {
     };
 
     const nextPurchases = [entry, ...this.getLocalPurchases()];
-    writeLocalList(LOCAL_PURCHASES_KEY, nextPurchases, 'mf_purchases_updated');
+    livePurchases = nextPurchases;
+    purchasesListeners.forEach((cb) => cb(nextPurchases));
+    writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
 
     // Update supplier balance if linked to a real supplier
     let nextSuppliers = this.getLocalSuppliers();
@@ -464,7 +650,9 @@ export const posService = {
             }
           : s
       );
-      writeLocalList(LOCAL_SUPPLIERS_KEY, nextSuppliers, 'mf_suppliers_updated');
+      liveSuppliers = nextSuppliers;
+      suppliersListeners.forEach((cb) => cb(nextSuppliers));
+      writeBackupList(LOCAL_SUPPLIERS_KEY, nextSuppliers);
     }
 
     // Optionally increment product stock & update costPrice for linked catalog items
@@ -479,11 +667,27 @@ export const posService = {
             : localProducts.find((p) => p.id === item.productId);
 
           if (prodData) {
-            const newTotalStock = (Number(prodData.totalStock) || 0) + Number(item.quantity);
+            const prevStock = Number(prodData.totalStock) || 0;
+            const newTotalStock = prevStock + Number(item.quantity);
             await productService
               .updateProduct(item.productId, {
                 totalStock: newTotalStock,
                 ...(item.unitCost > 0 ? { costPrice: Number(item.unitCost) } : {}),
+              })
+              .catch(() => {});
+            await productService
+              .recordStockMovement({
+                productId: item.productId,
+                productName: item.productName || prodData.name,
+                sku: item.sku || prodData.sku || '',
+                previousStock: prevStock,
+                change: Number(item.quantity),
+                newStock: newTotalStock,
+                type: 'purchase',
+                reason: `Purchase Bill ${purchaseNumber} (${params.supplierName})`,
+                referenceId: purchaseNumber,
+                staffName: params.createdBy || 'Admin',
+                date: params.date,
               })
               .catch(() => {});
           }
@@ -505,7 +709,9 @@ export const posService = {
     const existing = this.getLocalPurchases();
     const target = existing.find((p) => p.id === purchaseId);
     const nextPurchases = existing.filter((p) => p.id !== purchaseId);
-    writeLocalList(LOCAL_PURCHASES_KEY, nextPurchases, 'mf_purchases_updated');
+    livePurchases = nextPurchases;
+    purchasesListeners.forEach((cb) => cb(nextPurchases));
+    writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
 
     let nextSuppliers = this.getLocalSuppliers();
     if (target?.supplierId) {
@@ -520,7 +726,9 @@ export const posService = {
             }
           : s
       );
-      writeLocalList(LOCAL_SUPPLIERS_KEY, nextSuppliers, 'mf_suppliers_updated');
+      liveSuppliers = nextSuppliers;
+      suppliersListeners.forEach((cb) => cb(nextSuppliers));
+      writeBackupList(LOCAL_SUPPLIERS_KEY, nextSuppliers);
     }
 
     await Promise.allSettled([
@@ -530,34 +738,23 @@ export const posService = {
   },
 
   // ======================== EXPENSES ========================
+  getInstantExpenses(): ExpenseEntry[] {
+    return liveExpenses ?? [];
+  },
+
   getLocalExpenses(): ExpenseEntry[] {
+    if (liveExpenses !== null) return liveExpenses;
     return readLocalList<ExpenseEntry>(LOCAL_EXPENSES_KEY);
   },
 
   subscribeToExpenses(cb: (list: ExpenseEntry[]) => void): Unsubscribe {
-    cb(this.getLocalExpenses());
-
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<ExpenseEntry[]>).detail;
-      if (Array.isArray(detail)) cb(detail);
-    };
-    window.addEventListener('mf_expenses_updated', handleLocal);
-
-    const unsubLedger = onSnapshot(
-      LEDGER_DOC,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.expenses)) {
-          const remote = snap.data().expenses as ExpenseEntry[];
-          writeLocalList(LOCAL_EXPENSES_KEY, remote);
-          cb(remote);
-        }
-      },
-      () => {}
-    );
-
+    expensesListeners.add(cb);
+    if (liveExpenses !== null) {
+      cb(liveExpenses);
+    }
+    ensureSharedLedgerListener();
     return () => {
-      window.removeEventListener('mf_expenses_updated', handleLocal);
-      unsubLedger();
+      expensesListeners.delete(cb);
     };
   },
 
@@ -566,12 +763,15 @@ export const posService = {
     category: ExpenseEntry['category'];
     amount: number;
     date: string;
+    time?: string;
     paymentMethod: ExpenseEntry['paymentMethod'];
     paidBy?: string;
     reference?: string;
     notes?: string;
     createdBy?: string;
   }): Promise<ExpenseEntry> {
+    const now = new Date();
+    const defaultTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const id = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const entry: ExpenseEntry = {
       id,
@@ -579,16 +779,19 @@ export const posService = {
       category: params.category,
       amount: Math.max(0, Number(params.amount) || 0),
       date: params.date,
+      time: params.time?.trim() || defaultTime,
       paymentMethod: params.paymentMethod,
       paidBy: params.paidBy?.trim() || '',
       reference: params.reference?.trim() || '',
       notes: params.notes?.trim() || '',
       createdBy: params.createdBy || 'Admin',
-      createdAt: new Date().toISOString(),
+      createdAt: now.toISOString(),
     };
 
     const next = [entry, ...this.getLocalExpenses()];
-    writeLocalList(LOCAL_EXPENSES_KEY, next, 'mf_expenses_updated');
+    liveExpenses = next;
+    expensesListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_EXPENSES_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ expenses: next }), 2500),
       setDoc(doc(db, 'expenses', id), sanitizeForFirestore(entry), { merge: true }).catch(() => {}),
@@ -611,7 +814,9 @@ export const posService = {
       updatedAt: new Date().toISOString(),
     };
     const next = list.map((e) => (e.id === expenseId ? updated : e));
-    writeLocalList(LOCAL_EXPENSES_KEY, next, 'mf_expenses_updated');
+    liveExpenses = next;
+    expensesListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_EXPENSES_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ expenses: next }), 2500),
       setDoc(doc(db, 'expenses', expenseId), sanitizeForFirestore(updated), { merge: true }).catch(() => {}),
@@ -621,10 +826,441 @@ export const posService = {
 
   async deleteExpense(expenseId: string): Promise<void> {
     const next = this.getLocalExpenses().filter((e) => e.id !== expenseId);
-    writeLocalList(LOCAL_EXPENSES_KEY, next, 'mf_expenses_updated');
+    liveExpenses = next;
+    expensesListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_EXPENSES_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ expenses: next }), 2500),
       deleteDoc(doc(db, 'expenses', expenseId)).catch(() => {}),
     ]);
+  },
+
+  // ======================== SALES RETURNS ========================
+  getInstantReturns(): SalesReturnEntry[] {
+    return liveReturns ?? [];
+  },
+
+  getLocalReturns(): SalesReturnEntry[] {
+    if (liveReturns !== null) return liveReturns;
+    return readLocalList<SalesReturnEntry>(LOCAL_RETURNS_KEY);
+  },
+
+  subscribeToReturns(cb: (list: SalesReturnEntry[]) => void): Unsubscribe {
+    returnsListeners.add(cb);
+    if (liveReturns !== null) {
+      cb(liveReturns);
+    }
+    ensureSharedLedgerListener();
+    return () => {
+      returnsListeners.delete(cb);
+    };
+  },
+
+  async addSalesReturn(params: {
+    orderId: string;
+    orderNumber: string;
+    customerName: string;
+    customerPhone: string;
+    returnType: 'full' | 'partial';
+    items: SalesReturnItem[];
+    restock: boolean;
+    refundMethod: SalesReturnEntry['refundMethod'];
+    reason: string;
+    date: string;
+    processedBy: string;
+    markOrderAsReturned?: boolean;
+  }): Promise<SalesReturnEntry> {
+    const id = `ret_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const returnNumber = `RET-${Math.floor(10000 + Math.random() * 90000)}`;
+
+    const totalRefundAmount = params.items.reduce((s, it) => s + (Number(it.totalRefund) || 0), 0);
+    const totalReturnedPcs = params.items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+
+    // Resolve unitCost from products if missing
+    const localProducts = productService.getLocalProducts();
+    const costMap = new Map<string, number>();
+    localProducts.forEach((p) => {
+      if (p.id && typeof p.costPrice === 'number' && p.costPrice > 0) {
+        costMap.set(p.id, p.costPrice);
+      }
+    });
+
+    const normalizedItems: SalesReturnItem[] = params.items.map((it) => {
+      const unitCost =
+        typeof it.unitCost === 'number' && it.unitCost > 0
+          ? it.unitCost
+          : costMap.get(it.productId) || 0;
+      return { ...it, unitCost };
+    });
+
+    const totalCostReversed = normalizedItems.reduce(
+      (s, it) => s + (Number(it.unitCost) || 0) * (Number(it.quantity) || 0),
+      0
+    );
+
+    const entry: SalesReturnEntry = {
+      id,
+      returnNumber,
+      orderId: params.orderId,
+      orderNumber: params.orderNumber,
+      customerName: params.customerName,
+      customerPhone: params.customerPhone,
+      returnType: params.returnType,
+      items: normalizedItems,
+      totalRefundAmount,
+      totalCostReversed,
+      totalReturnedPcs,
+      restocked: params.restock,
+      refundMethod: params.refundMethod,
+      reason: params.reason.trim() || 'Customer Return',
+      date: params.date,
+      processedBy: params.processedBy || 'Admin',
+      createdAt: new Date().toISOString(),
+    };
+
+    const nextReturns = [entry, ...this.getLocalReturns()];
+    liveReturns = nextReturns;
+    returnsListeners.forEach((cb) => cb(nextReturns));
+    writeBackupList(LOCAL_RETURNS_KEY, nextReturns);
+
+    // Update linked order status (full return triggers pipeline returned status)
+    // Note: If markOrderAsReturned is true AND order stock is already going to be restored by transferOrderStage,
+    // we avoid double restock by letting transferOrderStage handle full return restore OR restoring explicitly for partial returns!
+    let restoredByOrderTransfer = false;
+    if (params.markOrderAsReturned && params.orderId) {
+      try {
+        const { orderService } = await import('./orderService');
+        const targetOrd = orderService.getLocalOrders().find((o) => o.id === params.orderId);
+        const alreadyReturned = targetOrd?.orderStatus === 'returned';
+        if (!alreadyReturned) {
+          const willOrderRestore =
+            params.restock &&
+            targetOrd?.pipeline?.stockDeducted !== false &&
+            !targetOrd?.pipeline?.stockRestored;
+          await orderService.transferOrderStage({
+            orderId: params.orderId,
+            nextStage: 'returned',
+            handlerName: params.processedBy || 'Admin',
+            note: `Sales Return ${returnNumber}: ${entry.reason}`,
+            markPaymentStatus: params.refundMethod !== 'none' ? 'refunded' : undefined,
+          });
+          if (willOrderRestore) {
+            restoredByOrderTransfer = true;
+          }
+        }
+      } catch {
+        // fallback below
+      }
+    }
+
+    if (params.restock && !restoredByOrderTransfer && normalizedItems.length > 0) {
+      await productService
+        .restoreProductStock(
+          normalizedItems.map((it) => ({
+            productId: it.productId,
+            size: it.size,
+            color: it.color,
+            quantity: it.quantity,
+          }))
+        )
+        .catch(() => {});
+    }
+
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ returns: nextReturns }), 2500),
+      setDoc(doc(db, 'returns', id), sanitizeForFirestore(entry), { merge: true }).catch(() => {}),
+    ]);
+
+    return entry;
+  },
+
+  async deleteSalesReturn(returnId: string): Promise<void> {
+    const next = this.getLocalReturns().filter((r) => r.id !== returnId);
+    liveReturns = next;
+    returnsListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_RETURNS_KEY, next);
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ returns: next }), 2500),
+      deleteDoc(doc(db, 'returns', returnId)).catch(() => {}),
+    ]);
+  },
+
+  // ======================== AUTO-ARCHIVED TARGET HISTORY ========================
+  getInstantTargetArchives(): TargetArchiveRecord[] {
+    return liveTargetArchives ?? [];
+  },
+
+  getLocalTargetArchives(): TargetArchiveRecord[] {
+    if (liveTargetArchives !== null) return liveTargetArchives;
+    return readLocalList<TargetArchiveRecord>(LOCAL_TARGET_ARCHIVES_KEY);
+  },
+
+  subscribeToTargetArchives(cb: (records: TargetArchiveRecord[]) => void): Unsubscribe {
+    targetArchivesListeners.add(cb);
+    if (liveTargetArchives !== null) {
+      cb(liveTargetArchives);
+    }
+
+    if (!sharedArchivesUnsub) {
+      try {
+        sharedArchivesUnsub = onSnapshot(
+          TARGET_ARCHIVES_DOC,
+          (snap) => {
+            if (snap.exists() && Array.isArray(snap.data()?.records)) {
+              const remote = snap.data().records as TargetArchiveRecord[];
+              liveTargetArchives = remote;
+              writeBackupList(LOCAL_TARGET_ARCHIVES_KEY, remote);
+              targetArchivesListeners.forEach((listener) => listener(remote));
+            } else if (liveTargetArchives === null) {
+              liveTargetArchives = [];
+              targetArchivesListeners.forEach((listener) => listener([]));
+            }
+          },
+          () => {
+            if (liveTargetArchives === null) {
+              const fallback = this.getLocalTargetArchives();
+              liveTargetArchives = fallback;
+              targetArchivesListeners.forEach((listener) => listener(fallback));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return () => {
+      targetArchivesListeners.delete(cb);
+    };
+  },
+
+  async saveTargetArchives(records: TargetArchiveRecord[]): Promise<void> {
+    liveTargetArchives = records;
+    targetArchivesListeners.forEach((cb) => cb(records));
+    writeBackupList(LOCAL_TARGET_ARCHIVES_KEY, records);
+    try {
+      await withTimeout(
+        setDoc(
+          TARGET_ARCHIVES_DOC,
+          sanitizeForFirestore({
+            records,
+            updatedAt: serverTimestamp(),
+          }),
+          { merge: true }
+        ),
+        2500
+      );
+    } catch {
+      // queued offline
+    }
+  },
+
+  // ======================== POS HELD SALES ========================
+  getInstantHeldSales(): HeldPosSale[] {
+    return liveHeldSales ?? [];
+  },
+
+  getLocalHeldSales(): HeldPosSale[] {
+    if (liveHeldSales !== null) return liveHeldSales;
+    return readLocalList<HeldPosSale>(LOCAL_HELD_SALES_KEY);
+  },
+
+  subscribeToHeldSales(cb: (list: HeldPosSale[]) => void): Unsubscribe {
+    heldSalesListeners.add(cb);
+    if (liveHeldSales !== null) {
+      cb(liveHeldSales);
+    }
+    ensureSharedLedgerListener();
+    return () => {
+      heldSalesListeners.delete(cb);
+    };
+  },
+
+  async saveHeldSale(input: Omit<HeldPosSale, 'id' | 'holdNumber' | 'createdAt'>): Promise<HeldPosSale> {
+    const id = `hold_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+    const holdNumber = `HOLD-${Math.floor(1000 + Math.random() * 9000)}`;
+    const record: HeldPosSale = {
+      ...input,
+      id,
+      holdNumber,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [record, ...this.getLocalHeldSales()].slice(0, 40);
+    liveHeldSales = next;
+    heldSalesListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_HELD_SALES_KEY, next);
+    await Promise.allSettled([withTimeout(syncLedgerMirror({ heldSales: next }), 2500)]);
+    return record;
+  },
+
+  async deleteHeldSale(holdId: string): Promise<void> {
+    const next = this.getLocalHeldSales().filter((h) => h.id !== holdId);
+    liveHeldSales = next;
+    heldSalesListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_HELD_SALES_KEY, next);
+    await Promise.allSettled([withTimeout(syncLedgerMirror({ heldSales: next }), 2500)]);
+  },
+
+  // ======================== POS / MANUAL CRM CUSTOMERS & DUE PAYMENTS ========================
+  getInstantCrmCustomers(): CustomerProfile[] {
+    return liveCrmCustomers ?? [];
+  },
+
+  getLocalCrmCustomers(): CustomerProfile[] {
+    if (liveCrmCustomers !== null) return liveCrmCustomers;
+    return readLocalList<CustomerProfile>(LOCAL_CRM_CUSTOMERS_KEY);
+  },
+
+  subscribeToCrmCustomers(cb: (list: CustomerProfile[]) => void): Unsubscribe {
+    crmCustomersListeners.add(cb);
+    if (liveCrmCustomers !== null) {
+      cb(liveCrmCustomers);
+    }
+    ensureSharedLedgerListener();
+    return () => {
+      crmCustomersListeners.delete(cb);
+    };
+  },
+
+  async saveCrmCustomer(input: {
+    uid?: string;
+    firstName?: string;
+    lastName?: string;
+    name?: string;
+    phone: string;
+    email?: string;
+    address?: string;
+    division?: string;
+    district?: string;
+    city?: string;
+  }): Promise<CustomerProfile> {
+    const existing = this.getLocalCrmCustomers();
+    const fullName =
+      (input.name || `${input.firstName || ''} ${input.lastName || ''}`).trim() || 'Walk-in Customer';
+    const uid = input.uid || `CUS-${Math.floor(10000 + Math.random() * 90000)}`;
+    const nowIso = new Date().toISOString();
+
+    const record: CustomerProfile = {
+      uid,
+      name: fullName,
+      phone: input.phone.trim(),
+      email: input.email?.trim().toLowerCase() || '',
+      address: input.address?.trim() || '',
+      division: input.division?.trim() || 'Dhaka',
+      district: input.district?.trim() || 'Dhaka',
+      city: input.city?.trim() || input.district?.trim() || '',
+      createdAt: nowIso,
+    };
+
+    const next = [record, ...existing.filter((c) => c.uid !== uid)].slice(0, 500);
+    liveCrmCustomers = next;
+    crmCustomersListeners.forEach((cb) => cb(next));
+    writeBackupList(LOCAL_CRM_CUSTOMERS_KEY, next);
+
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ crmCustomers: next }), 2500),
+      setDoc(doc(db, 'users', uid), sanitizeForFirestore(record), { merge: true }).catch(() => {}),
+    ]);
+    return record;
+  },
+
+  async recordCustomerDuePayment(params: {
+    orderId: string;
+    amount: number;
+    method: PaymentMethod;
+    trxId?: string;
+    senderNumber?: string;
+    receivedBy: string;
+    note?: string;
+  }): Promise<Order | null> {
+    const payAmt = Math.max(0, Number(params.amount) || 0);
+    if (payAmt <= 0) return null;
+
+    const { orderService } = await import('./orderService');
+    const localOrd = orderService.getLocalOrders().find((o) => o.id === params.orderId);
+    let baseOrder: Order | null = localOrd || null;
+
+    try {
+      const snap = await withTimeout(getDoc(doc(db, 'orders', params.orderId)), 2500);
+      if (snap.exists()) {
+        baseOrder = { id: snap.id, ...(snap.data() as Omit<Order, 'id'>) };
+      }
+    } catch {
+      // use local
+    }
+    if (!baseOrder) return null;
+
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const total = Math.max(0, Number(baseOrder.total) || 0);
+    const currentPaid =
+      typeof baseOrder.paidAmount === 'number'
+        ? baseOrder.paidAmount
+        : baseOrder.paymentStatus === 'paid'
+          ? total
+          : Math.max(0, Number(baseOrder.advanceAmount ?? baseOrder.paymentDetails?.advanceAmount) || 0);
+
+    const newPaid = Math.min(total, currentPaid + payAmt);
+    const newDue = Math.max(0, total - newPaid);
+    const nextPayStatus = newDue <= 0 ? 'paid' : baseOrder.paymentStatus;
+
+    const logEntry: CustomerPaymentLog = {
+      id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      amount: payAmt,
+      method: params.method,
+      trxId: params.trxId?.trim() || undefined,
+      senderNumber: params.senderNumber?.trim() || undefined,
+      receivedBy: params.receivedBy || 'Admin',
+      note: params.note?.trim() || 'Due payment collection',
+      date: `${yyyy}-${mm}-${dd}`,
+      timestamp: now.toISOString(),
+    };
+
+    const nextHistory = [...(baseOrder.paymentHistory || []), logEntry];
+    const nextTimeline = [
+      ...(baseOrder.timeline || []),
+      {
+        status: baseOrder.orderStatus,
+        timestamp: now.toISOString(),
+        note: `Due payment collected: ৳${payAmt.toLocaleString('en-BD')} via ${params.method.toUpperCase()} (${params.receivedBy})`,
+      },
+    ];
+
+    const updatedOrder: Order = {
+      ...baseOrder,
+      paidAmount: newPaid,
+      dueAmount: newDue,
+      advanceAmount: newPaid,
+      dueOnDelivery: newDue,
+      paymentStatus: nextPayStatus,
+      paymentHistory: nextHistory,
+      timeline: nextTimeline,
+      updatedAt: now.toISOString(),
+    };
+
+    orderService.saveLocalOrder(updatedOrder);
+
+    try {
+      await setDoc(
+        doc(db, 'orders', baseOrder.id),
+        sanitizeForFirestore({
+          paidAmount: newPaid,
+          dueAmount: newDue,
+          advanceAmount: newPaid,
+          dueOnDelivery: newDue,
+          paymentStatus: nextPayStatus,
+          paymentHistory: nextHistory,
+          timeline: nextTimeline,
+          updatedAt: serverTimestamp(),
+        }),
+        { merge: true }
+      );
+    } catch {
+      // queued offline
+    }
+
+    return updatedOrder;
   },
 };

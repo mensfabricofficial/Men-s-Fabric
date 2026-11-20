@@ -35,6 +35,7 @@ import {
   ORDER_ACTION_OPTIONS,
 } from '../services/staffService';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
+import { AdminPageHeader } from './AdminLayout';
 
 const formatDuration = (ms?: number): string => {
   if (!ms || ms < 0) return '0m';
@@ -54,27 +55,27 @@ const QUICK_ROLE_TEMPLATES: {
   fullAccess?: boolean;
 }[] = [
   {
-    label: 'Order Verifier',
+    label: 'Order Verifier (Step 1)',
     designation: 'Order Verification Officer',
-    menus: ['dashboard', 'pipeline', 'orders', 'customers'],
-    orders: ['order_approve', 'order_cancel', 'order_return'],
+    menus: ['dashboard', 'desk_order_verify', 'orders', 'customers'],
+    orders: ['order_approve', 'order_cancel'],
   },
   {
-    label: 'Payment Verify',
-    designation: 'Payment & Accounts Officer',
-    menus: ['dashboard', 'pipeline', 'orders', 'pos', 'expenses'],
-    orders: ['payment_verify', 'order_cancel'],
+    label: 'Payment Verify (Step 2)',
+    designation: 'Payment Verification & Accounts',
+    menus: ['dashboard', 'desk_payment_verify', 'orders', 'sales_history', 'returns', 'expenses'],
+    orders: ['payment_verify', 'order_cancel', 'order_return'],
   },
   {
-    label: 'Stock & Pack',
-    designation: 'Inventory & Packaging Officer',
-    menus: ['dashboard', 'pipeline', 'orders', 'products', 'purchases', 'suppliers', 'categories'],
-    orders: ['packaging'],
+    label: 'Stock, Price & Coupon (Step 3)',
+    designation: 'Stock, Price & Coupon Auditor',
+    menus: ['dashboard', 'desk_stock_packing', 'orders', 'products', 'stock', 'purchases', 'suppliers', 'coupons', 'returns'],
+    orders: ['packaging', 'order_cancel'],
   },
   {
-    label: 'Delivery',
-    designation: 'Delivery & Dispatch Coordinator',
-    menus: ['dashboard', 'pipeline', 'orders', 'delivery'],
+    label: 'Delivery & Dispatch (Step 4)',
+    designation: 'Delivery & Courier Coordinator',
+    menus: ['dashboard', 'desk_delivery_dispatch', 'orders', 'delivery', 'returns'],
     orders: ['shipping', 'order_return'],
   },
   {
@@ -88,10 +89,10 @@ const QUICK_ROLE_TEMPLATES: {
 
 export const AdminAdmins: React.FC = () => {
   const { currentUser, staffProfile } = useAuth();
-  const [staffList, setStaffList] = useState<StaffAccount[]>(() => staffService.getLocalStaff());
-  const [loginLogs, setLoginLogs] = useState<StaffLoginLog[]>(() => staffService.getLocalLogs());
-  const [orders, setOrders] = useState<Order[]>(() => orderService.getLocalOrders());
-  const [loading, setLoading] = useState(true);
+  const [staffList, setStaffList] = useState<StaffAccount[]>(() => staffService.getInstantStaff());
+  const [loginLogs, setLoginLogs] = useState<StaffLoginLog[]>(() => staffService.getInstantLogs());
+  const [orders, setOrders] = useState<Order[]>(() => orderService.getInstantOrders());
+  const [loading, setLoading] = useState(() => staffService.getInstantStaff().length === 0);
 
   // Left form state
   const [editingStaff, setEditingStaff] = useState<StaffAccount | null>(null);
@@ -115,23 +116,18 @@ export const AdminAdmins: React.FC = () => {
   const [historyTab, setHistoryTab] = useState<'logins' | 'approvals'>('logins');
 
   useEffect(() => {
-    setLoading(true);
-    staffService
-      .fetchAllStaff()
-      .then(setStaffList)
-      .finally(() => setLoading(false));
-
-    orderService.getAllOrdersAdmin().then(setOrders).catch(() => {});
-
-    const unsubStaff = staffService.subscribeToStaff(setStaffList);
+    if (staffList.length === 0) setLoading(true);
+    const unsubStaff = staffService.subscribeToStaff((list) => {
+      setStaffList(list);
+      setLoading(false);
+    });
     const unsubLogs = staffService.subscribeToLogs(setLoginLogs);
-    const handleOrders = () => setOrders(orderService.getLocalOrders());
-    window.addEventListener('mf_orders_updated', handleOrders);
+    const unsubOrders = orderService.subscribeToAllOrdersAdmin(setOrders);
 
     return () => {
       unsubStaff();
       unsubLogs();
-      window.removeEventListener('mf_orders_updated', handleOrders);
+      unsubOrders();
     };
   }, []);
 
@@ -359,23 +355,15 @@ export const AdminAdmins: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Page Title Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-neutral-900">
-            স্টাফ ম্যানেজমেন্ট &amp; রোল পারমিশন (Staff Roles)
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Create team logins with exact Menu &amp; Order Action permissions (Approve, Payment Verify, Packaging, Shipping, Return, Cancel).
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="px-3 py-1.5 bg-white border border-neutral-200 rounded-lg text-xs font-bold text-neutral-700 tabular-nums">
+      <AdminPageHeader
+        title="Staff & Role Permissions"
+        subtitle="Create team logins with Menu & Order Action permissions."
+        actions={
+          <span className="px-3 py-1.5 bg-white border border-neutral-200 rounded-lg text-xs font-bold text-neutral-700 tabular-nums shrink-0">
             {activeUsersCount} Active Users
           </span>
-        </div>
-      </div>
+        }
+      />
 
       {/* Main Split Grid matching reference layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">

@@ -28,6 +28,15 @@ const pushedInMemory = new Set<string>();
 const publishedIdsLock = new Set<string>();
 const recentPublishedSigs = new Map<string, number>();
 
+// Shared singleton live notifications state (prevents stale localStorage flash on load)
+let liveNotifications: AppNotification[] | null = null;
+const notificationsListeners = new Set<(items: AppNotification[]) => void>();
+let sharedFeedUnsub: Unsubscribe | null = null;
+let sharedCollectionUnsub: Unsubscribe | null = null;
+let lastFeedItems: AppNotification[] = [];
+let lastCollectionItems: AppNotification[] = [];
+const sessionOptimisticNotifs = new Map<string, AppNotification>();
+
 export const getCustomerDeviceId = (): string => {
   if (typeof window === 'undefined') return 'SERVER';
   try {
@@ -92,6 +101,7 @@ const getLocalOrderNumbersAndPhones = (): { orderNumbers: string[]; phones: stri
 };
 
 export const getLocalCachedNotifications = (): AppNotification[] => {
+  if (liveNotifications !== null) return liveNotifications;
   try {
     const raw = localStorage.getItem(LOCAL_NOTIFS_KEY);
     if (raw) {
@@ -106,18 +116,38 @@ export const getLocalCachedNotifications = (): AppNotification[] => {
   return [];
 };
 
-const saveLocalCachedNotifications = (list: AppNotification[]) => {
+const persistNotificationsBackup = (list: AppNotification[]) => {
   try {
     const sorted = [...list]
       .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
       .slice(0, MAX_FEED_ITEMS);
     localStorage.setItem(LOCAL_NOTIFS_KEY, JSON.stringify(sorted));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('selvee_notifications_updated', { detail: sorted }));
-    }
   } catch {
     // ignore
   }
+};
+
+const emitNotificationsState = () => {
+  const map = new Map<string, AppNotification>();
+  lastFeedItems.forEach((n) => {
+    if (n?.id) map.set(n.id, n);
+  });
+  lastCollectionItems.forEach((n) => {
+    if (n?.id) map.set(n.id, n);
+  });
+  sessionOptimisticNotifs.forEach((n, id) => {
+    if (map.has(id)) {
+      sessionOptimisticNotifs.delete(id);
+    } else {
+      map.set(id, n);
+    }
+  });
+  const sorted = Array.from(map.values())
+    .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
+    .slice(0, MAX_FEED_ITEMS);
+  liveNotifications = sorted;
+  persistNotificationsBackup(sorted);
+  notificationsListeners.forEach((cb) => cb(sorted));
 };
 
 export const getReadNotificationIds = (): Set<string> => {
@@ -451,6 +481,10 @@ const ORDER_STATUS_MESSAGES: Record<OrderStatus, { title: string; body: string; 
 };
 
 export const notificationService = {
+  getInstantNotifications(): AppNotification[] {
+    return liveNotifications ?? [];
+  },
+
   async publishNotification(input: {
     id?: string;
     type: NotificationType;
@@ -471,11 +505,11 @@ export const notificationService = {
       input.id ||
       `notif-${now.toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
 
-    const existingLocal = getLocalCachedNotifications();
+    const existingLive = liveNotifications ?? [];
     if (input.id) {
-      const alreadyLocal = existingLocal.find((n) => n.id === id);
-      if (publishedIdsLock.has(id) || alreadyLocal) {
-        return alreadyLocal || {
+      const alreadyLive = existingLive.find((n) => n.id === id);
+      if (publishedIdsLock.has(id) || alreadyLive) {
+        return alreadyLive || {
           id,
           type: input.type,
           title: input.title.trim(),
@@ -490,7 +524,7 @@ export const notificationService = {
     const contentSig = `${input.type}|${input.title.trim()}|${input.message.trim()}|${input.targetOrderNumber || ''}`;
     const lastPub = recentPublishedSigs.get(contentSig);
     if (lastPub && now - lastPub < 15000) {
-      const existingMatch = existingLocal.find((n) => n.title === input.title.trim() && n.message === input.message.trim());
+      const existingMatch = existingLive.find((n) => n.title === input.title.trim() && n.message === input.message.trim());
       if (existingMatch) return existingMatch;
     }
     publishedIdsLock.add(id);
@@ -515,12 +549,12 @@ export const notificationService = {
       createdBy: input.createdBy || 'system',
     };
 
-    // 1. Update local cache immediately (skip authorized_devices on non-admin browsers)
+    // 1. Update live memory optimistically (skip authorized_devices on non-admin browsers)
     const hasAdminDevice =
       typeof window !== 'undefined' && Boolean(localStorage.getItem('selvee_admin_device_id_v2'));
     if (notif.audience !== 'authorized_devices' || hasAdminDevice) {
-      const mergedLocal = [notif, ...existingLocal.filter((n) => n.id !== id)].slice(0, MAX_FEED_ITEMS);
-      saveLocalCachedNotifications(mergedLocal);
+      sessionOptimisticNotifs.set(id, notif);
+      emitNotificationsState();
     }
 
     // 2. Sequentially queue write to settings/notifications_feed to avoid concurrent overwrite races
@@ -577,73 +611,53 @@ export const notificationService = {
   },
 
   subscribeToAllNotifications(callback: (items: AppNotification[]) => void): Unsubscribe {
-    const mergeAndEmit = (incoming: AppNotification[]) => {
-      const map = new Map<string, AppNotification>();
-      getLocalCachedNotifications().forEach((n) => {
-        if (n?.id) map.set(n.id, n);
-      });
-      incoming.forEach((n) => {
-        if (n?.id) map.set(n.id, n);
-      });
-      const sorted = Array.from(map.values())
-        .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
-        .slice(0, MAX_FEED_ITEMS);
-      saveLocalCachedNotifications(sorted);
-      callback(sorted);
-    };
-
-    // Immediate emission from local cache
-    callback(getLocalCachedNotifications());
-
-    const handleLocal = () => {
-      callback(getLocalCachedNotifications());
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('selvee_notifications_updated', handleLocal);
+    notificationsListeners.add(callback);
+    if (liveNotifications !== null) {
+      callback(liveNotifications);
     }
 
-    // Real-time listener on settings/notifications_feed (always live across devices)
-    const unsubFeed = onSnapshot(
-      FEED_DOC_PATH,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.items)) {
-          const items = (snap.data().items as AppNotification[]).filter((i) => i && i.id);
-          mergeAndEmit(items);
-        }
-      },
-      (err) => {
-        console.warn('Notifications feed listener notice:', err);
-      }
-    );
-
-    // Secondary real-time listener on /notifications collection
-    let unsubCollection: Unsubscribe = () => {};
-    try {
-      const q = query(collection(db, 'notifications'), orderBy('createdAtMs', 'desc'), limit(40));
-      unsubCollection = onSnapshot(
-        q,
+    if (!sharedFeedUnsub) {
+      sharedFeedUnsub = onSnapshot(
+        FEED_DOC_PATH,
         (snap) => {
-          const items: AppNotification[] = [];
-          snap.forEach((d) => {
-            const data = d.data() as AppNotification;
-            items.push({ ...data, id: d.id });
-          });
-          if (items.length > 0) mergeAndEmit(items);
+          if (snap.exists() && Array.isArray(snap.data()?.items)) {
+            lastFeedItems = (snap.data().items as AppNotification[]).filter((i) => i && i.id);
+          } else {
+            lastFeedItems = [];
+          }
+          emitNotificationsState();
         },
-        () => {
-          // Silently rely on notifications_feed if /notifications rules aren't deployed yet
+        (err) => {
+          console.warn('Notifications feed listener notice:', err);
         }
       );
-    } catch {
-      // ignore
+    }
+
+    if (!sharedCollectionUnsub) {
+      try {
+        const q = query(collection(db, 'notifications'), orderBy('createdAtMs', 'desc'), limit(40));
+        sharedCollectionUnsub = onSnapshot(
+          q,
+          (snap) => {
+            const items: AppNotification[] = [];
+            snap.forEach((d) => {
+              const data = d.data() as AppNotification;
+              items.push({ ...data, id: d.id });
+            });
+            lastCollectionItems = items;
+            emitNotificationsState();
+          },
+          () => {
+            // Silently rely on notifications_feed if /notifications rules aren't deployed yet
+          }
+        );
+      } catch {
+        sharedCollectionUnsub = () => {};
+      }
     }
 
     return () => {
-      unsubFeed();
-      unsubCollection();
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('selvee_notifications_updated', handleLocal);
-      }
+      notificationsListeners.delete(callback);
     };
   },
 
@@ -692,6 +706,28 @@ export const notificationService = {
       actionUrl: '/admin?tab=orders',
       important: true,
       createdBy: 'order-system',
+    });
+  },
+
+  async notifyAdminWorkflowAlert(params: {
+    id?: string;
+    title: string;
+    message: string;
+    targetOrderNumber?: string;
+    actionUrl?: string;
+    important?: boolean;
+    createdBy?: string;
+  }) {
+    return this.publishNotification({
+      id: params.id,
+      type: 'admin_workflow_alert',
+      title: params.title,
+      message: params.message,
+      audience: 'authorized_devices',
+      targetOrderNumber: params.targetOrderNumber,
+      actionUrl: params.actionUrl || '/admin?tab=pipeline',
+      important: Boolean(params.important),
+      createdBy: params.createdBy || 'workflow-system',
     });
   },
 

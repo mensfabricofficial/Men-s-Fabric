@@ -382,12 +382,12 @@ export const NotificationProvider: React.FC<{
     permission === 'granted' &&
     (isAdmin ? isApprovedAdminDevice : !isCustomerDeviceBlocked);
 
-  const localOrders = orderService.getLocalOrders();
+  const liveOrders = orderService.getInstantOrders();
   const customerIdentity = {
     uid: currentUser?.uid,
     email: currentUser?.email || undefined,
     phone: customerProfile?.phone || undefined,
-    orderNumbers: localOrders.map((o) => o.orderNumber).filter(Boolean),
+    orderNumbers: liveOrders.map((o) => o.orderNumber).filter(Boolean),
     isAdmin,
     isApprovedAdminDevice,
     emailVerified: isWaitingProfile ? false : isVerifiedAccount,

@@ -4,11 +4,12 @@ import { Category } from '../types';
 import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminCategories: React.FC = () => {
   const { currentUser } = useAuth();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(() => productService.getInstantCategories() ?? []);
+  const [loading, setLoading] = useState(() => productService.getInstantCategories() === null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
@@ -24,18 +25,12 @@ export const AdminCategories: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const loadCategories = async () => {
-    setLoading(true);
-    try {
-      const data = await productService.getCategories();
-      setCategories(data);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadCategories();
+    const unsub = productService.subscribeToCategories((list) => {
+      setCategories(list);
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   const openAddModal = () => {
@@ -108,11 +103,9 @@ export const AdminCategories: React.FC = () => {
       }
       setModalOpen(false);
       setTimeout(() => setActionToast(null), 3000);
-      await loadCategories();
     } catch (err: any) {
       console.warn('Category save notice:', err);
       setModalOpen(false);
-      await loadCategories();
     } finally {
       setSaving(false);
     }
@@ -150,26 +143,19 @@ export const AdminCategories: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Category Management
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Organize menswear into Panjabi, Shirts, Casuals, Pants, and collections.
-          </p>
-        </div>
-
-        <button
-          onClick={openAddModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Category</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Category Management"
+        subtitle="Organize menswear into Panjabi, Shirts, Casuals, Pants & collections"
+        actions={
+          <button
+            onClick={openAddModal}
+            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Category</span>
+          </button>
+        }
+      />
 
       {/* Categories Grid/Table */}
       <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs">

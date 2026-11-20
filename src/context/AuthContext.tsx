@@ -387,8 +387,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsAdmin(false);
           setIsSuperAdmin(false);
         } else {
-          setStaffSession(latest);
-          setIsSuperAdmin(Boolean(latest.isSuperAdmin || latest.fullAccess || latest.role === 'super_admin'));
+          setStaffSession((prev) =>
+            prev && JSON.stringify(prev) === JSON.stringify(latest) ? prev : latest
+          );
+          const nextSuper = Boolean(latest.isSuperAdmin || latest.fullAccess || latest.role === 'super_admin');
+          setIsSuperAdmin((prev) => (prev === nextSuper ? prev : nextSuper));
           if (readStoredStaffSession()) {
             try {
               localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(latest));

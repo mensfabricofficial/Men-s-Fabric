@@ -17,7 +17,7 @@ import { useWishlist } from '../../context/WishlistContext';
 import { useAuth } from '../../context/AuthContext';
 import { Category } from '../../types';
 import { productService } from '../../services/productService';
-import { settingsService, getLocalSettings } from '../../services/settingsService';
+import { settingsService, defaultSettings } from '../../services/settingsService';
 
 import { BrandLogo } from '../common/BrandLogo';
 import { FloatingInput } from '../common/FloatingInput';
@@ -37,8 +37,9 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<Category[]>(() => (productService.getInstantCategories() || []).filter((c) => c.active));
-  const [announcement, setAnnouncement] = useState(() => getLocalSettings().announcementText || 'Welcome to Selvee — Save 5% on online payment!');
-  const [announcementActive, setAnnouncementActive] = useState(() => getLocalSettings().announcementActive !== false);
+  const initialSettings = settingsService.getInstantSettings() || defaultSettings;
+  const [announcement, setAnnouncement] = useState(() => initialSettings.announcementText || 'Welcome to Selvee — Save 5% on online payment!');
+  const [announcementActive, setAnnouncementActive] = useState(() => initialSettings.announcementActive !== false);
   const [categoriesDropdownOpen, setCategoriesDropdownOpen] = useState(false);
 
   useEffect(() => {

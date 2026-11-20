@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Check, ShieldAlert, FileText, RefreshCw, Phone, MessageCircle, ArrowRight } from 'lucide-react';
+import { Search, Check, ShieldAlert, FileText, Phone, MessageCircle, ArrowRight } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Order, OrderStatus, SiteSettings } from '../types';
 import { orderService } from '../services/orderService';
-import { settingsService, getLocalSettings } from '../services/settingsService';
+import { settingsService, defaultSettings } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { FloatingInput } from '../components/common/FloatingInput';
@@ -36,7 +36,7 @@ const formatDate = (ts: any): string => {
 
 export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, onNavigate }) => {
   const { currentUser } = useAuth();
-  const [settings, setSettings] = useState<SiteSettings>(() => getLocalSettings());
+  const [settings, setSettings] = useState<SiteSettings>(() => settingsService.getInstantSettings() || defaultSettings);
   const [orderNumber, setOrderNumber] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
@@ -106,8 +106,8 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           // fallback below
         }
       }
-      const localList = orderService.getLocalOrders();
-      setRecentOrders(localList.slice(0, 4));
+      const instantList = orderService.getInstantOrders();
+      setRecentOrders(instantList.slice(0, 4));
     };
     void loadRecent();
   }, [currentUser]);
@@ -372,16 +372,6 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
               </div>
 
               <div className="flex items-center gap-2 self-start sm:self-auto">
-                <button
-                  type="button"
-                  onClick={() => performTrack(order.orderNumber, order.id)}
-                  disabled={loading}
-                  title="Refresh live status"
-                  className="px-3 py-2 border border-neutral-200 hover:border-neutral-400 text-neutral-700 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  <span>Refresh</span>
-                </button>
                 <button
                   type="button"
                   onClick={() => setIsInvoiceOpen(true)}

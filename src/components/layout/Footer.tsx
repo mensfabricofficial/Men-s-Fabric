@@ -13,7 +13,7 @@ import {
   Youtube 
 } from 'lucide-react';
 import { SiteSettings } from '../../types';
-import { settingsService, getLocalSettings } from '../../services/settingsService';
+import { settingsService, defaultSettings } from '../../services/settingsService';
 
 import { BrandLogo } from '../common/BrandLogo';
 
@@ -22,7 +22,7 @@ interface FooterProps {
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
-  const [settings, setSettings] = useState<SiteSettings>(() => getLocalSettings());
+  const [settings, setSettings] = useState<SiteSettings>(() => settingsService.getInstantSettings() || defaultSettings);
 
   useEffect(() => {
     const unsub = settingsService.subscribeToSettings(setSettings);

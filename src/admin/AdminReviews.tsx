@@ -3,24 +3,19 @@ import { Star, Check, X, Trash2, MessageSquare } from 'lucide-react';
 import { Review } from '../types';
 import { settingsService } from '../services/settingsService';
 import { formatDateTime } from '../lib/dateFormat';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminReviews: React.FC = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const loadReviews = async (showSpinner = true) => {
-    if (showSpinner) setLoading(true);
-    try {
-      const data = await settingsService.getAllReviewsAdmin();
-      setReviews(data);
-    } finally {
-      if (showSpinner) setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadReviews(true);
+    const unsub = settingsService.subscribeToReviewsAdmin((data) => {
+      setReviews(data);
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   const handleToggleApproval = async (r: Review) => {
@@ -29,7 +24,6 @@ export const AdminReviews: React.FC = () => {
     setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: nextApproved } : item)));
     try {
       await settingsService.updateReviewApproval(r.id, nextApproved);
-      await loadReviews(false);
     } catch (err) {
       console.error('Failed to update review approval:', err);
       setReviews((prev) => prev.map((item) => (item.id === r.id ? { ...item, approved: r.approved } : item)));
@@ -43,7 +37,6 @@ export const AdminReviews: React.FC = () => {
     setReviews((prev) => prev.filter((item) => item.id !== id));
     try {
       await settingsService.deleteReview(id);
-      await loadReviews(false);
     } catch (err) {
       console.error('Failed to delete review:', err);
       setReviews(prevList);
@@ -54,15 +47,10 @@ export const AdminReviews: React.FC = () => {
   return (
     <div className="space-y-6">
       
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-          Customer Reviews Moderation
-        </h1>
-        <p className="text-xs text-neutral-500 mt-0.5">
-          Approve, review, or remove submitted customer testimonials and ratings.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Customer Reviews Moderation"
+        subtitle="Approve, review, or remove customer testimonials & ratings."
+      />
 
       {errorMsg && (
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg font-medium">

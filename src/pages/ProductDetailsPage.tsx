@@ -19,7 +19,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Product, Review } from '../types';
 import { productService } from '../services/productService';
-import { settingsService, getLocalDeliveryZones } from '../services/settingsService';
+import { settingsService } from '../services/settingsService';
 import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -48,6 +48,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [quantity, setQuantity] = useState(1);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [deliveryZones, setDeliveryZones] = useState(() => settingsService.getInstantDeliveryZones());
   
   // Dynamic Size Guides
   const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
@@ -64,6 +65,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState(false);
   const [reviewError, setReviewError] = useState('');
+
+  useEffect(() => {
+    return settingsService.subscribeToDeliveryZones(setDeliveryZones);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -513,9 +518,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               <div className="flex items-center gap-2.5">
                 <Truck className="w-4 h-4 text-black shrink-0" />
                 {(() => {
-                  const zones = getLocalDeliveryZones();
-                  const dh = zones.find((z) => z.id === 'dhaka');
-                  const out = zones.find((z) => z.id === 'outside-dhaka');
+                  const dh = deliveryZones.find((z) => z.id === 'dhaka');
+                  const out = deliveryZones.find((z) => z.id === 'outside-dhaka');
                   return (
                     <span>
                       Delivery: <b>৳{dh?.charge ?? 70} Inside Dhaka</b> ({dh?.estimatedDays || '1-2 days'}), <b>৳{out?.charge ?? 130} Outside Dhaka</b> ({out?.estimatedDays || '2-4 days'})

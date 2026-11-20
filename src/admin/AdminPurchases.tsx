@@ -5,12 +5,13 @@ import { posService } from '../services/posService';
 import { productService } from '../services/productService';
 import { useAuth } from '../context/AuthContext';
 import { getLocalDateKey, getLocalMonthKey, normalizeEntryDateKey } from '../lib/accountingUtils';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminPurchases: React.FC = () => {
   const { currentUser } = useAuth();
-  const [purchases, setPurchases] = useState<PurchaseEntry[]>(() => posService.getLocalPurchases());
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => posService.getLocalSuppliers());
-  const [products, setProducts] = useState<Product[]>(() => productService.getLocalProducts());
+  const [purchases, setPurchases] = useState<PurchaseEntry[]>(() => posService.getInstantPurchases());
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => posService.getInstantSuppliers());
+  const [products, setProducts] = useState<Product[]>(() => productService.getInstantAllProducts());
 
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -124,24 +125,20 @@ export const AdminPurchases: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Stock Purchases &amp; Inventory Restock
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Log supplier purchase bills, track due balances, and automatically update catalog stock &amp; cost price.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openNewModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-2 w-fit"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Purchase Entry</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Stock Purchases"
+        subtitle="Log supplier bills, track dues & auto-update catalog stock"
+        actions={
+          <button
+            type="button"
+            onClick={openNewModal}
+            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Purchase Entry</span>
+          </button>
+        }
+      />
 
       {/* Summary KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 tabular-nums">
@@ -208,7 +205,10 @@ export const AdminPurchases: React.FC = () => {
                   <tr key={pur.id} className="hover:bg-neutral-50/50">
                     <td className="p-3.5 whitespace-nowrap">
                       <span className="font-mono font-bold text-neutral-900 block">{pur.purchaseNumber}</span>
-                      <span className="text-[11px] font-mono text-neutral-400">{pur.date}</span>
+                      <span className="text-[11px] font-mono text-neutral-400 block">{pur.date}</span>
+                      {pur.createdBy && (
+                        <span className="text-[10px] text-neutral-400">By: {pur.createdBy}</span>
+                      )}
                     </td>
                     <td className="p-3.5">
                       <span className="font-semibold text-neutral-900">{pur.supplierName}</span>
@@ -218,7 +218,9 @@ export const AdminPurchases: React.FC = () => {
                       <div className="space-y-0.5">
                         {pur.items.map((it, i) => (
                           <div key={i} className="text-neutral-700">
-                            {it.productName} — <b>{it.quantity}</b> pcs @ ৳{it.unitCost}
+                            {it.productName}
+                            {it.sku ? <span className="ml-1 font-mono text-[10px] text-neutral-400">({it.sku})</span> : null}
+                            {' '}— <b>{it.quantity}</b> pcs @ ৳{it.unitCost}
                           </div>
                         ))}
                       </div>

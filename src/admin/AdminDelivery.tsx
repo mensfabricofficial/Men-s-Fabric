@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Truck, Plus, Edit, Trash2, X, CheckCircle, AlertCircle, Save } from 'lucide-react';
 import { DeliveryZone } from '../types';
 import { settingsService } from '../services/settingsService';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminDelivery: React.FC = () => {
-  const [zones, setZones] = useState<DeliveryZone[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [zones, setZones] = useState<DeliveryZone[]>(() => settingsService.getInstantDeliveryZones());
+  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingZone, setEditingZone] = useState<DeliveryZone | null>(null);
 
@@ -16,8 +17,12 @@ export const AdminDelivery: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   // Quick fee inline states
-  const [quickDhaka, setQuickDhaka] = useState<number>(70);
-  const [quickOutside, setQuickOutside] = useState<number>(130);
+  const [quickDhaka, setQuickDhaka] = useState<number>(
+    () => settingsService.getInstantDeliveryZones().find((z) => z.id === 'dhaka')?.charge ?? 70
+  );
+  const [quickOutside, setQuickOutside] = useState<number>(
+    () => settingsService.getInstantDeliveryZones().find((z) => z.id === 'outside-dhaka')?.charge ?? 130
+  );
   const [quickSaving, setQuickSaving] = useState(false);
 
   // In-UI Feedback
@@ -29,32 +34,16 @@ export const AdminDelivery: React.FC = () => {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadZones = async () => {
-    setLoading(true);
-    try {
-      const data = await settingsService.getDeliveryZones();
-      if (data.length === 0) {
-        const defaults: DeliveryZone[] = [
-          { id: 'dhaka', name: 'Inside Dhaka City', charge: 70, estimatedDays: '1 - 2 Days', active: true },
-          { id: 'outside-dhaka', name: 'Outside Dhaka (Nationwide)', charge: 130, estimatedDays: '2 - 4 Days', active: true },
-        ];
-        setZones(defaults);
-        setQuickDhaka(70);
-        setQuickOutside(130);
-      } else {
-        setZones(data);
-        const dh = data.find((z) => z.id === 'dhaka');
-        const out = data.find((z) => z.id === 'outside-dhaka');
-        if (dh) setQuickDhaka(dh.charge);
-        if (out) setQuickOutside(out.charge);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadZones();
+    const unsub = settingsService.subscribeToDeliveryZones((data) => {
+      setZones(data);
+      const dh = data.find((z) => z.id === 'dhaka');
+      const out = data.find((z) => z.id === 'outside-dhaka');
+      if (dh) setQuickDhaka(dh.charge);
+      if (out) setQuickOutside(out.charge);
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   const openAddModal = () => {
@@ -90,7 +79,6 @@ export const AdminDelivery: React.FC = () => {
       );
       setModalOpen(false);
       showToast(`Delivery zone "${name.trim()}" saved successfully!`);
-      await loadZones();
     } catch {
       showToast('Failed to save delivery zone.', 'error');
     } finally {
@@ -120,7 +108,6 @@ export const AdminDelivery: React.FC = () => {
         'outside-dhaka'
       );
       showToast('Delivery charges updated! Inside Dhaka: ৳' + quickDhaka + ', Outside Dhaka: ৳' + quickOutside);
-      await loadZones();
     } catch {
       showToast('Failed to update quick delivery fees.', 'error');
     } finally {
@@ -133,7 +120,6 @@ export const AdminDelivery: React.FC = () => {
       await settingsService.deleteDeliveryZone(id);
       setDeleteConfirmId(null);
       showToast('Delivery zone removed successfully.');
-      await loadZones();
     } catch {
       showToast('Failed to delete delivery zone.', 'error');
     }
@@ -142,25 +128,19 @@ export const AdminDelivery: React.FC = () => {
   return (
     <div className="space-y-6">
       
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Delivery & Shipping Configuration
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Configure delivery fees and estimated transit time. Changes apply in real time to customer cart and checkout.
-          </p>
-        </div>
-
-        <button
-          onClick={openAddModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm w-fit"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Custom Zone</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Delivery & Shipping Configuration"
+        subtitle="Configure delivery fees & transit times for cart and checkout."
+        actions={
+          <button
+            onClick={openAddModal}
+            className="px-3.5 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Custom Zone</span>
+          </button>
+        }
+      />
 
       {/* In-UI Notification Toast */}
       {toast && (

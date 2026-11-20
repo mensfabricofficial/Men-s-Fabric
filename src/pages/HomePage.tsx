@@ -13,7 +13,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const initialProducts = productService.getInstantActiveProducts();
   const initialCategories = productService.getInstantCategories();
 
-  const [banners, setBanners] = useState<Banner[]>(() => settingsService.getLocalBanners().filter((b) => b.active));
+  const [banners, setBanners] = useState<Banner[]>(() => settingsService.getInstantBanners(true));
   const [categories, setCategories] = useState<Category[]>(() => (initialCategories || []).filter((c) => c.active));
   const [newArrivals, setNewArrivals] = useState<Product[]>(() => {
     if (!initialProducts) return [];

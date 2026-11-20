@@ -22,6 +22,7 @@ import { orderService } from '../services/orderService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { formatDateTime } from '../lib/dateFormat';
+import { AdminPageHeader } from './AdminLayout';
 
 interface TargetCustomer {
   key: string;
@@ -184,22 +185,16 @@ export const AdminNotifications: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-6xl">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Browser Notifications
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Send real-time offers, promo codes, and important store browser notifications to logged-in customers.
-          </p>
-        </div>
-
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-900">
-          <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
-          <span>Order &amp; Coupon updates auto-notify customers live</span>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="Browser Notifications"
+        subtitle="Send real-time offers, promo codes & alerts to customers."
+        actions={
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-900 shrink-0">
+            <Smartphone className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Order &amp; Coupon auto-notify live</span>
+          </div>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left: Broadcast Composer */}

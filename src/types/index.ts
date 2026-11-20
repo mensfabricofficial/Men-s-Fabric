@@ -36,6 +36,8 @@ export interface Product {
   colors: ProductColor[];
   variants?: ProductVariant[];
   totalStock: number;
+  minStock?: number;
+  damagedStock?: number;
   weight?: string;
   tags?: string[];
   featured: boolean;
@@ -48,6 +50,32 @@ export interface Product {
   salesCount?: number;
   createdAt?: any;
   updatedAt?: any;
+}
+
+export type StockMovementType =
+  | 'purchase'
+  | 'sale'
+  | 'return'
+  | 'manual'
+  | 'damaged'
+  | 'adjustment';
+
+export interface StockMovementEntry {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  size?: string;
+  color?: string;
+  previousStock: number;
+  change: number;
+  newStock: number;
+  type: StockMovementType;
+  reason?: string;
+  referenceId?: string;
+  staffName: string;
+  date: string; // YYYY-MM-DD
+  timestamp: string;
 }
 
 export interface Category {
@@ -130,7 +158,19 @@ export interface OrderTimeline {
   note?: string;
 }
 
-export type PaymentMethod = 'cod' | 'bkash' | 'nagad' | 'rocket';
+export type PaymentMethod = 'cod' | 'cash' | 'bkash' | 'nagad' | 'rocket' | 'due';
+
+export interface CustomerPaymentLog {
+  id: string;
+  amount: number;
+  method: PaymentMethod;
+  trxId?: string;
+  senderNumber?: string;
+  receivedBy: string;
+  note?: string;
+  date: string; // YYYY-MM-DD
+  timestamp: string;
+}
 
 export interface PaymentDetails {
   method: PaymentMethod;
@@ -154,8 +194,30 @@ export type OrderPipelineStage =
   | 'returned'
   | 'cancelled';
 
+export type OrderPipelineSubStatus =
+  | 'NEW'
+  | 'ORDER_CHECKING'
+  | 'ORDER_CHECKED'
+  | 'PAYMENT_PENDING'
+  | 'PAYMENT_VERIFIED'
+  | 'ORDER_APPROVED'
+  | 'STOCK_PENDING'
+  | 'STOCK_APPROVED'
+  | 'PACKING'
+  | 'PACKED'
+  | 'SHIPPED'
+  | 'OUT_FOR_DELIVERY'
+  | 'DELIVERED'
+  | 'CANCELLED'
+  | 'RETURN_REQUESTED'
+  | 'RETURN_APPROVED'
+  | 'RETURNED'
+  | 'REFUND_PENDING'
+  | 'REFUNDED';
+
 export interface OrderPipelineStepLog {
   stage: OrderPipelineStage;
+  subStatus?: OrderPipelineSubStatus;
   handlerName: string;
   handlerEmail?: string;
   action: string;
@@ -165,27 +227,44 @@ export interface OrderPipelineStepLog {
 
 export interface OrderPipelineData {
   currentStage: OrderPipelineStage;
+  subStatus?: OrderPipelineSubStatus;
   verifiedBy?: string;
   verifiedAt?: string;
   verificationNote?: string;
   paymentVerifiedBy?: string;
   paymentVerifiedAt?: string;
+  verifiedPaymentAmount?: number;
   paymentNote?: string;
   inventoryHandledBy?: string;
   inventoryHandledAt?: string;
+  stockApprovedBy?: string;
+  stockApprovedAt?: string;
   inventoryNote?: string;
+  packedBy?: string;
+  packedAt?: string;
   deliveryHandledBy?: string;
   deliveryDispatchedAt?: string;
+  shippedBy?: string;
+  shippedAt?: string;
   deliveredAt?: string;
   returnedBy?: string;
   returnedAt?: string;
   returnNote?: string;
+  refundedBy?: string;
+  refundedAt?: string;
+  refundAmount?: number;
   cancelledBy?: string;
   cancelledAt?: string;
+  cancelledReason?: string;
   cancelNote?: string;
   courierName?: string;
   trackingNumber?: string;
   deliveryNote?: string;
+  stockDeducted?: boolean;
+  stockDeductedAt?: string;
+  stockDeductedBy?: string;
+  stockRestored?: boolean;
+  stockRestoredAt?: string;
   handoffHistory?: OrderPipelineStepLog[];
 }
 
@@ -200,23 +279,30 @@ export interface PartnerDeskConfig {
 export type AdminTabId =
   | 'dashboard'
   | 'pos'
-  | 'pnl'
+  | 'desk_order_verify'
+  | 'desk_payment_verify'
+  | 'desk_stock_packing'
+  | 'desk_delivery_dispatch'
   | 'pipeline'
   | 'orders'
+  | 'sales_history'
+  | 'returns'
   | 'products'
+  | 'stock'
+  | 'categories'
   | 'purchases'
   | 'suppliers'
   | 'expenses'
-  | 'categories'
+  | 'pnl'
   | 'customers'
-  | 'reviews'
   | 'coupons'
   | 'delivery'
+  | 'reviews'
   | 'banners'
   | 'notifications'
-  | 'settings'
   | 'admins'
-  | 'audit';
+  | 'audit'
+  | 'settings';
 
 export type OrderActionPermission =
   | 'order_approve'
@@ -284,6 +370,11 @@ export interface Order {
   advanceGateway?: 'bkash' | 'nagad' | 'rocket';
   advanceAmount?: number;
   dueOnDelivery?: number;
+  paidAmount?: number;
+  dueAmount?: number;
+  paymentHistory?: CustomerPaymentLog[];
+  posCancelReason?: string;
+  deliveryRequired?: boolean;
   paymentStatus: PaymentStatus;
   orderStatus: OrderStatus;
   orderChannel?: 'online' | 'pos';
@@ -292,6 +383,32 @@ export interface Order {
   adminNotes?: string;
   createdAt: any;
   updatedAt: any;
+}
+
+export interface HeldPosSale {
+  id: string;
+  holdNumber: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  deliveryRequired: boolean;
+  deliveryZoneId?: string;
+  deliveryAddress?: string;
+  deliveryCharge: number;
+  items: OrderItem[];
+  subtotal: number;
+  discountType: 'fixed' | 'percent';
+  discountInput: number;
+  discount: number;
+  couponCode?: string;
+  couponDiscount: number;
+  total: number;
+  paymentMethod: PaymentMethod;
+  paidAmountInput?: number;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface Supplier {
@@ -354,6 +471,7 @@ export interface ExpenseEntry {
   category: ExpenseCategory;
   amount: number;
   date: string; // YYYY-MM-DD (Local calendar date)
+  time?: string; // HH:mm (24h local time)
   paymentMethod: 'cash' | 'bank' | 'bkash' | 'nagad' | 'rocket';
   paidBy?: string;
   reference?: string;
@@ -366,10 +484,64 @@ export interface ExpenseEntry {
 export interface SalesTargetsConfig {
   dailyAmountTarget: number;
   dailyPcsTarget: number;
+  dailyProfitTarget?: number;
+  dailyOrderTarget?: number;
   monthlyAmountTarget: number;
   monthlyPcsTarget: number;
   monthlyProfitTarget: number;
+  monthlyOrderTarget?: number;
+  lowStockThresholdDefault?: number;
   updatedAt?: string;
+}
+
+export interface TargetArchiveRecord {
+  id: string; // 'daily_YYYY-MM-DD' or 'monthly_YYYY-MM'
+  periodType: 'daily' | 'monthly';
+  periodKey: string; // 'YYYY-MM-DD' or 'YYYY-MM'
+  label: string;
+  targetAmount: number;
+  achievedAmount: number;
+  targetPcs: number;
+  achievedPcs: number;
+  targetProfit?: number;
+  achievedProfit: number;
+  amountPct: number;
+  pcsPct: number;
+  profitPct?: number;
+  orderCount: number;
+  status: 'achieved' | 'in_progress' | 'missed';
+  closedAt: string;
+}
+
+export interface SalesReturnItem {
+  productId: string;
+  productName: string;
+  size: string;
+  color: string;
+  quantity: number;
+  unitPrice: number;
+  unitCost?: number;
+  totalRefund: number;
+}
+
+export interface SalesReturnEntry {
+  id: string;
+  returnNumber: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  customerPhone: string;
+  returnType: 'full' | 'partial';
+  items: SalesReturnItem[];
+  totalRefundAmount: number;
+  totalCostReversed: number;
+  totalReturnedPcs: number;
+  restocked: boolean;
+  refundMethod: 'cash' | 'bkash' | 'nagad' | 'bank' | 'store_credit' | 'none';
+  reason: string;
+  date: string; // YYYY-MM-DD local
+  processedBy: string;
+  createdAt: string;
 }
 
 export interface Coupon {
@@ -473,6 +645,9 @@ export interface AuditLog {
   adminEmail: string;
   action: string;
   target: string;
+  entityType?: string;
+  beforeValue?: string;
+  afterValue?: string;
   details?: string;
   timestamp: any;
 }
@@ -484,7 +659,8 @@ export type NotificationType =
   | 'offer'
   | 'coupon'
   | 'announcement'
-  | 'admin_new_order';
+  | 'admin_new_order'
+  | 'admin_workflow_alert';
 
 export interface AppNotification {
   id: string;

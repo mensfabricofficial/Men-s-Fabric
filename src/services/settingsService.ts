@@ -135,7 +135,30 @@ const DEFAULT_DELIVERY_ZONES: DeliveryZone[] = [
   { id: 'outside-dhaka', name: 'Outside Dhaka (Nationwide)', charge: 130, estimatedDays: '2 - 4 Days', active: true },
 ];
 
+// Shared singleton live state (never emits stale localStorage before Firestore onSnapshot)
+let liveSettings: SiteSettings | null = null;
+let liveDeliveryZones: DeliveryZone[] | null = null;
+let liveAllBanners: Banner[] | null = null;
+let liveCoupons: Coupon[] | null = null;
+let liveReviewsAdmin: Review[] | null = null;
+let liveAuditLogs: AuditLog[] | null = null;
+
+const settingsListeners = new Set<(s: SiteSettings) => void>();
+const deliveryZonesListeners = new Set<(z: DeliveryZone[]) => void>();
+const bannersListeners = new Set<(b: Banner[]) => void>();
+const couponsListeners = new Set<(c: Coupon[]) => void>();
+const reviewsAdminListeners = new Set<(r: Review[]) => void>();
+const auditLogsListeners = new Set<(l: AuditLog[]) => void>();
+
+let sharedSettingsUnsub: Unsubscribe | null = null;
+let sharedDeliveryZonesUnsub: Unsubscribe | null = null;
+let sharedBannersUnsub: Unsubscribe | null = null;
+let sharedCouponsUnsub: Unsubscribe | null = null;
+let sharedReviewsAdminUnsub: Unsubscribe | null = null;
+let sharedAuditLogsUnsub: Unsubscribe | null = null;
+
 export const getLocalDeliveryZones = (): DeliveryZone[] => {
+  if (liveDeliveryZones !== null) return liveDeliveryZones;
   try {
     const raw = localStorage.getItem(LOCAL_DELIVERY_ZONES_KEY);
     if (raw) {
@@ -150,6 +173,8 @@ export const getLocalDeliveryZones = (): DeliveryZone[] => {
 
 export const saveLocalDeliveryZones = (zones: DeliveryZone[]) => {
   const sorted = sortDeliveryZones(zones);
+  liveDeliveryZones = sorted;
+  deliveryZonesListeners.forEach((cb) => cb(sorted));
   try {
     localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(sorted));
   } catch {
@@ -161,6 +186,7 @@ export const saveLocalDeliveryZones = (zones: DeliveryZone[]) => {
 };
 
 export const getLocalSettings = (): SiteSettings => {
+  if (liveSettings !== null) return liveSettings;
   try {
     const raw = localStorage.getItem(LOCAL_SETTINGS_KEY);
     if (raw) {
@@ -186,6 +212,8 @@ export const getLocalSettings = (): SiteSettings => {
 };
 
 export const saveLocalSettings = (settings: SiteSettings) => {
+  liveSettings = settings;
+  settingsListeners.forEach((cb) => cb(settings));
   try {
     localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(settings));
   } catch {
@@ -274,139 +302,128 @@ export const settingsService = {
     }
   },
 
-  // Realtime settings subscription
-  subscribeToSettings(callback: (settings: SiteSettings) => void): Unsubscribe {
-    // 1. Immediately emit local settings for 0ms page load
-    callback(getLocalSettings());
+  // Instant accessors returning hydrated live memory (never stale localStorage)
+  getInstantSettings(): SiteSettings | null {
+    return liveSettings;
+  },
 
-    // 2. Listen to local update events
-    const handleLocal = (e: any) => {
-      callback((e.detail as SiteSettings) || getLocalSettings());
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('mf_settings_updated', handleLocal);
+  getInstantBanners(activeOnly = true): Banner[] {
+    const list = liveAllBanners ?? [];
+    return activeOnly ? list.filter((b) => b.active) : list;
+  },
+
+  getInstantCoupons(): Coupon[] {
+    return liveCoupons ?? [];
+  },
+
+  getInstantDeliveryZones(): DeliveryZone[] {
+    return liveDeliveryZones ?? sortDeliveryZones(DEFAULT_DELIVERY_ZONES);
+  },
+
+  // Realtime settings subscription (shared Firestore persistentLocalCache stream)
+  subscribeToSettings(callback: (settings: SiteSettings) => void): Unsubscribe {
+    settingsListeners.add(callback);
+    if (liveSettings !== null) {
+      callback(liveSettings);
     }
 
-    // 3. Connect to Firestore realtime listener
-    let firestoreUnsub: (() => void) | null = null;
-    try {
-      firestoreUnsub = onSnapshot(
-        doc(db, 'settings', 'general'),
-        (snap) => {
-          if (snap.exists()) {
-            const data = snap.data();
-            const local = getLocalSettings();
-            const currentPay = local.paymentSettings || defaultPaymentSettings;
-            const merged = {
-              ...local,
-              ...data,
-              storeName: normalizeBrandText(data?.storeName, defaultSettings.storeName),
-              announcementText: normalizeBrandText(data?.announcementText, defaultSettings.announcementText),
-              storeDescription: normalizeBrandText(data?.storeDescription, defaultSettings.storeDescription),
-              paymentSettings: {
-                ...currentPay,
-                ...(data?.paymentSettings || {}),
-                bkash: { ...(currentPay.bkash || defaultPaymentSettings.bkash), ...(data?.paymentSettings?.bkash || {}) },
-                nagad: { ...(currentPay.nagad || defaultPaymentSettings.nagad), ...(data?.paymentSettings?.nagad || {}) },
-                rocket: { ...(currentPay.rocket || defaultPaymentSettings.rocket), ...(data?.paymentSettings?.rocket || {}) },
-              },
-            } as SiteSettings;
-            saveLocalSettings(merged);
-            callback(merged);
+    if (!sharedSettingsUnsub) {
+      try {
+        sharedSettingsUnsub = onSnapshot(
+          doc(db, 'settings', 'general'),
+          (snap) => {
+            if (snap.exists()) {
+              const data = snap.data();
+              const merged = {
+                ...defaultSettings,
+                ...data,
+                storeName: normalizeBrandText(data?.storeName, defaultSettings.storeName),
+                announcementText: normalizeBrandText(data?.announcementText, defaultSettings.announcementText),
+                storeDescription: normalizeBrandText(data?.storeDescription, defaultSettings.storeDescription),
+                paymentSettings: {
+                  ...defaultPaymentSettings,
+                  ...(data?.paymentSettings || {}),
+                  bkash: { ...defaultPaymentSettings.bkash, ...(data?.paymentSettings?.bkash || {}) },
+                  nagad: { ...defaultPaymentSettings.nagad, ...(data?.paymentSettings?.nagad || {}) },
+                  rocket: { ...defaultPaymentSettings.rocket, ...(data?.paymentSettings?.rocket || {}) },
+                },
+              } as SiteSettings;
+              liveSettings = merged;
+              try {
+                localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(merged));
+              } catch {
+                // ignore
+              }
+              settingsListeners.forEach((cb) => cb(merged));
+            } else if (liveSettings === null) {
+              liveSettings = defaultSettings;
+              settingsListeners.forEach((cb) => cb(defaultSettings));
+            }
+          },
+          (err) => {
+            console.warn('Realtime settings remote notice (using fallback):', err);
+            if (liveSettings === null) {
+              const fallback = getLocalSettings();
+              liveSettings = fallback;
+              settingsListeners.forEach((cb) => cb(fallback));
+            }
           }
-        },
-        (err) => {
-          console.warn('Realtime settings remote notice (using local-first):', err);
-        }
-      );
-    } catch (e) {
-      console.warn('Settings subscription exception:', e);
+        );
+      } catch (e) {
+        console.warn('Settings subscription exception:', e);
+      }
     }
 
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('mf_settings_updated', handleLocal);
-      }
-      if (firestoreUnsub) firestoreUnsub();
+      settingsListeners.delete(callback);
     };
   },
 
-  // Realtime banners subscription
-  subscribeToBanners(callback: (banners: Banner[]) => void): Unsubscribe {
-    const local = this.getLocalBanners();
-    if (local.length > 0) {
-      callback(local);
+  // Realtime banners subscription (shared single listener, no prefetch or stale localStorage race)
+  subscribeToBanners(callback: (banners: Banner[]) => void, activeOnly = true): Unsubscribe {
+    const wrapped = (all: Banner[]) => callback(activeOnly ? all.filter((b) => b.active) : all);
+    bannersListeners.add(wrapped);
+    if (liveAllBanners !== null) {
+      wrapped(liveAllBanners);
     }
 
-    const handleLocal = (e: any) => {
-      callback((e.detail as Banner[]) || this.getLocalBanners());
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('mf_banners_updated', handleLocal);
-    }
-
-    let remoteArrived = false;
-    let firestoreUnsub: (() => void) | null = null;
-    try {
-      const q = query(collection(db, 'banners'), where('active', '==', true));
-      firestoreUnsub = onSnapshot(
-        q,
-        (snap) => {
-          remoteArrived = true;
-          const list: Banner[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
-          list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-          this.saveLocalBanners(list);
-          callback(list);
-        },
-        (err) => {
-          console.warn('Realtime banners remote notice (using local-first):', err);
-        }
-      );
-    } catch {
-      // ignore
-    }
-
-    // Consume early HTML prefetch for banners if available
-    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
-    if (prefetch?.banners) {
-      Promise.resolve(prefetch.banners)
-        .then((rows) => {
-          if (remoteArrived || !Array.isArray(rows)) return;
-          const parseVal = (v: any): any => {
-            if (!v || typeof v !== 'object') return v;
-            if ('stringValue' in v) return v.stringValue;
-            if ('booleanValue' in v) return v.booleanValue;
-            if ('integerValue' in v) return Number(v.integerValue);
-            if ('doubleValue' in v) return Number(v.doubleValue);
-            return null;
-          };
-          const list: Banner[] = [];
-          for (const row of rows) {
-            const d = row?.document;
-            if (!d?.name || !d?.fields) continue;
-            const b: any = { id: d.name.split('/').pop() };
-            for (const k of Object.keys(d.fields)) b[k] = parseVal(d.fields[k]);
-            list.push(b as Banner);
-          }
-          if (list.length > 0) {
+    if (!sharedBannersUnsub) {
+      try {
+        sharedBannersUnsub = onSnapshot(
+          collection(db, 'banners'),
+          (snap) => {
+            const list: Banner[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
             list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-            this.saveLocalBanners(list);
-            callback(list);
+            liveAllBanners = list;
+            try {
+              localStorage.setItem(LOCAL_BANNERS_KEY, JSON.stringify(list));
+            } catch {
+              // ignore
+            }
+            bannersListeners.forEach((cb) => cb(list));
+          },
+          (err) => {
+            console.warn('Realtime banners remote notice:', err);
+            if (liveAllBanners === null) {
+              const fallback = this.getLocalBanners();
+              liveAllBanners = fallback;
+              bannersListeners.forEach((cb) => cb(fallback));
+            }
           }
-        })
-        .catch(() => {});
+        );
+      } catch {
+        // ignore
+      }
     }
 
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('mf_banners_updated', handleLocal);
-      }
-      if (firestoreUnsub) firestoreUnsub();
+      bannersListeners.delete(wrapped);
     };
   },
 
   getLocalBanners(): Banner[] {
+    if (liveAllBanners !== null) return liveAllBanners;
     try {
       const raw = localStorage.getItem(LOCAL_BANNERS_KEY);
       if (raw) {
@@ -420,13 +437,12 @@ export const settingsService = {
   },
 
   saveLocalBanners(list: Banner[]) {
+    liveAllBanners = list;
+    bannersListeners.forEach((cb) => cb(list));
     try {
       localStorage.setItem(LOCAL_BANNERS_KEY, JSON.stringify(list));
     } catch {
       // ignore
-    }
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('mf_banners_updated', { detail: list }));
     }
   },
 
@@ -520,6 +536,7 @@ export const settingsService = {
   },
 
   getLocalCoupons(): Coupon[] {
+    if (liveCoupons !== null) return liveCoupons;
     try {
       const raw = localStorage.getItem(LOCAL_COUPONS_KEY);
       if (raw) {
@@ -536,81 +553,56 @@ export const settingsService = {
   },
 
   saveLocalCoupons(list: Coupon[]) {
+    const consumed = getConsumedCouponSet();
+    const normalized = list.map((c) => this.normalizeCouponState(c, consumed));
+    liveCoupons = normalized;
+    couponsListeners.forEach((cb) => cb(normalized));
     try {
-      const consumed = getConsumedCouponSet();
-      const normalized = list.map((c) => this.normalizeCouponState(c, consumed));
       localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(normalized));
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('mf_coupons_updated', { detail: normalized }));
-      }
     } catch {
       // ignore
     }
   },
 
   subscribeToCoupons(callback: (coupons: Coupon[]) => void): Unsubscribe {
-    callback(this.getLocalCoupons());
-
-    const handleLocal = (e: any) => {
-      callback((e.detail as Coupon[]) || this.getLocalCoupons());
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('mf_coupons_updated', handleLocal);
+    couponsListeners.add(callback);
+    if (liveCoupons !== null) {
+      callback(liveCoupons);
     }
 
-    let firestoreUnsub: (() => void) | null = null;
-    try {
-      firestoreUnsub = onSnapshot(
-        collection(db, 'coupons'),
-        (snap) => {
-          const consumed = getConsumedCouponSet();
-          const remoteList: Coupon[] = [];
-          snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as Coupon));
-          const local = this.getLocalCoupons();
-          const mergedMap = new Map<string, Coupon>();
-          remoteList.forEach((c) => mergedMap.set(c.id, this.normalizeCouponState(c, consumed)));
-          local.forEach((c) => {
-            if (!mergedMap.has(c.id)) {
-              mergedMap.set(c.id, this.normalizeCouponState(c, consumed));
-            } else {
-              const remoteItem = mergedMap.get(c.id)!;
-              const maxUsed = Math.max(remoteItem.usedCount || 0, c.usedCount || 0);
-              const effLimit =
-                (remoteItem.discountType || c.discountType) === 'free_delivery'
-                  ? remoteItem.usageLimit || c.usageLimit || 1
-                  : remoteItem.usageLimit || c.usageLimit || 0;
-              const reachedLimit = Boolean(effLimit > 0 && maxUsed >= effLimit);
-              mergedMap.set(
-                c.id,
-                this.normalizeCouponState(
-                  {
-                    ...c,
-                    ...remoteItem,
-                    usedCount: maxUsed,
-                    active: reachedLimit ? false : remoteItem.active && c.active,
-                  },
-                  consumed
-                )
-              );
+    if (!sharedCouponsUnsub) {
+      try {
+        sharedCouponsUnsub = onSnapshot(
+          collection(db, 'coupons'),
+          (snap) => {
+            const consumed = getConsumedCouponSet();
+            const remoteList: Coupon[] = [];
+            snap.forEach((d) =>
+              remoteList.push(this.normalizeCouponState({ id: d.id, ...d.data() } as Coupon, consumed))
+            );
+            liveCoupons = remoteList;
+            try {
+              localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(remoteList));
+            } catch {
+              // ignore
             }
-          });
-          const combined = Array.from(mergedMap.values());
-          this.saveLocalCoupons(combined);
-          callback(combined);
-        },
-        () => {
-          // ignore
-        }
-      );
-    } catch {
-      // ignore
+            couponsListeners.forEach((cb) => cb(remoteList));
+          },
+          () => {
+            if (liveCoupons === null) {
+              const fallback = this.getLocalCoupons();
+              liveCoupons = fallback;
+              couponsListeners.forEach((cb) => cb(fallback));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
     }
 
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('mf_coupons_updated', handleLocal);
-      }
-      if (firestoreUnsub) firestoreUnsub();
+      couponsListeners.delete(callback);
     };
   },
 
@@ -958,6 +950,48 @@ export const settingsService = {
     return sortDeliveryZones(local);
   },
 
+  subscribeToDeliveryZones(callback: (zones: DeliveryZone[]) => void): Unsubscribe {
+    deliveryZonesListeners.add(callback);
+    if (liveDeliveryZones !== null) {
+      callback(liveDeliveryZones);
+    }
+
+    if (!sharedDeliveryZonesUnsub) {
+      try {
+        sharedDeliveryZonesUnsub = onSnapshot(
+          collection(db, 'deliveryZones'),
+          (snap) => {
+            const remoteList: DeliveryZone[] = [];
+            snap.forEach((d) => remoteList.push({ id: d.id, ...d.data() } as DeliveryZone));
+            const sorted = sortDeliveryZones(
+              remoteList.length > 0 ? remoteList : DEFAULT_DELIVERY_ZONES
+            );
+            liveDeliveryZones = sorted;
+            try {
+              localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(sorted));
+            } catch {
+              // ignore
+            }
+            deliveryZonesListeners.forEach((cb) => cb(sorted));
+          },
+          () => {
+            if (liveDeliveryZones === null) {
+              const fallback = getLocalDeliveryZones();
+              liveDeliveryZones = fallback;
+              deliveryZonesListeners.forEach((cb) => cb(fallback));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return () => {
+      deliveryZonesListeners.delete(callback);
+    };
+  },
+
   async saveDeliveryZone(zone: Omit<DeliveryZone, 'id'>, id?: string) {
     const targetId =
       id ||
@@ -1103,6 +1137,49 @@ export const settingsService = {
     }
   },
 
+  subscribeToReviewsAdmin(onUpdate: (reviews: Review[]) => void): Unsubscribe {
+    const getMillis = (val: any): number => {
+      if (!val) return 0;
+      if (typeof val.toMillis === 'function') return val.toMillis();
+      if (typeof val.seconds === 'number') return val.seconds * 1000;
+      if (typeof val === 'number') return val;
+      const parsed = Date.parse(String(val));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    reviewsAdminListeners.add(onUpdate);
+    if (liveReviewsAdmin !== null) {
+      onUpdate(liveReviewsAdmin);
+    }
+
+    if (!sharedReviewsAdminUnsub) {
+      try {
+        sharedReviewsAdminUnsub = onSnapshot(
+          collection(db, 'reviews'),
+          (snap) => {
+            const list: Review[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Review));
+            list.sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+            liveReviewsAdmin = list;
+            reviewsAdminListeners.forEach((cb) => cb(list));
+          },
+          () => {
+            if (liveReviewsAdmin === null) {
+              liveReviewsAdmin = [];
+              reviewsAdminListeners.forEach((cb) => cb([]));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return () => {
+      reviewsAdminListeners.delete(onUpdate);
+    };
+  },
+
   async submitReview(review: Omit<Review, 'id' | 'createdAt' | 'approved'>) {
     await addDoc(
       collection(db, 'reviews'),
@@ -1123,16 +1200,29 @@ export const settingsService = {
   },
 
   // Audit Logs
-  async logAdminAction(adminUid: string, adminEmail: string, action: string, target: string, details?: string) {
+  async logAdminAction(
+    adminUid: string,
+    adminEmail: string,
+    action: string,
+    target: string,
+    details?: string,
+    meta?: { entityType?: string; beforeValue?: string; afterValue?: string }
+  ) {
     try {
-      await addDoc(collection(db, 'auditLogs'), {
-        adminUid,
-        adminEmail,
-        action,
-        target,
-        details: details || '',
-        timestamp: serverTimestamp(),
-      });
+      await addDoc(
+        collection(db, 'auditLogs'),
+        sanitizeForFirestore({
+          adminUid,
+          adminEmail,
+          action,
+          target,
+          entityType: meta?.entityType || undefined,
+          beforeValue: meta?.beforeValue || undefined,
+          afterValue: meta?.afterValue || undefined,
+          details: details || '',
+          timestamp: serverTimestamp(),
+        })
+      );
     } catch {
       // Non-blocking
     }
@@ -1140,7 +1230,7 @@ export const settingsService = {
 
   async getAuditLogs(): Promise<AuditLog[]> {
     try {
-      const q = query(collection(db, 'auditLogs'), orderBy('timestamp', 'desc'), limit(50));
+      const q = query(collection(db, 'auditLogs'), orderBy('timestamp', 'desc'), limit(150));
       const snap = await getDocs(q);
       const list: AuditLog[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as AuditLog));
@@ -1148,5 +1238,39 @@ export const settingsService = {
     } catch {
       return [];
     }
+  },
+
+  subscribeToAuditLogs(onUpdate: (logs: AuditLog[]) => void): Unsubscribe {
+    auditLogsListeners.add(onUpdate);
+    if (liveAuditLogs !== null) {
+      onUpdate(liveAuditLogs);
+    }
+
+    if (!sharedAuditLogsUnsub) {
+      try {
+        const q = query(collection(db, 'auditLogs'), orderBy('timestamp', 'desc'), limit(150));
+        sharedAuditLogsUnsub = onSnapshot(
+          q,
+          (snap) => {
+            const list: AuditLog[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as AuditLog));
+            liveAuditLogs = list;
+            auditLogsListeners.forEach((cb) => cb(list));
+          },
+          () => {
+            if (liveAuditLogs === null) {
+              liveAuditLogs = [];
+              auditLogsListeners.forEach((cb) => cb([]));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return () => {
+      auditLogsListeners.delete(onUpdate);
+    };
   },
 };

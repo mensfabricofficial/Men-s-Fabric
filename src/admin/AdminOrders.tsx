@@ -25,7 +25,6 @@ import {
   Receipt,
   Package,
   RotateCcw,
-  Lock,
 } from 'lucide-react';
 import { Order, OrderPipelineStage, OrderStatus, PaymentStatus } from '../types';
 import { orderService } from '../services/orderService';
@@ -35,11 +34,13 @@ import { printElementById } from '../lib/printHelper';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
+import { getOrderPaidAndDue } from '../lib/accountingUtils';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminOrders: React.FC = () => {
-  const { currentUser, staffProfile, hasOrderPermission } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { currentUser, staffProfile, isSuperAdmin, hasOrderPermission } = useAuth();
+  const [orders, setOrders] = useState<Order[]>(() => orderService.getInstantOrders());
+  const [loading, setLoading] = useState(() => orderService.getInstantOrders().length === 0);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
@@ -58,21 +59,13 @@ export const AdminOrders: React.FC = () => {
   // Toast state
   const [actionToast, setActionToast] = useState<string | null>(null);
 
-  const loadOrders = async () => {
-    setLoading(true);
-    try {
-      const data = await orderService.getAllOrdersAdmin(statusFilter);
-      setOrders(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadOrders();
-  }, [statusFilter]);
+    const unsub = orderService.subscribeToAllOrdersAdmin((list) => {
+      setOrders(list);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
 
   const openOrderModal = (ord: Order) => {
     setSelectedOrder(ord);
@@ -110,7 +103,6 @@ export const AdminOrders: React.FC = () => {
       }
       const refreshed = await orderService.getOrderById(selectedOrder.id);
       if (refreshed) setSelectedOrder(refreshed);
-      loadOrders().catch(() => {});
       setActionToast(`Order ${selectedOrder.orderNumber} status updated to ${targetStatus}`);
       setTimeout(() => setActionToast(null), 3500);
     } catch {
@@ -157,12 +149,20 @@ export const AdminOrders: React.FC = () => {
             currentUser?.email || staffProfile?.email || '',
             'ORDER_WORKFLOW_ACTION',
             updated.orderNumber,
-            `${updated.orderStatus} by ${actorDisplayName}`
+            `${updated.orderStatus} by ${actorDisplayName}`,
+            {
+              entityType: 'order',
+              beforeValue: selectedOrder.orderStatus,
+              afterValue: updated.orderStatus,
+            }
           )
           .catch(() => {});
         setActionToast(`Order ${updated.orderNumber} updated by ${actorDisplayName}`);
         setTimeout(() => setActionToast(null), 3500);
       }
+    } catch (err: any) {
+      setActionToast(err?.message || 'Failed to update order stage.');
+      setTimeout(() => setActionToast(null), 5000);
     } finally {
       setUpdating(false);
     }
@@ -189,7 +189,6 @@ export const AdminOrders: React.FC = () => {
       }
       const refreshed = await orderService.getOrderById(selectedOrder.id);
       if (refreshed) setSelectedOrder(refreshed);
-      loadOrders().catch(() => {});
       setActionToast(`Payment status updated to ${payStatus.toUpperCase()}`);
       setTimeout(() => setActionToast(null), 3500);
     } catch {
@@ -207,6 +206,7 @@ export const AdminOrders: React.FC = () => {
   };
 
   const filteredOrders = orders.filter((o) => {
+    if (statusFilter !== 'all' && o.orderStatus !== statusFilter) return false;
     if (paymentFilter !== 'all') {
       if (paymentFilter === 'cod' && o.paymentMethod !== 'cod') return false;
       if (paymentFilter === 'online' && o.paymentMethod === 'cod') return false;
@@ -303,18 +303,10 @@ export const AdminOrders: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Order Fulfillment & Payment Verification
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Verify bKash, Nagad, Rocket transactions, inspect payment proofs, manage COD, and fulfill orders.
-          </p>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="Invoices & Order Receipts"
+        subtitle="Print A4 invoices & thermal receipts and inspect payment proofs"
+      />
 
       {/* Filter Bar */}
       <div className="bg-white p-4 rounded-xl border border-neutral-200 shadow-xs flex flex-col sm:flex-row gap-3">
@@ -406,20 +398,21 @@ export const AdminOrders: React.FC = () => {
                     </td>
                     <td className="p-3.5">
                       <p className="font-bold text-neutral-900">৳{ord.total.toLocaleString('en-BD')}</p>
-                      {ord.advanceDeliveryPaid ? (
-                        <div className="mt-0.5 space-y-0.5">
-                          <span className="text-[10px] text-emerald-700 font-bold block">
-                            Adv. Paid: ৳{ord.advanceAmount}
-                          </span>
-                          <span className="text-[10px] text-red-600 font-bold block">
-                            Courier Due: ৳{ord.dueOnDelivery ?? (ord.total - (ord.advanceAmount || ord.deliveryCharge))}
-                          </span>
-                        </div>
-                      ) : ord.onlineDiscount && ord.onlineDiscount > 0 ? (
-                        <span className="text-[10px] text-emerald-600 font-semibold block">
-                          -৳{ord.onlineDiscount} online disc.
-                        </span>
-                      ) : null}
+                      {(() => {
+                        const payInfo = getOrderPaidAndDue(ord);
+                        return (
+                          <div className="mt-0.5 space-y-0.5">
+                            <span className="text-[10px] text-emerald-700 font-bold block font-mono">
+                              Paid: ৳{payInfo.paid.toLocaleString('en-BD')}
+                            </span>
+                            {payInfo.due > 0 && (
+                              <span className="text-[10px] text-red-600 font-bold block font-mono">
+                                Due: ৳{payInfo.due.toLocaleString('en-BD')}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="p-3.5 whitespace-nowrap">
                       {getMethodBadge(ord)}
@@ -472,9 +465,15 @@ export const AdminOrders: React.FC = () => {
                           if (st === 'inventory_packing') return '3. Stock & Pack';
                           if (st === 'delivery_dispatch') return '4. Delivery Desk';
                           if (st === 'completed') return ord.orderChannel === 'pos' ? 'POS Sale' : 'Completed';
+                          if (st === 'returned') return 'Returned';
                           return 'Cancelled';
                         })()}
                       </span>
+                      {ord.pipeline?.subStatus && (
+                        <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[9px] font-bold text-neutral-700">
+                          {ord.pipeline.subStatus}
+                        </span>
+                      )}
                     </td>
                     <td className="p-3.5 text-right whitespace-nowrap">
                       <button
@@ -610,6 +609,12 @@ export const AdminOrders: React.FC = () => {
                         <span>DATE:</span>
                         <span>{formatDateTime(selectedOrder.createdAt, formatDateTime(new Date()))}</span>
                       </div>
+                      {selectedOrder.customerId && selectedOrder.customerId !== 'guest' && selectedOrder.customerId !== 'walk-in-pos' && (
+                        <div className="flex justify-between">
+                          <span>CUSTOMER ID:</span>
+                          <span className="font-bold">{selectedOrder.customerId}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between">
                         <span>CUSTOMER:</span>
                         <span className="font-bold truncate max-w-[170px]">{selectedOrder.customerName}</span>
@@ -675,12 +680,21 @@ export const AdminOrders: React.FC = () => {
                         <span>ORDER TOTAL:</span>
                         <span>৳{selectedOrder.total.toLocaleString('en-BD')}</span>
                       </div>
-                      {selectedOrder.paymentMethod === 'cod' && (
-                        <div className="flex justify-between text-xs font-black text-red-700 pt-0.5">
-                          <span>DUE ON ARRIVAL:</span>
-                          <span>৳{(selectedOrder.dueOnDelivery ?? Math.max(0, selectedOrder.subtotal - selectedOrder.discount)).toLocaleString('en-BD')}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const { paid, due } = getOrderPaidAndDue(selectedOrder);
+                        return (
+                          <>
+                            <div className="flex justify-between text-[11px] font-bold text-emerald-800 pt-0.5">
+                              <span>PAID AMOUNT:</span>
+                              <span>৳{paid.toLocaleString('en-BD')}</span>
+                            </div>
+                            <div className={`flex justify-between text-xs font-black pt-0.5 ${due > 0 ? 'text-red-700' : 'text-neutral-700'}`}>
+                              <span>{selectedOrder.paymentMethod === 'cod' ? 'DUE ON DELIVERY:' : 'REMAINING DUE:'}</span>
+                              <span>৳{due.toLocaleString('en-BD')}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     {/* Payment Details */}
@@ -815,74 +829,65 @@ export const AdminOrders: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Quick Payment Status Actions in Admin */}
-                <div className="pt-3 border-t border-neutral-200">
-                  <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
-                    Update Payment Status {!canVerifyPayment ? '(Payment Permission Required)' : ''}:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={!canVerifyPayment}
-                      onClick={() => handleUpdatePayment('paid')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
-                        !canVerifyPayment
-                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
-                          : selectedOrder.paymentStatus === 'paid'
-                          ? 'bg-emerald-600 text-white shadow-xs cursor-pointer'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700 cursor-pointer'
-                      }`}
-                    >
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      Mark as Paid / Verified
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canVerifyPayment}
-                      onClick={() => handleUpdatePayment('pending')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
-                        !canVerifyPayment
-                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
-                          : selectedOrder.paymentStatus === 'pending'
-                          ? 'bg-amber-600 text-white shadow-xs cursor-pointer'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700 cursor-pointer'
-                      }`}
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                      Mark as Pending
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canVerifyPayment}
-                      onClick={() => handleUpdatePayment('failed')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
-                        !canVerifyPayment
-                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
-                          : selectedOrder.paymentStatus === 'failed'
-                          ? 'bg-red-600 text-white shadow-xs cursor-pointer'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700 cursor-pointer'
-                      }`}
-                    >
-                      <XCircle className="w-3.5 h-3.5" />
-                      Mark as Failed
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canVerifyPayment}
-                      onClick={() => handleUpdatePayment('refunded')}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 ${
-                        !canVerifyPayment
-                          ? 'bg-neutral-100 border border-neutral-200 text-neutral-400 cursor-not-allowed'
-                          : selectedOrder.paymentStatus === 'refunded'
-                          ? 'bg-purple-600 text-white shadow-xs cursor-pointer'
-                          : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700 cursor-pointer'
-                      }`}
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      Mark as Refunded
-                    </button>
+                {/* Quick Payment Status Actions in Admin — ONLY visible at Stage 2 Payment Verify to Payment Verify role */}
+                {canVerifyPayment &&
+                  orderService.getOrderPipelineStage(selectedOrder) === 'payment_verification' && (
+                  <div className="pt-3 border-t border-neutral-200">
+                    <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
+                      Payment Verification Controls:
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdatePayment('paid')}
+                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedOrder.paymentStatus === 'paid'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700'
+                        }`}
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        Mark as Paid / Verified
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdatePayment('pending')}
+                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedOrder.paymentStatus === 'pending'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700'
+                        }`}
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        Mark as Pending
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdatePayment('failed')}
+                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedOrder.paymentStatus === 'failed'
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700'
+                        }`}
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        Mark as Failed
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdatePayment('refunded')}
+                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedOrder.paymentStatus === 'refunded'
+                            ? 'bg-purple-600 text-white shadow-xs'
+                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700'
+                        }`}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Mark as Refunded
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Staff Approval Attribution Summary */}
@@ -932,170 +937,205 @@ export const AdminOrders: React.FC = () => {
                 </div>
               )}
 
-              {/* Admin Actions Panel (Hidden in print) */}
-              <div className="pt-4 border-t border-neutral-200 space-y-4 print:hidden">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <h4 className="font-bold uppercase tracking-wider text-neutral-900">
-                    Order Action Controls (By Assigned Role)
-                  </h4>
-                  <span className="text-[11px] text-neutral-500">
-                    Actor: <b className="text-neutral-800">{actorDisplayName}</b>
+              {/* Payment & Due Collection Log */}
+              {selectedOrder.paymentHistory && selectedOrder.paymentHistory.length > 0 && (
+                <div className="border border-neutral-200 rounded-xl p-4 bg-white space-y-2 print:hidden">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 block">
+                    Recorded Payment &amp; Due Collection Log ({selectedOrder.paymentHistory.length})
                   </span>
-                </div>
-
-                {/* All Quick Action Buttons governed by permissions */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={updating || !canApprove}
-                    onClick={() => handleQuickPipelineAction('payment_verification')}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
-                      canApprove
-                        ? 'bg-black text-white hover:bg-neutral-800 cursor-pointer'
-                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canApprove && <Lock className="w-3 h-3" />}
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Order Approve</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canVerifyPayment}
-                    onClick={() => handleQuickPipelineAction('inventory_packing', { markPaid: true })}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
-                      canVerifyPayment
-                        ? 'bg-emerald-700 text-white hover:bg-emerald-800 cursor-pointer'
-                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canVerifyPayment && <Lock className="w-3 h-3" />}
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Payment Verify</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canPack}
-                    onClick={() => handleQuickPipelineAction('delivery_dispatch')}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
-                      canPack
-                        ? 'bg-neutral-800 text-white hover:bg-black cursor-pointer'
-                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canPack && <Lock className="w-3 h-3" />}
-                    <Package className="w-3.5 h-3.5" />
-                    <span>Packaging</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canShip}
-                    onClick={() => handleQuickPipelineAction('delivery_dispatch', { dispatchShipped: true })}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
-                      canShip
-                        ? 'bg-neutral-900 text-white hover:bg-black cursor-pointer'
-                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canShip && <Lock className="w-3 h-3" />}
-                    <Truck className="w-3.5 h-3.5" />
-                    <span>Shipping</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canShip}
-                    onClick={() => handleQuickPipelineAction('completed', { markPaid: true })}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5 ${
-                      canShip
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
-                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canShip && <Lock className="w-3 h-3" />}
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Delivered</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canReturn}
-                    onClick={() => handleQuickPipelineAction('returned')}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded border inline-flex items-center gap-1.5 ${
-                      canReturn
-                        ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 cursor-pointer'
-                        : 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canReturn && <Lock className="w-3 h-3" />}
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Return</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={updating || !canCancel}
-                    onClick={() => handleQuickPipelineAction('cancelled')}
-                    className={`px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider rounded border inline-flex items-center gap-1.5 ${
-                      canCancel
-                        ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer'
-                        : 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {!canCancel && <Lock className="w-3 h-3" />}
-                    <XCircle className="w-3.5 h-3.5" />
-                    <span>Cancel</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-neutral-600 font-semibold mb-1">Fulfillment Status</label>
-                    <select
-                      value={newStatus}
-                      onChange={(e: any) => setNewStatus(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded font-semibold cursor-pointer"
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="confirmed">Confirmed</option>
-                      <option value="processing">Processing</option>
-                      <option value="packed">Packed</option>
-                      <option value="shipped">Shipped</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
-                      <option value="returned">Returned</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-neutral-600 font-semibold mb-1">Action / Status Note</label>
-                    <input
-                      type="text"
-                      value={statusNote}
-                      onChange={(e) => setStatusNote(e.target.value)}
-                      placeholder="e.g. Courier Tracking: Steadfast #12345"
-                      className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
-                    />
+                  <div className="space-y-1.5">
+                    {selectedOrder.paymentHistory.map((pLog) => (
+                      <div key={pLog.id} className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-100 last:border-b-0">
+                        <div>
+                          <span className="font-mono font-bold text-emerald-700">
+                            ৳{pLog.amount.toLocaleString('en-BD')}
+                          </span>{' '}
+                          <span className="uppercase font-semibold text-neutral-700">({pLog.method})</span>{' '}
+                          · By <b>{pLog.receivedBy}</b>
+                          {pLog.trxId && <span className="ml-1.5 font-mono text-neutral-500">Trx: {pLog.trxId}</span>}
+                          {pLog.note && <span className="text-neutral-500"> — {pLog.note}</span>}
+                        </div>
+                        <span className="font-mono text-neutral-400 text-[10px]">
+                          {formatDateTime(pLog.timestamp)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
+              )}
 
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateStatus()}
-                    disabled={
-                      updating ||
-                      !(canApprove || canVerifyPayment || canPack || canShip || canReturn || canCancel)
-                    }
-                    className="px-5 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
-                  >
-                    {updating ? 'Updating...' : 'Save Fulfillment Status'}
-                  </button>
-                </div>
-              </div>
+              {/* Admin Actions Panel (Hidden in print) */}
+              {(() => {
+                const currentStage = orderService.getOrderPipelineStage(selectedOrder);
+                const isClosed = currentStage === 'returned' || currentStage === 'cancelled';
+                const showStage1 = currentStage === 'order_verification' && canApprove;
+                const showStage2 = currentStage === 'payment_verification' && canVerifyPayment;
+                const showStage3 = currentStage === 'inventory_packing' && canPack;
+                const showStage4 = currentStage === 'delivery_dispatch' && canShip;
+                const showReturn = (currentStage === 'delivery_dispatch' || currentStage === 'completed') && canReturn;
+                const showCancel = !isClosed && currentStage !== 'completed' && canCancel;
+                const hasStageAction =
+                  showStage1 || showStage2 || showStage3 || showStage4 || showReturn || showCancel;
+
+                return (
+                  <div className="pt-4 border-t border-neutral-200 space-y-4 print:hidden">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <h4 className="font-bold uppercase tracking-wider text-neutral-900">
+                        Order Action Controls (Current Stage Only)
+                      </h4>
+                      <span className="text-[11px] text-neutral-500">
+                        Actor: <b className="text-neutral-800">{actorDisplayName}</b>
+                      </span>
+                    </div>
+
+                    {/* Strictly Stage + Role Filtered Action Buttons */}
+                    {!hasStageAction ? (
+                      <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-600">
+                        {isClosed
+                          ? `This order is ${currentStage}. No further actions available.`
+                          : 'Waiting for the staff member assigned to this current stage to process the order.'}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {showStage1 && (
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => handleQuickPipelineAction('payment_verification')}
+                            className="px-3.5 py-2 bg-black text-white hover:bg-neutral-800 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>Order Approve → Payment Verify</span>
+                          </button>
+                        )}
+
+                        {showStage2 && (
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => handleQuickPipelineAction('inventory_packing', { markPaid: true })}
+                            className="px-3.5 py-2 bg-emerald-700 text-white hover:bg-emerald-800 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                          >
+                            <CreditCard className="w-3.5 h-3.5" />
+                            <span>Verify Payment → Stock &amp; Audit</span>
+                          </button>
+                        )}
+
+                        {showStage3 && (
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => handleQuickPipelineAction('delivery_dispatch')}
+                            className="px-3.5 py-2 bg-neutral-800 text-white hover:bg-black cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                          >
+                            <Package className="w-3.5 h-3.5" />
+                            <span>
+                              {selectedOrder.pipeline?.stockDeducted === false
+                                ? 'Approve Stock & Cut Inventory → Delivery'
+                                : 'Stock & Packing Approved → Delivery'}
+                            </span>
+                          </button>
+                        )}
+
+                        {showStage4 && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={updating}
+                              onClick={() => handleQuickPipelineAction('delivery_dispatch', { dispatchShipped: true })}
+                              className="px-3.5 py-2 bg-neutral-900 text-white hover:bg-black cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                            >
+                              <Truck className="w-3.5 h-3.5" />
+                              <span>Shipping / Dispatch</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={updating}
+                              onClick={() => handleQuickPipelineAction('completed', { markPaid: true })}
+                              className="px-3.5 py-2 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                              <span>Delivered</span>
+                            </button>
+                          </>
+                        )}
+
+                        {showReturn && (
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => handleQuickPipelineAction('returned')}
+                            className="px-3.5 py-2 border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Return</span>
+                          </button>
+                        )}
+
+                        {showCancel && (
+                          <button
+                            type="button"
+                            disabled={updating}
+                            onClick={() => handleQuickPipelineAction('cancelled')}
+                            className="px-3.5 py-2 border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Cancel</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Manual Status Override (Super Admin only, so regular staff only see their stage's buttons) */}
+                    {isSuperAdmin && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-neutral-100">
+                          <div>
+                            <label className="block text-neutral-600 font-semibold mb-1">Fulfillment Status</label>
+                            <select
+                              value={newStatus}
+                              onChange={(e: any) => setNewStatus(e.target.value)}
+                              className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded font-semibold cursor-pointer"
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="confirmed">Confirmed</option>
+                              <option value="processing">Processing</option>
+                              <option value="packed">Packed</option>
+                              <option value="shipped">Shipped</option>
+                              <option value="delivered">Delivered</option>
+                              <option value="cancelled">Cancelled</option>
+                              <option value="returned">Returned</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-neutral-600 font-semibold mb-1">Action / Status Note</label>
+                            <input
+                              type="text"
+                              value={statusNote}
+                              onChange={(e) => setStatusNote(e.target.value)}
+                              placeholder="e.g. Courier Tracking: Steadfast #12345"
+                              className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateStatus()}
+                            disabled={updating}
+                            className="px-5 py-2.5 bg-black text-white font-bold uppercase tracking-wider rounded hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
+                          >
+                            {updating ? 'Updating...' : 'Save Fulfillment Status'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
             </div>
 

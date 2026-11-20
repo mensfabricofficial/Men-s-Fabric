@@ -5,8 +5,10 @@ import { db } from '../lib/firebase';
 import { Coupon, CustomerProfile } from '../types';
 import { settingsService } from '../services/settingsService';
 import { orderService } from '../services/orderService';
+import { posService } from '../services/posService';
 import { notificationService } from '../services/notificationService';
 import { useAuth } from '../context/AuthContext';
+import { AdminPageHeader } from './AdminLayout';
 
 interface SelectableCustomer {
   key: string;
@@ -18,9 +20,9 @@ interface SelectableCustomer {
 
 export const AdminCoupons: React.FC = () => {
   const { currentUser } = useAuth();
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>(() => settingsService.getInstantCoupons());
   const [customers, setCustomers] = useState<SelectableCustomer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => settingsService.getInstantCoupons().length === 0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
   const [deletingCoupon, setDeletingCoupon] = useState<Coupon | null>(null);
@@ -65,19 +67,12 @@ export const AdminCoupons: React.FC = () => {
       }
     };
 
-    try {
-      const rawLocal = localStorage.getItem('mf_registered_customers_v1');
-      if (rawLocal) {
-        const parsed = JSON.parse(rawLocal);
-        if (Array.isArray(parsed)) {
-          parsed.forEach((c: Partial<CustomerProfile>) => {
-            addCandidate(c.uid || '', c.name || 'Customer', c.email || '', c.phone || '');
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
+    posService.getInstantRegisteredUsers().forEach((c) => {
+      addCandidate(c.uid || '', c.name || 'Customer', c.email || '', c.phone || '');
+    });
+    posService.getInstantCrmCustomers().forEach((c) => {
+      addCandidate(c.uid || '', c.name || 'Customer', c.email || '', c.phone || '');
+    });
 
     try {
       const snap = await getDocs(collection(db, 'users'));
@@ -281,7 +276,7 @@ export const AdminCoupons: React.FC = () => {
         const fallbackId = `cpn-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now().toString(36)}`;
         const newItem: Coupon = { ...payload, id: fallbackId, usedCount: 0 };
         setCoupons((prev) => [newItem, ...prev.filter((c) => c.id !== fallbackId && c.code !== cleanCode)]);
-        const cur = settingsService.getLocalCoupons();
+        const cur = settingsService.getInstantCoupons();
         settingsService.saveLocalCoupons([newItem, ...cur.filter((c) => c.id !== fallbackId && c.code !== cleanCode)]);
       }
       setModalOpen(false);
@@ -316,36 +311,29 @@ export const AdminCoupons: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Coupons & Discounts
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Create promo codes or assign One-Time Free Delivery passes to specific customers.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Coupons & Discounts"
+        subtitle="Promo codes & one-time free delivery passes"
+        actions={
+          <>
+            <button
+              onClick={openQuickFreeDeliveryModal}
+              className="px-3.5 py-2 bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-emerald-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Truck className="w-3.5 h-3.5" />
+              <span>1x Free Delivery Pass</span>
+            </button>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={openQuickFreeDeliveryModal}
-            className="px-4 py-2.5 bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-emerald-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-          >
-            <Truck className="w-4 h-4" />
-            <span>1x Free Delivery Pass</span>
-          </button>
-
-          <button
-            onClick={openAddModal}
-            className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create Coupon</span>
-          </button>
-        </div>
-      </div>
+            <button
+              onClick={openAddModal}
+              className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Coupon</span>
+            </button>
+          </>
+        }
+      />
 
       {/* Coupons Table */}
       <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs">

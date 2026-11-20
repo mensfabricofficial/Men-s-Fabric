@@ -4,10 +4,11 @@ import { Banner } from '../types';
 import { settingsService } from '../services/settingsService';
 import { productService } from '../services/productService';
 import { notificationService } from '../services/notificationService';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminBanners: React.FC = () => {
-  const [banners, setBanners] = useState<Banner[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [banners, setBanners] = useState<Banner[]>(() => settingsService.getInstantBanners(false));
+  const [loading, setLoading] = useState(() => settingsService.getInstantBanners(false).length === 0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingBanner, setEditingBanner] = useState<Banner | null>(null);
 
@@ -23,18 +24,12 @@ export const AdminBanners: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  const loadBanners = async () => {
-    setLoading(true);
-    try {
-      const data = await settingsService.getBanners(false);
-      setBanners(data);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadBanners();
+    const unsub = settingsService.subscribeToBanners((data) => {
+      setBanners(data);
+      setLoading(false);
+    }, false);
+    return () => unsub();
   }, []);
 
   const openAddModal = () => {
@@ -113,7 +108,6 @@ export const AdminBanners: React.FC = () => {
           .catch(() => {});
       }
       setModalOpen(false);
-      await loadBanners();
     } catch {
       alert('Failed to save banner.');
     } finally {
@@ -125,7 +119,6 @@ export const AdminBanners: React.FC = () => {
     setBanners((prev) => prev.filter((b) => b.id !== id));
     try {
       await settingsService.deleteBanner(id);
-      await loadBanners();
     } catch {
       // safe fallback
     }
@@ -134,25 +127,19 @@ export const AdminBanners: React.FC = () => {
   return (
     <div className="space-y-6">
       
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Homepage Banners & Hero Showcase
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Manage full-width promotional hero banners displayed on the customer landing page.
-          </p>
-        </div>
-
-        <button
-          onClick={openAddModal}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Banner</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Homepage Banners & Hero Showcase"
+        subtitle="Manage full-width promotional hero banners on the landing page."
+        actions={
+          <button
+            onClick={openAddModal}
+            className="px-3.5 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Banner</span>
+          </button>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {loading ? (

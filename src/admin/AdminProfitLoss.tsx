@@ -1,27 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AdminPageHeader } from './AdminLayout';
 import {
   TrendingUp,
   TrendingDown,
-  Target,
   Package,
   AlertTriangle,
   CheckCircle2,
-  RefreshCw,
-  SlidersHorizontal,
-  X,
   ArrowUpRight,
   Wallet,
   ShoppingCart,
   BarChart3,
   Check,
 } from 'lucide-react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import {
   Order,
   Product,
   ExpenseEntry,
   PurchaseEntry,
+  SalesReturnEntry,
   SalesTargetsConfig,
   ExpenseCategory,
 } from '../types';
@@ -41,7 +37,6 @@ import {
   computeStockAudit,
 } from '../lib/accountingUtils';
 import {
-  TargetProgressRow,
   DailyPerformanceChart,
   MonthlyPerformanceChart,
 } from '../components/admin/FinancialCharts';
@@ -51,14 +46,15 @@ interface AdminProfitLossProps {
   onNavigateTab?: (tab: AdminTab) => void;
 }
 
-type PeriodPreset = 'today' | 'yesterday' | 'this_month' | 'last_month' | 'all_time' | 'custom';
+type PeriodPreset = 'today' | 'yesterday' | 'weekly' | 'this_month' | 'last_month' | 'all_time' | 'custom';
 
 export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab }) => {
-  const [orders, setOrders] = useState<Order[]>(() => orderService.getLocalOrders());
-  const [products, setProducts] = useState<Product[]>(() => productService.getLocalProducts());
-  const [expenses, setExpenses] = useState<ExpenseEntry[]>(() => posService.getLocalExpenses());
-  const [purchases, setPurchases] = useState<PurchaseEntry[]>(() => posService.getLocalPurchases());
-  const [targets, setTargets] = useState<SalesTargetsConfig>(() => posService.getLocalTargets());
+  const [orders, setOrders] = useState<Order[]>(() => orderService.getInstantOrders());
+  const [products, setProducts] = useState<Product[]>(() => productService.getInstantAllProducts());
+  const [expenses, setExpenses] = useState<ExpenseEntry[]>(() => posService.getInstantExpenses());
+  const [purchases, setPurchases] = useState<PurchaseEntry[]>(() => posService.getInstantPurchases());
+  const [salesReturns, setSalesReturns] = useState<SalesReturnEntry[]>(() => posService.getInstantReturns());
+  const [targets, setTargets] = useState<SalesTargetsConfig>(() => posService.getInstantTargets());
 
   // Live local date ticker so Today/Monthly auto-rolls over cleanly at midnight
   const [todayKey, setTodayKey] = useState<string>(() => getLocalDateKey());
@@ -67,11 +63,6 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
   const [period, setPeriod] = useState<PeriodPreset>('this_month');
   const [customStart, setCustomStart] = useState<string>(() => getMonthDateBounds(getLocalMonthKey()).startKey);
   const [customEnd, setCustomEnd] = useState<string>(() => getLocalDateKey());
-
-  const [refreshing, setRefreshing] = useState(false);
-  const [targetModalOpen, setTargetModalOpen] = useState(false);
-  const [targetDraft, setTargetDraft] = useState<SalesTargetsConfig>(() => posService.getLocalTargets());
-  const [savingTargets, setSavingTargets] = useState(false);
 
   // Inline costPrice editor state for missing-cost products
   const [costDrafts, setCostDrafts] = useState<Record<string, string>>({});
@@ -88,65 +79,23 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
     return () => clearInterval(interval);
   }, []);
 
-  const syncAll = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const [ordersRes, prodsRes] = await Promise.allSettled([
-        orderService.getAllOrdersAdmin(),
-        productService.getAllProductsAdmin(),
-      ]);
-      if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value);
-      if (prodsRes.status === 'fulfilled') setProducts(prodsRes.value);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
   useEffect(() => {
-    syncAll();
-
-    const handleLocalOrder = () => setOrders(orderService.getLocalOrders());
-    const handleLocalProd = () => setProducts(productService.getLocalProducts());
-    window.addEventListener('mf_orders_updated', handleLocalOrder);
-    window.addEventListener('selvee_products_updated', handleLocalProd);
-    window.addEventListener('mf_products_updated', handleLocalProd);
-
-    let unsubOrders: (() => void) | null = null;
-    try {
-      const qOrders = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
-      unsubOrders = onSnapshot(
-        qOrders,
-        (snap) => {
-          const map = new Map<string, Order>();
-          orderService.getLocalOrders().forEach((o) => map.set(o.id, o));
-          snap.forEach((d) => map.set(d.id, { id: d.id, ...d.data() } as Order));
-          setOrders(Array.from(map.values()));
-        },
-        () => {}
-      );
-    } catch {
-      // fallback
-    }
-
+    const unsubOrders = orderService.subscribeToAllOrdersAdmin(setOrders);
     const unsubProds = productService.subscribeToAllProductsAdmin(setProducts);
     const unsubExp = posService.subscribeToExpenses(setExpenses);
     const unsubPur = posService.subscribeToPurchases(setPurchases);
-    const unsubTargets = posService.subscribeToTargets((cfg) => {
-      setTargets(cfg);
-      setTargetDraft((prev) => (targetModalOpen ? prev : cfg));
-    });
+    const unsubRet = posService.subscribeToReturns(setSalesReturns);
+    const unsubTargets = posService.subscribeToTargets(setTargets);
 
     return () => {
-      window.removeEventListener('mf_orders_updated', handleLocalOrder);
-      window.removeEventListener('selvee_products_updated', handleLocalProd);
-      window.removeEventListener('mf_products_updated', handleLocalProd);
-      if (unsubOrders) unsubOrders();
+      unsubOrders();
       unsubProds();
       unsubExp();
       unsubPur();
+      unsubRet();
       unsubTargets();
     };
-  }, [syncAll, targetModalOpen]);
+  }, []);
 
   // Period bounds computation
   const { startDateKey, endDateKey, periodTitle } = useMemo(() => {
@@ -156,6 +105,10 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
     if (period === 'yesterday') {
       const y = addLocalDays(todayKey, -1);
       return { startDateKey: y, endDateKey: y, periodTitle: `Yesterday (${y})` };
+    }
+    if (period === 'weekly') {
+      const wStart = addLocalDays(todayKey, -6);
+      return { startDateKey: wStart, endDateKey: todayKey, periodTitle: `Last 7 Days (${wStart} → ${todayKey})` };
     }
     if (period === 'this_month') {
       const bounds = getMonthDateBounds(monthKey);
@@ -176,33 +129,7 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
     return { startDateKey: undefined, endDateKey: undefined, periodTitle: 'All-Time Ledger' };
   }, [period, todayKey, monthKey, customStart, customEnd]);
 
-  // Always compute Today & This Month live for target progress bars
-  const todayStats = useMemo(
-    () =>
-      computePeriodAccounting({
-        orders,
-        products,
-        expenses,
-        purchases,
-        startDateKey: todayKey,
-        endDateKey: todayKey,
-      }),
-    [orders, products, expenses, purchases, todayKey]
-  );
-
   const monthBounds = useMemo(() => getMonthDateBounds(monthKey), [monthKey]);
-  const thisMonthStats = useMemo(
-    () =>
-      computePeriodAccounting({
-        orders,
-        products,
-        expenses,
-        purchases,
-        startDateKey: monthBounds.startKey,
-        endDateKey: monthBounds.endKey,
-      }),
-    [orders, products, expenses, purchases, monthBounds]
-  );
 
   const selectedStats = useMemo(
     () =>
@@ -211,10 +138,11 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         products,
         expenses,
         purchases,
+        salesReturns,
         startDateKey,
         endDateKey,
       }),
-    [orders, products, expenses, purchases, startDateKey, endDateKey]
+    [orders, products, expenses, purchases, salesReturns, startDateKey, endDateKey]
   );
 
   const dailySeries = useMemo(
@@ -223,10 +151,11 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         orders,
         products,
         expenses,
+        salesReturns,
         days: 14,
         endDateKey: todayKey,
       }),
-    [orders, products, expenses, todayKey]
+    [orders, products, expenses, salesReturns, todayKey]
   );
 
   const monthlySeries = useMemo(
@@ -236,10 +165,11 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         products,
         expenses,
         purchases,
+        salesReturns,
         months: 6,
         endMonthKey: monthKey,
       }),
-    [orders, products, expenses, purchases, monthKey]
+    [orders, products, expenses, purchases, salesReturns, monthKey]
   );
 
   const stockAudit = useMemo(
@@ -248,21 +178,10 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         products,
         purchases,
         orders,
+        lowStockThreshold: targets.lowStockThresholdDefault || 5,
       }),
-    [products, purchases, orders]
+    [products, purchases, orders, targets.lowStockThresholdDefault]
   );
-
-  const handleSaveTargets = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingTargets(true);
-    try {
-      const saved = await posService.saveTargets(targetDraft);
-      setTargets(saved);
-      setTargetModalOpen(false);
-    } finally {
-      setSavingTargets(false);
-    }
-  };
 
   const handleSaveProductCost = async (prod: Product) => {
     const raw = costDrafts[prod.id];
@@ -290,41 +209,14 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
 
   return (
     <div className="space-y-6">
-      {/* Header & Controls */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Profit &amp; Loss, Sales Targets &amp; Stock Audit
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Live P&amp;L accounting (auto-resets daily at local midnight &amp; monthly on the 1st) · Today: <span className="font-mono">{todayKey}</span>
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={syncAll}
-            disabled={refreshing}
-            className="px-3 py-2 bg-white border border-neutral-200 hover:border-black text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            <span>{refreshing ? 'Syncing...' : 'Sync Ledger'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setTargetDraft(targets);
-              setTargetModalOpen(true);
-            }}
-            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span>Set Daily &amp; Monthly Targets</span>
-          </button>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="Profit & Loss & Stock Audit"
+        subtitle={
+          <>
+            Live P&amp;L accounting (resets daily &amp; monthly) · Today: <span className="font-mono">{todayKey}</span>
+          </>
+        }
+      />
 
       {/* Period Filter Bar */}
       <div className="bg-white border border-neutral-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -332,6 +224,7 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
           {([
             { id: 'today', label: 'Today' },
             { id: 'yesterday', label: 'Yesterday' },
+            { id: 'weekly', label: 'Last 7 Days' },
             { id: 'this_month', label: 'This Month' },
             { id: 'last_month', label: 'Last Month' },
             { id: 'all_time', label: 'All Time' },
@@ -383,7 +276,7 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
             ৳{selectedStats.totalBilledRevenue.toLocaleString('en-BD')}
           </p>
           <p className="text-[11px] text-neutral-500 mt-1">
-            {selectedStats.validOrderCount} orders · {selectedStats.unitsSold} pcs
+            {selectedStats.validOrderCount} delivered · {selectedStats.unitsSold} pcs
           </p>
         </div>
 
@@ -465,95 +358,17 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         </div>
       </div>
 
-      {/* DAILY & MONTHLY TARGETS + PROGRESS BARS */}
-      <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-3">
-          <div>
-            <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
-              Daily &amp; Monthly Targets — Live Achievement Progress
-            </h3>
-            <p className="text-xs text-neutral-500 mt-0.5">
-              Tracks Amount (৳), Pieces Sold (Pcs), and Net Profit targets automatically
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setTargetDraft(targets);
-              setTargetModalOpen(true);
-            }}
-            className="text-xs font-bold text-neutral-900 hover:underline inline-flex items-center gap-1 cursor-pointer w-fit"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" /> Edit Targets
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-              Today&apos;s Targets ({todayKey})
-            </h4>
-            <TargetProgressRow
-              label="Today Sale Amount Target"
-              subLabel={`${todayStats.validOrderCount} orders`}
-              currentValue={todayStats.totalBilledRevenue}
-              targetValue={targets.dailyAmountTarget}
-              unitPrefix="৳"
-              accentColor="neutral"
-            />
-            <TargetProgressRow
-              label="Today Pieces Sold Target"
-              subLabel="Units dispatched/sold"
-              currentValue={todayStats.unitsSold}
-              targetValue={targets.dailyPcsTarget}
-              unitSuffix=" pcs"
-              accentColor="blue"
-            />
-          </div>
-
-          <div className="space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-              Monthly Targets ({monthBounds.label})
-            </h4>
-            <TargetProgressRow
-              label="Monthly Sale Amount Target"
-              subLabel={`${thisMonthStats.validOrderCount} orders`}
-              currentValue={thisMonthStats.totalBilledRevenue}
-              targetValue={targets.monthlyAmountTarget}
-              unitPrefix="৳"
-              accentColor="neutral"
-            />
-            <TargetProgressRow
-              label="Monthly Pieces Sold Target"
-              subLabel="Cumulative monthly qty"
-              currentValue={thisMonthStats.unitsSold}
-              targetValue={targets.monthlyPcsTarget}
-              unitSuffix=" pcs"
-              accentColor="blue"
-            />
-            <TargetProgressRow
-              label="Monthly Net Profit Target"
-              subLabel="After COGS & all expenses"
-              currentValue={thisMonthStats.netProfit}
-              targetValue={targets.monthlyProfitTarget}
-              unitPrefix="৳"
-              accentColor="emerald"
-            />
-          </div>
-        </div>
-      </div>
-
       {/* PERFORMANCE GRAPHS (DAILY & MONTHLY) */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <DailyPerformanceChart
           data={dailySeries}
-          dailyAmountTarget={targets.dailyAmountTarget}
-          dailyPcsTarget={targets.dailyPcsTarget}
+          dailyAmountTarget={0}
+          dailyPcsTarget={0}
         />
         <MonthlyPerformanceChart
           data={monthlySeries}
-          monthlyAmountTarget={targets.monthlyAmountTarget}
-          monthlyProfitTarget={targets.monthlyProfitTarget}
+          monthlyAmountTarget={0}
+          monthlyProfitTarget={0}
         />
       </div>
 
@@ -687,13 +502,13 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
               <div className="p-3 bg-emerald-50/60 rounded-lg border border-emerald-200/70">
                 <span className="text-[10px] font-bold uppercase text-emerald-700 block">Collected / Paid</span>
                 <p className="text-lg font-black font-mono text-emerald-900 mt-0.5">
-                  ৳{selectedStats.paidRevenue.toLocaleString('en-BD')}
+                  ৳{selectedStats.collectedPaidRevenue.toLocaleString('en-BD')}
                 </p>
               </div>
               <div className="p-3 bg-amber-50/60 rounded-lg border border-amber-200/70">
-                <span className="text-[10px] font-bold uppercase text-amber-800 block">COD Due Pending</span>
+                <span className="text-[10px] font-bold uppercase text-amber-800 block">Receivable / Customer Due</span>
                 <p className="text-lg font-black font-mono text-amber-900 mt-0.5">
-                  ৳{selectedStats.pendingCollectionRevenue.toLocaleString('en-BD')}
+                  ৳{selectedStats.outstandingDueRevenue.toLocaleString('en-BD')}
                 </p>
               </div>
             </div>
@@ -733,6 +548,14 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
               <span className="text-neutral-600">Returned Orders ({selectedStats.returnedCount})</span>
               <span className="font-mono font-semibold text-amber-700">
                 ৳{selectedStats.returnedAmount.toLocaleString('en-BD')} (excluded from sales)
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-b border-neutral-100">
+              <span className="text-neutral-600">
+                Sales Return Slips ({selectedStats.salesReturnsCount} entries · {selectedStats.salesReturnsPcs} pcs)
+              </span>
+              <span className="font-mono font-semibold text-amber-800">
+                ৳{selectedStats.salesReturnsAmount.toLocaleString('en-BD')} ({selectedStats.salesReturnsRestockedPcs} restocked)
               </span>
             </div>
             <div className="flex justify-between py-1">
@@ -981,142 +804,6 @@ export const AdminProfitLoss: React.FC<AdminProfitLossProps> = ({ onNavigateTab 
         )}
       </div>
 
-      {/* TARGETS SETTINGS MODAL */}
-      {targetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
-          <div className="bg-white rounded-xl border border-neutral-200 max-w-md w-full p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
-                <Target className="w-4 h-4" />
-                <span>Configure Daily &amp; Monthly Targets</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setTargetModalOpen(false)}
-                className="p-1 text-neutral-400 hover:text-black cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveTargets} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">
-                    Daily Sale Target (৳)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={targetDraft.dailyAmountTarget}
-                    onChange={(e) =>
-                      setTargetDraft((prev) => ({
-                        ...prev,
-                        dailyAmountTarget: Math.max(0, Number(e.target.value) || 0),
-                      }))
-                    }
-                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">
-                    Daily Pieces Target (Pcs)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={targetDraft.dailyPcsTarget}
-                    onChange={(e) =>
-                      setTargetDraft((prev) => ({
-                        ...prev,
-                        dailyPcsTarget: Math.max(0, Number(e.target.value) || 0),
-                      }))
-                    }
-                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono font-bold"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">
-                    Monthly Sale Target (৳)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={targetDraft.monthlyAmountTarget}
-                    onChange={(e) =>
-                      setTargetDraft((prev) => ({
-                        ...prev,
-                        monthlyAmountTarget: Math.max(0, Number(e.target.value) || 0),
-                      }))
-                    }
-                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">
-                    Monthly Pieces Target (Pcs)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={targetDraft.monthlyPcsTarget}
-                    onChange={(e) =>
-                      setTargetDraft((prev) => ({
-                        ...prev,
-                        monthlyPcsTarget: Math.max(0, Number(e.target.value) || 0),
-                      }))
-                    }
-                    className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono font-bold"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold uppercase text-neutral-600 block mb-1">
-                  Monthly Net Profit Target (৳)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  required
-                  value={targetDraft.monthlyProfitTarget}
-                  onChange={(e) =>
-                    setTargetDraft((prev) => ({
-                      ...prev,
-                      monthlyProfitTarget: Math.max(0, Number(e.target.value) || 0),
-                    }))
-                  }
-                  className="w-full px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-lg font-mono font-bold"
-                />
-              </div>
-
-              <div className="flex gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setTargetModalOpen(false)}
-                  className="flex-1 py-2.5 border border-neutral-300 text-neutral-700 font-bold uppercase rounded-lg cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingTargets}
-                  className="flex-1 py-2.5 bg-black text-white font-bold uppercase rounded-lg hover:bg-neutral-800 disabled:opacity-50 cursor-pointer"
-                >
-                  {savingTargets ? 'Saving...' : 'Save Targets'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

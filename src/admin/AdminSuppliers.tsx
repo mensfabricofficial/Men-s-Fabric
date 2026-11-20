@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Search, Building2, Phone, MapPin, Banknote, X } from 'lucide-react';
 import { Supplier } from '../types';
 import { posService } from '../services/posService';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminSuppliers: React.FC = () => {
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => posService.getLocalSuppliers());
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => posService.getInstantSuppliers());
   const [search, setSearch] = useState('');
 
   // Add / Edit modal
@@ -91,24 +92,20 @@ export const AdminSuppliers: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Suppliers &amp; Vendor Ledger
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Manage fabric mills, garment wholesalers, purchase volumes, and outstanding vendor dues.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openAdd}
-          className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-2 w-fit"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Supplier</span>
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Suppliers & Vendor Ledger"
+        subtitle="Manage fabric mills, garment wholesalers & vendor dues"
+        actions={
+          <button
+            type="button"
+            onClick={openAdd}
+            className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Supplier</span>
+          </button>
+        }
+      />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 tabular-nums">

@@ -13,28 +13,37 @@ import {
   Sliders,
   DollarSign,
   Package,
-  RefreshCw,
   ShieldAlert,
   Cloud,
   ExternalLink,
   Copy,
-  CheckCircle2
+  CheckCircle2,
+  History,
+  AlertTriangle,
 } from 'lucide-react';
-import { Product, Category, ProductColor, ProductVariant } from '../types';
+import { Product, Category, ProductColor, ProductVariant, StockMovementEntry, SalesTargetsConfig } from '../types';
 import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
+import { posService } from '../services/posService';
 import { useAuth } from '../context/AuthContext';
+import { computeStockAudit } from '../lib/accountingUtils';
+import { AdminPageHeader } from './AdminLayout';
 
 export const AdminProducts: React.FC = () => {
-  const { currentUser } = useAuth();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { currentUser, staffProfile } = useAuth();
+  const [products, setProducts] = useState<Product[]>(() => productService.getInstantAllProducts());
+  const [categories, setCategories] = useState<Category[]>(() => productService.getInstantCategories() ?? []);
+  const [movements, setMovements] = useState<StockMovementEntry[]>(() => productService.getInstantStockMovements());
+  const [targets, setTargets] = useState<SalesTargetsConfig>(() => posService.getInstantTargets());
+  const [loading, setLoading] = useState(() => productService.getInstantAllProducts().length === 0);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [viewMode, setViewMode] = useState<'catalog' | 'history'>('catalog');
+  const [thresholdDraft, setThresholdDraft] = useState<number>(() => posService.getInstantTargets().lowStockThresholdDefault || 5);
+  const [savingThreshold, setSavingThreshold] = useState(false);
 
   // Firebase Sync State
-  const [syncingCloud, setSyncingCloud] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [copiedRules, setCopiedRules] = useState(false);
@@ -56,6 +65,7 @@ export const AdminProducts: React.FC = () => {
   const [price, setPrice] = useState<number>(0);
   const [salePrice, setSalePrice] = useState<number | undefined>(undefined);
   const [costPrice, setCostPrice] = useState<number | undefined>(undefined);
+  const [minStock, setMinStock] = useState<number | undefined>(undefined);
   const [images, setImages] = useState<string[]>([]);
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -76,7 +86,9 @@ export const AdminProducts: React.FC = () => {
 
   // Quick Stock Adjustment Modal State
   const [quickStockProduct, setQuickStockProduct] = useState<Product | null>(null);
+  const [quickStockMode, setQuickStockMode] = useState<'set' | 'add' | 'damaged'>('set');
   const [quickStockValue, setQuickStockValue] = useState<number>(0);
+  const [quickStockReason, setQuickStockReason] = useState('');
   const [quickStockSaving, setQuickStockSaving] = useState(false);
 
   // Delete Confirmation Modal State
@@ -90,24 +102,7 @@ export const AdminProducts: React.FC = () => {
   const [bestSeller, setBestSeller] = useState(false);
   const [active, setActive] = useState(true);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [prods, cats] = await Promise.all([
-        productService.getAllProductsAdmin(),
-        productService.getCategories(),
-      ]);
-      setProducts(prods);
-      setCategories(cats);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    setLoading(true);
     const unsubProducts = productService.subscribeToAllProductsAdmin(
       (prods) => {
         setProducts(prods);
@@ -121,10 +116,17 @@ export const AdminProducts: React.FC = () => {
     const unsubCats = productService.subscribeToCategories((cats) => {
       setCategories(cats);
     });
+    const unsubMovements = productService.subscribeToStockMovements(setMovements);
+    const unsubTargets = posService.subscribeToTargets((t) => {
+      setTargets(t);
+      setThresholdDraft(t.lowStockThresholdDefault || 5);
+    });
 
     return () => {
       unsubProducts();
       unsubCats();
+      unsubMovements();
+      unsubTargets();
     };
   }, []);
 
@@ -140,6 +142,7 @@ export const AdminProducts: React.FC = () => {
     setPrice(1850);
     setSalePrice(undefined);
     setCostPrice(1100);
+    setMinStock(undefined);
     setImages(['/assets/aistudio/selvee1_8ff37f5b.jpg']);
     setSizesInput('S, M, L, XL, XXL');
     setColors([
@@ -169,6 +172,7 @@ export const AdminProducts: React.FC = () => {
     setPrice(prod.price);
     setSalePrice(prod.salePrice);
     setCostPrice(prod.costPrice);
+    setMinStock(prod.minStock);
     setImages(prod.images || [prod.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg']);
     setSizesInput((prod.sizes || []).join(', '));
     setColors(prod.colors || []);
@@ -273,6 +277,7 @@ export const AdminProducts: React.FC = () => {
       price: Number(price) || 0,
       salePrice: salePrice ? Number(salePrice) : undefined,
       costPrice: costPrice ? Number(costPrice) : undefined,
+      minStock: minStock !== undefined && minStock > 0 ? Number(minStock) : undefined,
       images: images.length > 0 ? images : ['/assets/aistudio/selvee1_8ff37f5b.jpg'],
       thumbnail: images[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg',
       sizes: parsedSizes,
@@ -329,11 +334,9 @@ export const AdminProducts: React.FC = () => {
 
       setModalOpen(false);
       setTimeout(() => setActionToast(null), 3500);
-      await loadData();
     } catch (err: any) {
       console.warn('Product save notice:', err);
       setModalOpen(false);
-      await loadData();
     } finally {
       setSaving(false);
     }
@@ -341,38 +344,71 @@ export const AdminProducts: React.FC = () => {
 
   const handleOpenQuickStock = (prod: Product) => {
     setQuickStockProduct(prod);
+    setQuickStockMode('set');
     setQuickStockValue(prod.totalStock || 0);
+    setQuickStockReason('');
   };
 
   const handleSaveQuickStock = async () => {
     if (!quickStockProduct) return;
     setQuickStockSaving(true);
+    const actor = staffProfile?.name || currentUser?.email || 'Admin';
+    const prevStock = quickStockProduct.totalStock || 0;
     try {
-      await productService.quickUpdateStock(quickStockProduct.id, quickStockValue);
+      const updatedProd = await productService.adjustProductStockWithMovement({
+        productId: quickStockProduct.id,
+        mode: quickStockMode,
+        quantity: quickStockValue,
+        reason: quickStockReason,
+        staffName: actor,
+      });
+      const finalStock = updatedProd?.totalStock ?? quickStockValue;
       if (currentUser) {
         try {
           await settingsService.logAdminAction(
             currentUser.uid,
             currentUser.email || '',
-            'UPDATE_STOCK',
+            quickStockMode === 'damaged' ? 'DAMAGED_STOCK_WRITE_OFF' : 'UPDATE_STOCK',
             quickStockProduct.id,
-            `Stock updated to ${quickStockValue} units for ${quickStockProduct.name}`
+            `Stock ${quickStockMode} to ${finalStock} units for ${quickStockProduct.name}`,
+            {
+              entityType: 'product_stock',
+              beforeValue: `${prevStock} pcs`,
+              afterValue: `${finalStock} pcs`,
+            }
           );
         } catch {
           // non-blocking
         }
       }
-      setProducts((prev) =>
-        prev.map((p) => (p.id === quickStockProduct.id ? { ...p, totalStock: quickStockValue } : p))
-      );
+      if (updatedProd) {
+        setProducts((prev) =>
+          prev.map((p) => (p.id === quickStockProduct.id ? updatedProd : p))
+        );
+      }
       setQuickStockProduct(null);
-      setActionToast(`Stock for "${quickStockProduct.name}" set to ${quickStockValue}.`);
+      setActionToast(`Stock for "${quickStockProduct.name}" updated to ${finalStock} pcs.`);
       setTimeout(() => setActionToast(null), 3000);
     } catch (e: any) {
       setActionToast('Failed to update stock: ' + (e.message || 'Unknown error'));
       setTimeout(() => setActionToast(null), 4000);
     } finally {
       setQuickStockSaving(false);
+    }
+  };
+
+  const handleSaveThreshold = async () => {
+    setSavingThreshold(true);
+    try {
+      const next = await posService.saveTargets({
+        ...targets,
+        lowStockThresholdDefault: Math.max(1, Number(thresholdDraft) || 5),
+      });
+      setTargets(next);
+      setActionToast(`Low stock alert threshold set to ${next.lowStockThresholdDefault} pcs.`);
+      setTimeout(() => setActionToast(null), 3000);
+    } finally {
+      setSavingThreshold(false);
     }
   };
 
@@ -502,26 +538,20 @@ service cloud.firestore {
     setTimeout(() => setCopiedRules(false), 2500);
   };
 
-  const handleSyncToCloud = async () => {
-    setSyncingCloud(true);
-    setSyncStatusMessage(null);
-    try {
-      const res = await productService.syncAllProductsToFirestore();
-      if (res.failed > 0) {
-        setSyncStatusMessage(`⚠️ Firebase Permission Notice: Uploaded ${res.success} products, but ${res.failed} rejected (${res.error}). To allow mobile visitors to see your products, update your Firebase Firestore Rules.`);
-      } else {
-        setSyncStatusMessage(`✅ Success! All ${res.success} products are uploaded to Firebase Cloud! Now visible across all devices & phones.`);
-        setTimeout(() => setSyncStatusMessage(null), 6000);
-      }
-    } catch (e: any) {
-      setSyncStatusMessage(`Sync error: ${e?.message || 'Unknown error'}`);
-    } finally {
-      setSyncingCloud(false);
-    }
-  };
+  const globalLowThreshold = Math.max(1, Number(targets.lowStockThresholdDefault) || 5);
+  const stockAudit = computeStockAudit({
+    products,
+    purchases: [],
+    orders: [],
+    lowStockThreshold: globalLowThreshold,
+  });
 
   const filteredProducts = products.filter((p) => {
     if (filterCat !== 'all' && p.category !== filterCat) return false;
+    const stock = Math.max(0, Number(p.totalStock) || 0);
+    const threshold = typeof p.minStock === 'number' && p.minStock > 0 ? p.minStock : globalLowThreshold;
+    if (stockFilter === 'out' && stock > 0) return false;
+    if (stockFilter === 'low' && (stock <= 0 || stock > threshold)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       return p.name.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.fabric?.toLowerCase().includes(q);
@@ -529,53 +559,46 @@ service cloud.firestore {
     return true;
   });
 
+  const filteredMovements = movements.filter((m) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      m.productName.toLowerCase().includes(q) ||
+      m.sku?.toLowerCase().includes(q) ||
+      m.reason?.toLowerCase().includes(q) ||
+      m.referenceId?.toLowerCase().includes(q) ||
+      m.staffName.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="space-y-6">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold uppercase tracking-tight text-neutral-900">
-            Product Catalog Management
-          </h1>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Manage your apparel catalog, size matrices, colors, pricing, and stock.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Products Catalog"
+        subtitle="Manage apparel products, prices, variants & cloud sync"
+        actions={
+          <>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Sync All to Cloud Button */}
-          <button
-            type="button"
-            onClick={handleSyncToCloud}
-            disabled={syncingCloud}
-            className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-neutral-300"
-            title="Upload all locally saved products to Firebase Cloud so mobile devices see them"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncingCloud ? 'animate-spin' : ''}`} />
-            <span>{syncingCloud ? 'Syncing...' : 'Sync to Cloud (মোবাইলে দেখানোর জন্য)'}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setShowRulesModal(true)}
+              className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-neutral-300"
+              title="View Firebase Security Rules configuration"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-neutral-700" />
+              <span>Firebase Rules</span>
+            </button>
 
-          {/* Firebase Rules Guide Button */}
-          <button
-            type="button"
-            onClick={() => setShowRulesModal(true)}
-            className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-neutral-300"
-            title="View Firebase Security Rules configuration"
-          >
-            <ShieldAlert className="w-3.5 h-3.5 text-neutral-700" />
-            <span>Firebase Rules</span>
-          </button>
-
-          <button
-            onClick={openAddModal}
-            className="px-4 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add New Product</span>
-          </button>
-        </div>
-      </div>
+            <button
+              onClick={openAddModal}
+              className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add New Product</span>
+            </button>
+          </>
+        }
+      />
 
       {/* Sync Status Banner */}
       {syncStatusMessage && (
@@ -609,32 +632,206 @@ service cloud.firestore {
         </div>
       )}
 
-      {/* Filter and Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-neutral-200 shadow-xs flex flex-col sm:flex-row gap-3">
+      {/* Stock Valuation & Alert Summary Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
+        <div className="bg-white border border-neutral-200 rounded-xl p-4">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">Total Stock Qty</span>
+          <p className="text-2xl font-black font-mono text-neutral-900 mt-1">
+            {stockAudit.totalStockPcs.toLocaleString('en-BD')} pcs
+          </p>
+          <span className="text-[11px] text-neutral-400">{stockAudit.activeProducts} active products</span>
+        </div>
+        <div className="bg-white border border-neutral-200 rounded-xl p-4">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">Stock Cost Value</span>
+          <p className="text-2xl font-black font-mono text-neutral-900 mt-1">
+            ৳{stockAudit.stockCostValue.toLocaleString('en-BD')}
+          </p>
+          <span className="text-[11px] text-neutral-400">Wholesale cost in hand</span>
+        </div>
+        <div className="bg-white border border-neutral-200 rounded-xl p-4">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">Stock Selling Value</span>
+          <p className="text-2xl font-black font-mono text-emerald-700 mt-1">
+            ৳{stockAudit.stockSellingValue.toLocaleString('en-BD')}
+          </p>
+          <span className="text-[11px] text-neutral-400">Potential retail value</span>
+        </div>
+        <div className="bg-white border border-neutral-200 rounded-xl p-4">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">Low &amp; Out of Stock</span>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="text-2xl font-black font-mono text-amber-700">{stockAudit.lowStockCount}</span>
+            <span className="text-xs text-neutral-400">low ·</span>
+            <span className="text-2xl font-black font-mono text-red-700">{stockAudit.outOfStockCount}</span>
+            <span className="text-xs text-neutral-400">out</span>
+          </div>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="text-[10px] text-neutral-500">Min Alert ≤</span>
+            <input
+              type="number"
+              min={1}
+              value={thresholdDraft}
+              onChange={(e) => setThresholdDraft(Math.max(1, Number(e.target.value) || 1))}
+              className="w-12 px-1.5 py-0.5 text-[11px] font-mono bg-neutral-50 border border-neutral-300 rounded text-center"
+            />
+            <button
+              type="button"
+              disabled={savingThreshold}
+              onClick={handleSaveThreshold}
+              className="px-2 py-0.5 bg-black text-white text-[10px] font-bold rounded cursor-pointer hover:bg-neutral-800 disabled:opacity-40"
+            >
+              {savingThreshold ? '...' : 'Set'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mode Switch + Filter and Search Bar */}
+      <div className="bg-white p-4 rounded-xl border border-neutral-200 shadow-xs flex flex-col lg:flex-row gap-3 items-stretch lg:items-center">
+        <div className="inline-flex items-center gap-1 p-1 bg-neutral-100 rounded-lg self-start shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('catalog');
+              setStockFilter('all');
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              viewMode === 'catalog' && stockFilter === 'all' ? 'bg-white text-black shadow-xs' : 'text-neutral-600 hover:text-black'
+            }`}
+          >
+            All ({products.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('catalog');
+              setStockFilter('low');
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer inline-flex items-center gap-1 ${
+              viewMode === 'catalog' && stockFilter === 'low' ? 'bg-amber-600 text-white shadow-xs' : 'text-amber-800 hover:bg-amber-50'
+            }`}
+          >
+            <AlertTriangle className="w-3 h-3" /> Low Stock ({stockAudit.lowStockCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('catalog');
+              setStockFilter('out');
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              viewMode === 'catalog' && stockFilter === 'out' ? 'bg-red-600 text-white shadow-xs' : 'text-red-700 hover:bg-red-50'
+            }`}
+          >
+            Out ({stockAudit.outOfStockCount})
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('history')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer inline-flex items-center gap-1 ${
+              viewMode === 'history' ? 'bg-black text-white shadow-xs' : 'text-neutral-600 hover:text-black'
+            }`}
+          >
+            <History className="w-3 h-3" /> Stock Movements ({movements.length})
+          </button>
+        </div>
+
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, SKU, or fabric..."
+            placeholder={viewMode === 'history' ? 'Search movements by product, SKU, reason, or ref #...' : 'Search by name, SKU, or fabric...'}
             className="w-full pl-9 pr-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black"
           />
         </div>
 
-        <select
-          value={filterCat}
-          onChange={(e) => setFilterCat(e.target.value)}
-          className="px-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black cursor-pointer"
-        >
-          <option value="all">All Categories</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+        {viewMode === 'catalog' && (
+          <select
+            value={filterCat}
+            onChange={(e) => setFilterCat(e.target.value)}
+            className="px-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:border-black cursor-pointer"
+          >
+            <option value="all">All Categories</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
-      {/* Products Table */}
+      {/* Main Content: Stock Movements OR Products Table */}
+      {viewMode === 'history' ? (
+        <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs">
+          {filteredMovements.length === 0 ? (
+            <div className="p-12 text-center text-xs text-neutral-500 space-y-2">
+              <History className="w-9 h-9 text-neutral-300 mx-auto" />
+              <p className="font-bold text-neutral-900 text-sm">No stock movements logged yet</p>
+              <p className="text-neutral-400 max-w-sm mx-auto">
+                Purchases, POS sales, Stage 3 stock deductions, returns, manual adjustments, and damaged write-offs are recorded automatically here.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-neutral-50 text-neutral-500 uppercase tracking-wider font-bold border-b border-neutral-200">
+                  <tr>
+                    <th className="p-3.5">Date / Time</th>
+                    <th className="p-3.5">Product / SKU</th>
+                    <th className="p-3.5">Movement Type</th>
+                    <th className="p-3.5 text-right">Previous → New</th>
+                    <th className="p-3.5 text-right">Change</th>
+                    <th className="p-3.5">Reason / Ref</th>
+                    <th className="p-3.5">Staff</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 font-medium tabular-nums">
+                  {filteredMovements.map((mv) => (
+                    <tr key={mv.id} className="hover:bg-neutral-50/50">
+                      <td className="p-3.5 font-mono text-[11px] text-neutral-500 whitespace-nowrap">
+                        {new Date(mv.timestamp).toLocaleString()}
+                      </td>
+                      <td className="p-3.5">
+                        <p className="font-bold text-neutral-900">{mv.productName}</p>
+                        <p className="text-[10px] font-mono text-neutral-400">{mv.sku || mv.productId}</p>
+                      </td>
+                      <td className="p-3.5">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            mv.type === 'purchase' || mv.type === 'return'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : mv.type === 'damaged'
+                                ? 'bg-red-100 text-red-800'
+                                : mv.type === 'sale'
+                                  ? 'bg-neutral-900 text-white'
+                                  : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {mv.type}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-right font-mono text-neutral-700">
+                        {mv.previousStock} → <b>{mv.newStock}</b>
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold">
+                        <span className={mv.change >= 0 ? 'text-emerald-700' : 'text-red-700'}>
+                          {mv.change > 0 ? `+${mv.change}` : mv.change} pcs
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-neutral-600 max-w-xs">
+                        <span>{mv.reason || '—'}</span>
+                        {mv.referenceId && (
+                          <span className="ml-1.5 font-mono text-[10px] text-neutral-400">({mv.referenceId})</span>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-neutral-700">{mv.staffName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs">
         {loading ? (
           <div className="p-8 text-center text-xs text-neutral-500">Loading product catalog...</div>
@@ -642,11 +839,11 @@ service cloud.firestore {
           <div className="p-12 text-center text-neutral-500">
             <Package className="w-10 h-10 text-neutral-300 mx-auto mb-2" />
             <h4 className="text-sm font-bold text-neutral-900 mb-1">
-              {search.trim() || filterCat !== 'all' ? 'No products match the filter' : 'No products in catalog'}
+              {search.trim() || filterCat !== 'all' || stockFilter !== 'all' ? 'No products match the filter' : 'No products in catalog'}
             </h4>
             <p className="text-xs text-neutral-500 mb-4 max-w-sm mx-auto">
-              {search.trim() || filterCat !== 'all'
-                ? 'Try adjusting your search query or category filter.'
+              {search.trim() || filterCat !== 'all' || stockFilter !== 'all'
+                ? 'Try adjusting your search query, category, or stock threshold filter.'
                 : 'Click "Add New Product" to create your first apparel listing.'}
             </p>
             <button
@@ -666,16 +863,17 @@ service cloud.firestore {
                   <th className="p-3.5">Product</th>
                   <th className="p-3.5">SKU</th>
                   <th className="p-3.5">Category</th>
-                  <th className="p-3.5">Price</th>
-                  <th className="p-3.5">Stock</th>
+                  <th className="p-3.5">Price / Cost</th>
+                  <th className="p-3.5">Stock / Min Level</th>
                   <th className="p-3.5">Badges</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-100 font-medium">
+              <tbody className="divide-y divide-neutral-100 font-medium tabular-nums">
                 {filteredProducts.map((p) => {
                   const isSale = p.salePrice && p.salePrice < p.price;
+                  const threshold = typeof p.minStock === 'number' && p.minStock > 0 ? p.minStock : globalLowThreshold;
                   return (
                     <tr key={p.id} className="hover:bg-neutral-50/50">
                       <td className="p-3.5">
@@ -702,25 +900,33 @@ service cloud.firestore {
                             ৳{p.price.toLocaleString('en-BD')}
                           </div>
                         )}
+                        {typeof p.costPrice === 'number' && p.costPrice > 0 && (
+                          <div className="text-[10px] font-mono text-neutral-500">
+                            Cost: ৳{p.costPrice.toLocaleString('en-BD')}
+                          </div>
+                        )}
                       </td>
                       <td className="p-3.5">
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                             p.totalStock <= 0 ? 'bg-red-100 text-red-800' :
-                            p.totalStock < 5 ? 'bg-amber-100 text-amber-800' :
+                            p.totalStock <= threshold ? 'bg-amber-100 text-amber-800' :
                             'bg-emerald-100 text-emerald-800'
                           }`}>
-                            {p.totalStock} in stock
+                            {p.totalStock <= 0 ? 'Out of Stock (0)' : p.totalStock <= threshold ? `Low (${p.totalStock})` : `${p.totalStock} in stock`}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleOpenQuickStock(p)}
                             className="px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[10px] font-bold rounded border border-neutral-300 transition-colors cursor-pointer"
-                            title="Quick Adjust Stock"
+                            title="Add, Set or Write-off Damaged Stock"
                           >
-                            Set
+                            Adjust
                           </button>
                         </div>
+                        <span className="block text-[10px] text-neutral-400 font-mono mt-0.5">
+                          Min: {threshold} pcs{(p.damagedStock || 0) > 0 ? ` · Damaged: ${p.damagedStock}` : ''}
+                        </span>
                       </td>
                       <td className="p-3.5">
                         <div className="flex gap-1">
@@ -760,6 +966,7 @@ service cloud.firestore {
           </div>
         )}
       </div>
+      )}
 
       {/* Add / Edit Product Modal */}
       {modalOpen && (
@@ -1044,19 +1251,32 @@ service cloud.firestore {
                     </div>
                   </div>
 
-                  {/* Quick Presets */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-neutral-100 text-[10px]">
-                    <span className="font-bold text-neutral-500 uppercase mr-1">Quick Presets:</span>
-                    {[0, 10, 25, 50, 100, 200].map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => handleBulkAssignStock(preset)}
-                        className="px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded border border-neutral-200 cursor-pointer"
-                      >
-                        {preset === 0 ? 'Out of Stock' : `${preset} Units`}
-                      </button>
-                    ))}
+                  {/* Quick Presets & Min Stock Alert Threshold */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100 text-[10px]">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-bold text-neutral-500 uppercase mr-1">Quick Presets:</span>
+                      {[0, 10, 25, 50, 100, 200].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => handleBulkAssignStock(preset)}
+                          className="px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded border border-neutral-200 cursor-pointer"
+                        >
+                          {preset === 0 ? 'Out of Stock' : `${preset} Units`}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-neutral-500 uppercase">Min Alert Level:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder={String(globalLowThreshold)}
+                        value={minStock || ''}
+                        onChange={(e) => setMinStock(e.target.value ? Number(e.target.value) : undefined)}
+                        className="w-16 px-2 py-1 text-center bg-neutral-50 border border-neutral-300 rounded font-mono font-bold text-xs"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1227,14 +1447,16 @@ service cloud.firestore {
         </div>
       )}
 
-      {/* Quick Stock Adjustment Modal */}
+      {/* Quick Stock Adjustment Modal (Add / Set / Damaged Write-off) */}
       {quickStockProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 animate-fade-in border border-neutral-200">
             <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
               <div>
-                <h3 className="font-bold text-sm text-neutral-900 uppercase tracking-tight">Adjust Stock</h3>
-                <p className="text-[11px] text-neutral-500 line-clamp-1">{quickStockProduct.name}</p>
+                <h3 className="font-bold text-sm text-neutral-900 uppercase tracking-tight">Stock Control &amp; Adjustment</h3>
+                <p className="text-[11px] text-neutral-500 line-clamp-1">
+                  {quickStockProduct.name} · Current: <b>{quickStockProduct.totalStock} pcs</b>
+                </p>
               </div>
               <button
                 onClick={() => setQuickStockProduct(null)}
@@ -1244,7 +1466,33 @@ service cloud.firestore {
               </button>
             </div>
 
-            <div className="py-2 text-center space-y-3">
+            <div className="grid grid-cols-3 gap-1 p-1 bg-neutral-100 rounded-lg text-[11px] font-bold">
+              {([
+                { id: 'set', label: 'Set Exact' },
+                { id: 'add', label: '+ Add Stock' },
+                { id: 'damaged', label: 'Damaged (−)' },
+              ] as const).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setQuickStockMode(m.id);
+                    setQuickStockValue(m.id === 'set' ? quickStockProduct.totalStock || 0 : 1);
+                  }}
+                  className={`py-1.5 rounded-md cursor-pointer transition-colors ${
+                    quickStockMode === m.id
+                      ? m.id === 'damaged'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-white text-black shadow-xs'
+                      : 'text-neutral-600'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="py-1 text-center space-y-3">
               <div className="flex items-center justify-center gap-3">
                 <button
                   type="button"
@@ -1269,26 +1517,32 @@ service cloud.firestore {
                 </button>
               </div>
 
-              {/* Quick adjustments */}
               <div className="flex justify-center gap-1.5 text-[11px] font-bold">
-                {[+5, +10, +25, +50].map((delta) => (
+                {[5, 10, 25, 50].map((delta) => (
                   <button
                     key={delta}
                     type="button"
-                    onClick={() => setQuickStockValue((prev) => prev + delta)}
+                    onClick={() =>
+                      setQuickStockValue((prev) => (quickStockMode === 'set' ? prev + delta : delta))
+                    }
                     className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded border border-neutral-200 cursor-pointer"
                   >
-                    +{delta}
+                    {quickStockMode === 'set' ? `+${delta}` : `${delta} pcs`}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => setQuickStockValue(0)}
-                  className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 cursor-pointer"
-                >
-                  Clear (0)
-                </button>
               </div>
+
+              <input
+                type="text"
+                value={quickStockReason}
+                onChange={(e) => setQuickStockReason(e.target.value)}
+                placeholder={
+                  quickStockMode === 'damaged'
+                    ? 'Reason (e.g. Torn stitch, faded fabric)'
+                    : 'Reason / Reference note (optional)'
+                }
+                className="w-full px-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-lg"
+              />
             </div>
 
             <div className="flex gap-2 pt-2 border-t border-neutral-100">
@@ -1303,9 +1557,17 @@ service cloud.firestore {
                 type="button"
                 disabled={quickStockSaving}
                 onClick={handleSaveQuickStock}
-                className="flex-1 py-2 text-xs font-bold text-white bg-black hover:bg-neutral-800 rounded-lg cursor-pointer disabled:bg-neutral-400"
+                className={`flex-1 py-2 text-xs font-bold text-white rounded-lg cursor-pointer disabled:bg-neutral-400 ${
+                  quickStockMode === 'damaged' ? 'bg-red-600 hover:bg-red-700' : 'bg-black hover:bg-neutral-800'
+                }`}
               >
-                {quickStockSaving ? 'Saving...' : 'Save Stock'}
+                {quickStockSaving
+                  ? 'Saving...'
+                  : quickStockMode === 'add'
+                    ? 'Add Stock'
+                    : quickStockMode === 'damaged'
+                      ? 'Deduct Damaged'
+                      : 'Save Stock'}
               </button>
             </div>
           </div>
@@ -1407,7 +1669,7 @@ service cloud.firestore {
                   <li><a href="https://console.firebase.google.com/project/men-s-fabric-71eb8/firestore/rules" target="_blank" rel="noreferrer" className="text-blue-600 underline font-semibold">Firebase Console → Firestore Database → Rules</a> এ যান।</li>
                   <li>সব কোড মুছে দিয়ে উপরের <b>Copy Code</b> বাটনে ক্লিক করা কোডটি পেস্ট করুন।</li>
                   <li>উপরের ডানপাশে থাকা <b>Publish</b> বাটনে ক্লিক করুন।</li>
-                  <li>তারপর এই পেজে এসে <b>"Sync to Cloud"</b> বাটনে ক্লিক করলেই আপনার সব প্রোডাক্ট ক্লাউডে উঠে যাবে!</li>
+                  <li>Publish করলেই রিয়েল-টাইমে অটোমেটিক ক্লাউডে সিঙ্ক হয়ে যাবে।</li>
                 </ol>
               </div>
             </div>

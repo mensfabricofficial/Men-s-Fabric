@@ -11,6 +11,8 @@ import {
   updateDoc,
   setDoc,
   limit,
+  onSnapshot,
+  Unsubscribe,
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
@@ -20,11 +22,13 @@ import {
   OrderItem,
   OrderPipelineData,
   OrderPipelineStage,
+  OrderPipelineSubStatus,
   OrderStatus,
   PaymentStatus,
   ShippingAddress,
   PaymentMethod,
   PaymentDetails,
+  CustomerPaymentLog,
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { getLocalDeliveryZones, settingsService } from './settingsService';
@@ -33,6 +37,30 @@ import { notificationService } from './notificationService';
 
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
 const cachedOrdersMap = new Map<string, Order>();
+let liveAllOrders: Order[] | null = null;
+const allOrdersListeners = new Set<(orders: Order[]) => void>();
+let sharedOrdersUnsub: Unsubscribe | null = null;
+const sessionOptimisticOrders = new Map<string, Order>();
+
+const getOrderTimeMs = (t: any): number => {
+  if (!t) return 0;
+  if (typeof t.toMillis === 'function') return t.toMillis();
+  if (typeof t.seconds === 'number') return t.seconds * 1000;
+  if (typeof t === 'string') return Date.parse(t) || 0;
+  if (typeof t === 'number') return t;
+  return 0;
+};
+
+const sortOrdersDesc = (list: Order[]): Order[] =>
+  [...list].sort((a, b) => getOrderTimeMs(b.createdAt) - getOrderTimeMs(a.createdAt));
+
+const persistOrdersBackup = (list: Order[]) => {
+  try {
+    localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {
+    // ignore quota
+  }
+};
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number, label = 'Request timed out'): Promise<T> =>
   Promise.race([
@@ -60,8 +88,14 @@ export const cacheOrderRecord = (ord: Order) => {
 };
 
 export const orderService = {
-  // Get persistent local orders
+  // Instant synchronous accessor returning ONLY live synced in-memory orders (never stale localStorage)
+  getInstantOrders(): Order[] {
+    return liveAllOrders ?? [];
+  },
+
+  // Get persistent local orders (offline fallback / mutator helper)
   getLocalOrders(): Order[] {
+    if (liveAllOrders !== null) return liveAllOrders;
     try {
       const raw = localStorage.getItem(LOCAL_ORDERS_KEY);
       if (raw) {
@@ -77,24 +111,39 @@ export const orderService = {
     return [];
   },
 
-  // Save to local storage and notify listeners
+  // Save optimistic order mutation to live memory, backup storage, and notify listeners
   saveLocalOrder(order: Order) {
     if (!order) return;
+    if (order.id) {
+      sessionOptimisticOrders.set(order.id, order);
+    }
     try {
-      const list = this.getLocalOrders();
-      const idx = list.findIndex(
-        (o) => (o.id && o.id === order.id) || (o.orderNumber && o.orderNumber === order.orderNumber)
-      );
+      const raw = localStorage.getItem(LOCAL_ORDERS_KEY);
+      const list: Order[] = raw ? JSON.parse(raw) : [];
+      const idx = Array.isArray(list)
+        ? list.findIndex(
+            (o) => (o.id && o.id === order.id) || (o.orderNumber && o.orderNumber === order.orderNumber)
+          )
+        : -1;
+      const nextList = Array.isArray(list) ? [...list] : [];
       if (idx >= 0) {
-        list[idx] = { ...list[idx], ...order };
+        nextList[idx] = { ...nextList[idx], ...order };
       } else {
-        list.unshift(order);
+        nextList.unshift(order);
       }
-      localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(list.slice(0, 100)));
+      persistOrdersBackup(nextList);
     } catch {
       // ignore
     }
     cacheOrderRecord(order);
+    if (liveAllOrders !== null) {
+      const idx = liveAllOrders.findIndex((o) => o.id === order.id);
+      const next = idx >= 0
+        ? liveAllOrders.map((o, i) => (i === idx ? { ...o, ...order } : o))
+        : sortOrdersDesc([order, ...liveAllOrders]);
+      liveAllOrders = next;
+      allOrdersListeners.forEach((cb) => cb(next));
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('mf_orders_updated', { detail: order }));
     }
@@ -209,26 +258,20 @@ export const orderService = {
             calculatedSubtotal += itemTotal;
 
             const currentStock = typeof productData.totalStock === 'number' ? productData.totalStock : 50;
-            let variantUpdated = false;
+            if (currentStock < cartItem.quantity) {
+              throw new Error(
+                `Insufficient stock for ${productData.name}. Available: ${currentStock}`
+              );
+            }
 
-            const updatedVariants = (productData.variants || []).map((variant: any) => {
+            (productData.variants || []).forEach((variant: any) => {
               if (variant.size === cartItem.size && (!variant.color || variant.color === cartItem.color)) {
                 if (typeof variant.stock === 'number' && variant.stock < cartItem.quantity) {
                   throw new Error(
                     `Insufficient stock for ${productData.name} (${cartItem.size}). Available: ${variant.stock}`
                   );
                 }
-                variantUpdated = true;
-                return { ...variant, stock: Math.max(0, (variant.stock || 0) - cartItem.quantity) };
               }
-              return variant;
-            });
-
-            const newTotalStock = Math.max(0, currentStock - cartItem.quantity);
-            productUpdates.push({
-              productRef,
-              newTotalStock,
-              updatedVariants: variantUpdated ? updatedVariants : (productData.variants || []),
             });
 
             const resolvedUnitCost =
@@ -358,6 +401,7 @@ export const orderService = {
             orderChannel: 'online',
             pipeline: {
               currentStage: 'order_verification',
+              stockDeducted: false,
               handoffHistory: [
                 {
                   stage: 'order_verification',
@@ -379,14 +423,8 @@ export const orderService = {
           };
 
           // --- PHASE 3: ALL WRITES ---
-          // 1. Decrement inventory
-          for (const update of productUpdates) {
-            transaction.update(update.productRef, {
-              variants: update.updatedVariants,
-              totalStock: update.newTotalStock,
-              updatedAt: serverTimestamp(),
-            });
-          }
+          // Note: Stock is verified at checkout and deducted at Stage 3 (Stock Control approval).
+          void productUpdates;
 
           // 2. Increment coupon usage & auto-deactivate if usage limit reached (or free_delivery 1-time coupon)
           if (couponDoc && couponDoc.exists() && validCouponDocId) {
@@ -436,18 +474,7 @@ export const orderService = {
           ).catch(() => {});
         }
 
-        // Sync stock decrement locally without blocking checkout redirect (Firestore transaction already committed inventory)
-        productService
-          .decrementProductStock(
-            items.map((i) => ({
-              productId: i.productId,
-              size: i.size,
-              color: i.color,
-              quantity: i.quantity,
-            })),
-            true
-          )
-          .catch(() => {});
+        // Online order inventory waits for Stock Control Stage 3 approval before deduction
 
         // Notify customer + authorized admin devices (in-app & mobile push alert)
         const totalItemsCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
@@ -572,6 +599,7 @@ export const orderService = {
           orderChannel: 'online',
           pipeline: {
             currentStage: 'order_verification',
+            stockDeducted: false,
             handoffHistory: [
               {
                 stage: 'order_verification',
@@ -624,17 +652,7 @@ export const orderService = {
           ).catch(() => {});
         }
 
-        // Sync inventory decrement in background so checkout navigation is instant
-        productService
-          .decrementProductStock(
-            items.map((i) => ({
-              productId: i.productId,
-              size: i.size,
-              color: i.color,
-              quantity: i.quantity,
-            }))
-          )
-          .catch(() => {});
+        // Inventory will be deducted once Stock Control approves Stage 3
 
         // Notify customer + authorized admin devices in fallback checkout path
         const fallbackItemCount = items.reduce((acc, i) => acc + (i.quantity || 1), 0);
@@ -1042,17 +1060,109 @@ export const orderService = {
     return orders;
   },
 
+  ensureSharedOrdersListener() {
+    if (sharedOrdersUnsub) return;
+    try {
+      const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      sharedOrdersUnsub = onSnapshot(
+        q,
+        (snap) => {
+          const orderMap = new Map<string, Order>();
+          snap.forEach((d) => {
+            const ord = { id: d.id, ...(d.data() as Omit<Order, 'id'>) };
+            orderMap.set(ord.id, ord);
+            cacheOrderRecord(ord);
+          });
+
+          // Only preserve genuinely unsettled optimistic session writes not yet reflected in remote
+          sessionOptimisticOrders.forEach((optOrd, id) => {
+            const remote = orderMap.get(id);
+            if (!remote) {
+              orderMap.set(id, optOrd);
+              return;
+            }
+            const remoteTimelineLen = remote.timeline?.length || 0;
+            const optTimelineLen = optOrd.timeline?.length || 0;
+            const remoteUpdated = getOrderTimeMs(remote.updatedAt);
+            const optUpdated = getOrderTimeMs(optOrd.updatedAt);
+            if (optTimelineLen > remoteTimelineLen || (optUpdated > remoteUpdated && remoteUpdated > 0)) {
+              orderMap.set(id, optOrd);
+            } else {
+              sessionOptimisticOrders.delete(id);
+            }
+          });
+
+          const sorted = sortOrdersDesc(Array.from(orderMap.values()));
+          liveAllOrders = sorted;
+          persistOrdersBackup(sorted);
+          allOrdersListeners.forEach((cb) => cb(sorted));
+        },
+        (err) => {
+          console.warn('Realtime orders notice (using fallback cache):', err);
+          if (liveAllOrders === null) {
+            try {
+              const raw = localStorage.getItem(LOCAL_ORDERS_KEY);
+              const parsed = raw ? JSON.parse(raw) : [];
+              const fallback = Array.isArray(parsed) ? sortOrdersDesc(parsed) : [];
+              liveAllOrders = fallback;
+              allOrdersListeners.forEach((cb) => cb(fallback));
+            } catch {
+              liveAllOrders = [];
+              allOrdersListeners.forEach((cb) => cb([]));
+            }
+          }
+        }
+      );
+    } catch {
+      if (liveAllOrders === null) {
+        liveAllOrders = [];
+        allOrdersListeners.forEach((cb) => cb([]));
+      }
+    }
+  },
+
+  // Admin: Real-time live subscription for all orders (single shared Firestore persistentLocalCache stream)
+  subscribeToAllOrdersAdmin(callback: (orders: Order[]) => void): Unsubscribe {
+    allOrdersListeners.add(callback);
+    if (liveAllOrders !== null) {
+      callback(liveAllOrders);
+    }
+    this.ensureSharedOrdersListener();
+
+    return () => {
+      allOrdersListeners.delete(callback);
+    };
+  },
+
   // Admin: Update order status
   async updateOrderStatus(orderId: string, status: OrderStatus, note?: string) {
     let notifiedOrderInfo: Partial<Order> | null = null;
     const timestamp = new Date().toISOString();
     const resolvedNote = note || `Status updated to ${status} by Administrator.`;
+    const buildDeliveredPatch = (ord: Partial<Order>) => {
+      if (status !== 'delivered') return {};
+      const orderTotal = Math.max(0, Number(ord.total) || 0);
+      return {
+        paymentStatus: 'paid' as PaymentStatus,
+        paidAmount: orderTotal,
+        dueAmount: 0,
+        dueOnDelivery: 0,
+        pipeline: {
+          ...(ord.pipeline || { handoffHistory: [] }),
+          currentStage: 'completed' as OrderPipelineStage,
+          subStatus: 'DELIVERED' as OrderPipelineSubStatus,
+          deliveredAt: ord.pipeline?.deliveredAt || timestamp,
+        },
+      };
+    };
 
     // 1. Update local copy immediately
     const localOrders = this.getLocalOrders();
     const target = localOrders.find((o) => o.id === orderId);
     if (target) {
       target.orderStatus = status;
+      target.updatedAt = timestamp;
+      Object.assign(target, buildDeliveredPatch(target));
       target.timeline = [...(target.timeline || [])];
       target.timeline.push({
         status,
@@ -1077,11 +1187,15 @@ export const orderService = {
           note: resolvedNote,
         });
 
-        const updPromise = updateDoc(orderRef, {
-          orderStatus: status,
-          timeline,
-          updatedAt: serverTimestamp(),
-        });
+        const updPromise = updateDoc(
+          orderRef,
+          sanitizeForFirestore({
+            orderStatus: status,
+            ...buildDeliveredPatch(data),
+            timeline,
+            updatedAt: serverTimestamp(),
+          })
+        );
         updPromise.catch(() => {});
         await withTimeout(updPromise, 2500, 'Update queued in background');
       } else if (target) {
@@ -1262,10 +1376,11 @@ export const orderService = {
     return 'order_verification';
   },
 
-  // Advance / transition an order across workflow stages with staff accountability
+  // Advance / transition an order across workflow stages with staff accountability & Stage 3 stock deduction
   async transferOrderStage(params: {
     orderId: string;
     nextStage: OrderPipelineStage;
+    subStatus?: OrderPipelineSubStatus;
     handlerName: string;
     handlerEmail?: string;
     note?: string;
@@ -1273,10 +1388,16 @@ export const orderService = {
     overrideOrderStatus?: OrderStatus;
     courierName?: string;
     trackingNumber?: string;
+    keepCurrentStage?: boolean;
+    forceStockOverride?: boolean;
+    verifiedPaymentAmount?: number;
+    refundAmount?: number;
+    cancelReason?: string;
   }): Promise<Order | null> {
     const {
       orderId,
       nextStage,
+      subStatus,
       handlerName,
       handlerEmail,
       note,
@@ -1284,6 +1405,11 @@ export const orderService = {
       overrideOrderStatus,
       courierName,
       trackingNumber,
+      keepCurrentStage,
+      forceStockOverride,
+      verifiedPaymentAmount,
+      refundAmount,
+      cancelReason,
     } = params;
 
     const timestamp = new Date().toISOString();
@@ -1302,103 +1428,277 @@ export const orderService = {
     if (!baseOrder) return null;
 
     const prevStage = this.getOrderPipelineStage(baseOrder);
+    const resolvedNextStage: OrderPipelineStage = keepCurrentStage ? prevStage : nextStage;
     const existingPipeline: OrderPipelineData = baseOrder.pipeline || {
       currentStage: prevStage,
       handoffHistory: [],
     };
 
     let targetOrderStatus: OrderStatus = overrideOrderStatus || baseOrder.orderStatus;
-    if (!overrideOrderStatus) {
-      if (nextStage === 'payment_verification') targetOrderStatus = 'confirmed';
-      else if (nextStage === 'inventory_packing') targetOrderStatus = 'processing';
-      else if (nextStage === 'delivery_dispatch') {
-        targetOrderStatus = courierName || trackingNumber ? 'shipped' : 'packed';
-      } else if (nextStage === 'completed') targetOrderStatus = 'delivered';
-      else if (nextStage === 'returned') targetOrderStatus = 'returned';
-      else if (nextStage === 'cancelled') targetOrderStatus = 'cancelled';
-      else if (nextStage === 'order_verification') targetOrderStatus = 'pending';
+    if (!overrideOrderStatus && !keepCurrentStage) {
+      if (resolvedNextStage === 'payment_verification') targetOrderStatus = 'confirmed';
+      else if (resolvedNextStage === 'inventory_packing') targetOrderStatus = 'processing';
+      else if (resolvedNextStage === 'delivery_dispatch') {
+        targetOrderStatus = courierName || trackingNumber || subStatus === 'SHIPPED' || subStatus === 'OUT_FOR_DELIVERY'
+          ? 'shipped'
+          : 'packed';
+      } else if (resolvedNextStage === 'completed') targetOrderStatus = 'delivered';
+      else if (resolvedNextStage === 'returned') targetOrderStatus = 'returned';
+      else if (resolvedNextStage === 'cancelled') targetOrderStatus = 'cancelled';
+      else if (resolvedNextStage === 'order_verification') targetOrderStatus = 'pending';
+    }
+
+    const orderTotal = Math.max(0, Number(baseOrder.total) || 0);
+    let nextPaidAmount =
+      typeof baseOrder.paidAmount === 'number'
+        ? baseOrder.paidAmount
+        : baseOrder.paymentStatus === 'paid'
+          ? orderTotal
+          : Math.max(0, Number(baseOrder.advanceAmount ?? baseOrder.paymentDetails?.advanceAmount) || 0);
+    let nextDueAmount =
+      typeof baseOrder.dueAmount === 'number'
+        ? baseOrder.dueAmount
+        : Math.max(0, orderTotal - nextPaidAmount);
+    const nextPaymentHistory: CustomerPaymentLog[] = [...(baseOrder.paymentHistory || [])];
+
+    if (typeof verifiedPaymentAmount === 'number' && verifiedPaymentAmount > 0) {
+      nextPaidAmount = Math.min(orderTotal, verifiedPaymentAmount);
+      nextDueAmount = Math.max(0, orderTotal - nextPaidAmount);
+      nextPaymentHistory.push({
+        id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        amount: verifiedPaymentAmount,
+        method: baseOrder.paymentMethod || 'cod',
+        receivedBy: handlerName.trim() || 'Accounts Staff',
+        note: note || 'Verified payment at accounts desk',
+        date: timestamp.slice(0, 10),
+        timestamp,
+      });
+    } else if (markPaymentStatus === 'paid' || resolvedNextStage === 'completed') {
+      if (nextPaidAmount < orderTotal) {
+        const delta = orderTotal - nextPaidAmount;
+        nextPaymentHistory.push({
+          id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          amount: delta,
+          method: baseOrder.paymentMethod || 'cod',
+          receivedBy: handlerName.trim() || 'Authorized Staff',
+          note: note || (resolvedNextStage === 'completed' ? 'Collected on delivery' : 'Marked paid in full'),
+          date: timestamp.slice(0, 10),
+          timestamp,
+        });
+      }
+      nextPaidAmount = orderTotal;
+      nextDueAmount = 0;
     }
 
     const targetPaymentStatus: PaymentStatus =
       markPaymentStatus ||
-      (nextStage === 'completed' && baseOrder.paymentStatus === 'pending' ? 'paid' : baseOrder.paymentStatus);
+      (verifiedPaymentAmount !== undefined && nextDueAmount <= 0
+        ? 'paid'
+        : resolvedNextStage === 'completed' && baseOrder.paymentStatus === 'pending'
+          ? 'paid'
+          : baseOrder.paymentStatus);
 
     const safeActor = handlerName.trim() || 'Authorized Staff';
-    let actionSummary = `Order updated to ${nextStage.replace(/_/g, ' ')} by ${safeActor}`;
+
+    // Handle Inventory Deduction when Stock Control approves & transfers to Delivery Desk (or skips directly to completed)
+    let stockDeductedFlag = existingPipeline.stockDeducted;
+    let stockDeductedAtFlag = existingPipeline.stockDeductedAt;
+    let stockDeductedByFlag = existingPipeline.stockDeductedBy;
+    let stockRestoredFlag = existingPipeline.stockRestored;
+    let stockRestoredAtFlag = existingPipeline.stockRestoredAt;
+
+    const shouldDeductNow =
+      !keepCurrentStage &&
+      (resolvedNextStage === 'delivery_dispatch' || resolvedNextStage === 'completed') &&
+      existingPipeline.stockDeducted === false &&
+      (baseOrder.items || []).length > 0;
+
+    if (shouldDeductNow) {
+      // Stage 3 Stock Sufficiency Guard: block blind negative stock deduction unless override explicitly approved
+      if (!forceStockOverride) {
+        const catalog = productService.getLocalProducts();
+        const shortages: string[] = [];
+        for (const item of baseOrder.items || []) {
+          const prod = catalog.find((p) => p.id === item.productId);
+          if (prod) {
+            const avail = Math.max(0, Number(prod.totalStock) || 0);
+            const needed = Math.max(1, Number(item.quantity) || 1);
+            if (avail < needed) {
+              shortages.push(`${item.productName} (Need ${needed}, Available ${avail})`);
+            }
+          }
+        }
+        if (shortages.length > 0) {
+          throw new Error(`Insufficient stock: ${shortages.join('; ')}`);
+        }
+      }
+
+      await productService
+        .decrementProductStock(
+          (baseOrder.items || []).map((i) => ({
+            productId: i.productId,
+            size: i.size,
+            color: i.color,
+            quantity: i.quantity,
+          })),
+          false,
+          {
+            type: 'sale',
+            referenceId: baseOrder.orderNumber,
+            staffName: safeActor,
+            reason: `Stage 3 Stock Approved & Deducted (${baseOrder.orderNumber})`,
+          }
+        )
+        .catch(() => {});
+      stockDeductedFlag = true;
+      stockDeductedAtFlag = timestamp;
+      stockDeductedByFlag = safeActor;
+      stockRestoredFlag = false;
+    }
+
+    // Restore inventory automatically if order is returned or cancelled after stock was deducted
+    const shouldRestoreNow =
+      (resolvedNextStage === 'returned' || resolvedNextStage === 'cancelled') &&
+      existingPipeline.stockDeducted !== false &&
+      !existingPipeline.stockRestored &&
+      (baseOrder.items || []).length > 0;
+
+    if (shouldRestoreNow) {
+      await productService
+        .restoreProductStock(
+          (baseOrder.items || []).map((i) => ({
+            productId: i.productId,
+            size: i.size,
+            color: i.color,
+            quantity: i.quantity,
+          })),
+          {
+            referenceId: baseOrder.orderNumber,
+            staffName: safeActor,
+            reason: `${resolvedNextStage === 'returned' ? 'Order returned' : 'Order cancelled'} restock (${baseOrder.orderNumber})`,
+          }
+        )
+        .catch(() => {});
+      stockDeductedFlag = false;
+      stockRestoredFlag = true;
+      stockRestoredAtFlag = timestamp;
+    }
+
+    const resolvedSubStatus: OrderPipelineSubStatus =
+      subStatus ||
+      (markPaymentStatus === 'refunded'
+        ? 'REFUNDED'
+        : resolvedNextStage === 'payment_verification'
+          ? 'ORDER_CHECKED'
+          : resolvedNextStage === 'inventory_packing'
+            ? 'PAYMENT_VERIFIED'
+            : resolvedNextStage === 'delivery_dispatch'
+              ? targetOrderStatus === 'shipped'
+                ? 'SHIPPED'
+                : 'PACKED'
+              : resolvedNextStage === 'completed'
+                ? 'DELIVERED'
+                : resolvedNextStage === 'returned'
+                  ? 'RETURNED'
+                  : resolvedNextStage === 'cancelled'
+                    ? 'CANCELLED'
+                    : 'ORDER_CHECKING');
+
+    let actionSummary = `Order updated to ${resolvedNextStage.replace(/_/g, ' ')} by ${safeActor}`;
     let customerTimelineNote = `Order status updated to ${targetOrderStatus}.`;
 
-    if (nextStage === 'payment_verification') {
-      actionSummary = `Order approved by ${safeActor} -> Payment Verification`;
+    if (keepCurrentStage && markPaymentStatus === 'paid') {
+      actionSummary = `Payment marked PAID by ${safeActor}`;
+      customerTimelineNote = 'Payment verified and marked as paid.';
+    } else if (keepCurrentStage && markPaymentStatus === 'refunded') {
+      actionSummary = `Payment marked REFUNDED by ${safeActor}${refundAmount ? ` (৳${refundAmount.toLocaleString('en-BD')})` : ''}`;
+      customerTimelineNote = 'Payment refund processed.';
+    } else if (resolvedNextStage === 'payment_verification') {
+      actionSummary = `Order verified & approved by ${safeActor} -> Transferred to Payment Desk`;
       customerTimelineNote = 'Order verified and confirmed by store team.';
-    } else if (nextStage === 'inventory_packing') {
-      actionSummary = `Payment verified by ${safeActor} -> Packaging & Inventory`;
-      customerTimelineNote = 'Payment confirmed and order sent for packaging.';
-    } else if (nextStage === 'delivery_dispatch' && targetOrderStatus === 'packed') {
-      actionSummary = `Items packed by ${safeActor} -> Ready for Delivery`;
+    } else if (resolvedNextStage === 'inventory_packing') {
+      actionSummary = `Payment verified by ${safeActor} -> Transferred to Stock & Packaging Desk`;
+      customerTimelineNote = 'Payment confirmed and order sent for stock check & packaging.';
+    } else if (resolvedNextStage === 'delivery_dispatch' && targetOrderStatus === 'packed') {
+      actionSummary = `Stock checked, deducted & ${resolvedSubStatus === 'PACKING' ? 'packing started' : 'packed'} by ${safeActor} -> Transferred to Delivery Desk`;
       customerTimelineNote = 'Items quality-checked, packed, and ready for courier dispatch.';
-    } else if (nextStage === 'delivery_dispatch' && targetOrderStatus === 'shipped') {
-      actionSummary = `Dispatched by ${safeActor}${courierName ? ` via ${courierName}` : ''}`;
+    } else if (resolvedNextStage === 'delivery_dispatch' && targetOrderStatus === 'shipped') {
+      actionSummary = `${resolvedSubStatus === 'OUT_FOR_DELIVERY' ? 'Out for delivery' : 'Dispatched'} by ${safeActor}${courierName ? ` via ${courierName}` : ''}`;
       customerTimelineNote = courierName
         ? `Parcel dispatched via ${courierName}${trackingNumber ? ` (Tracking: ${trackingNumber})` : ''}.`
         : 'Parcel handed over to courier and currently in transit.';
-    } else if (nextStage === 'completed') {
+    } else if (resolvedNextStage === 'completed') {
       actionSummary = `Delivered & completed by ${safeActor}`;
       customerTimelineNote = 'Order delivered successfully. Thank you for shopping with Selvee.';
-    } else if (nextStage === 'returned') {
-      actionSummary = `Order marked as Returned by ${safeActor}`;
+    } else if (resolvedNextStage === 'returned') {
+      actionSummary = `Order marked as Returned by ${safeActor}${shouldRestoreNow ? ' (Stock Restored)' : ''}`;
       customerTimelineNote = 'Order has been marked as returned.';
-    } else if (nextStage === 'cancelled') {
-      actionSummary = `Order cancelled by ${safeActor}`;
+    } else if (resolvedNextStage === 'cancelled') {
+      actionSummary = `Order cancelled by ${safeActor}${cancelReason ? `: ${cancelReason}` : ''}${shouldRestoreNow ? ' (Stock Restored)' : ''}`;
       customerTimelineNote = 'Order has been cancelled.';
     }
 
     const nextHistory = [
       ...(existingPipeline.handoffHistory || []),
       {
-        stage: nextStage,
+        stage: resolvedNextStage,
+        subStatus: resolvedSubStatus,
         handlerName: safeActor,
         handlerEmail,
         action: actionSummary,
-        note: note || undefined,
+        note: note || cancelReason || undefined,
         timestamp,
       },
     ];
 
     const updatedPipeline: OrderPipelineData = {
       ...existingPipeline,
-      currentStage: nextStage,
+      currentStage: resolvedNextStage,
+      subStatus: resolvedSubStatus,
+      stockDeducted: stockDeductedFlag,
+      stockDeductedAt: stockDeductedAtFlag,
+      stockDeductedBy: stockDeductedByFlag,
+      stockRestored: stockRestoredFlag,
+      stockRestoredAt: stockRestoredAtFlag,
       handoffHistory: nextHistory,
-      ...(nextStage === 'payment_verification'
+      ...(resolvedNextStage === 'payment_verification'
         ? {
             verifiedBy: safeActor,
             verifiedAt: timestamp,
             verificationNote: note || existingPipeline.verificationNote,
           }
         : {}),
-      ...(nextStage === 'inventory_packing'
+      ...(resolvedNextStage === 'inventory_packing' || markPaymentStatus === 'paid' || verifiedPaymentAmount !== undefined
         ? {
             paymentVerifiedBy: safeActor,
             paymentVerifiedAt: timestamp,
+            verifiedPaymentAmount: nextPaidAmount,
             paymentNote: note || existingPipeline.paymentNote,
           }
         : {}),
-      ...(nextStage === 'delivery_dispatch' && targetOrderStatus === 'packed'
+      ...(resolvedNextStage === 'delivery_dispatch' && targetOrderStatus === 'packed'
         ? {
             inventoryHandledBy: safeActor,
             inventoryHandledAt: timestamp,
+            stockApprovedBy: safeActor,
+            stockApprovedAt: timestamp,
+            packedBy: safeActor,
+            packedAt: timestamp,
             inventoryNote: note || existingPipeline.inventoryNote,
           }
         : {}),
-      ...(nextStage === 'delivery_dispatch' && (targetOrderStatus === 'shipped' || courierName || trackingNumber)
+      ...(resolvedNextStage === 'delivery_dispatch' && (targetOrderStatus === 'shipped' || courierName || trackingNumber)
         ? {
             deliveryHandledBy: safeActor,
             deliveryDispatchedAt: timestamp,
+            shippedBy: safeActor,
+            shippedAt: timestamp,
             courierName: courierName || existingPipeline.courierName,
             trackingNumber: trackingNumber || existingPipeline.trackingNumber,
             deliveryNote: note || existingPipeline.deliveryNote,
           }
         : {}),
-      ...(nextStage === 'completed'
+      ...(resolvedNextStage === 'completed'
         ? {
             deliveryHandledBy: safeActor,
             deliveredAt: timestamp,
@@ -1407,18 +1707,26 @@ export const orderService = {
             deliveryNote: note || existingPipeline.deliveryNote,
           }
         : {}),
-      ...(nextStage === 'returned'
+      ...(resolvedNextStage === 'returned'
         ? {
             returnedBy: safeActor,
             returnedAt: timestamp,
             returnNote: note || existingPipeline.returnNote,
           }
         : {}),
-      ...(nextStage === 'cancelled'
+      ...(markPaymentStatus === 'refunded'
+        ? {
+            refundedBy: safeActor,
+            refundedAt: timestamp,
+            refundAmount: refundAmount ?? nextPaidAmount,
+          }
+        : {}),
+      ...(resolvedNextStage === 'cancelled'
         ? {
             cancelledBy: safeActor,
             cancelledAt: timestamp,
-            cancelNote: note || existingPipeline.cancelNote,
+            cancelledReason: cancelReason || note || existingPipeline.cancelledReason,
+            cancelNote: note || cancelReason || existingPipeline.cancelNote,
           }
         : {}),
     };
@@ -1436,6 +1744,11 @@ export const orderService = {
       ...baseOrder,
       orderStatus: targetOrderStatus,
       paymentStatus: targetPaymentStatus,
+      paidAmount: nextPaidAmount,
+      dueAmount: resolvedNextStage === 'cancelled' || resolvedNextStage === 'returned' ? 0 : nextDueAmount,
+      advanceAmount: nextPaidAmount,
+      dueOnDelivery: resolvedNextStage === 'cancelled' || resolvedNextStage === 'returned' ? 0 : nextDueAmount,
+      paymentHistory: nextPaymentHistory,
       pipeline: updatedPipeline,
       timeline: updatedTimeline,
       updatedAt: timestamp,
@@ -1450,6 +1763,11 @@ export const orderService = {
         sanitizeForFirestore({
           orderStatus: targetOrderStatus,
           paymentStatus: targetPaymentStatus,
+          paidAmount: updatedOrder.paidAmount,
+          dueAmount: updatedOrder.dueAmount,
+          advanceAmount: updatedOrder.advanceAmount,
+          dueOnDelivery: updatedOrder.dueOnDelivery,
+          paymentHistory: nextPaymentHistory,
           pipeline: updatedPipeline,
           timeline: updatedTimeline,
           updatedAt: serverTimestamp(),
@@ -1475,43 +1793,133 @@ export const orderService = {
         .catch(() => {});
     }
 
+    if (
+      baseOrder.orderNumber &&
+      (resolvedNextStage === 'completed' || resolvedNextStage === 'cancelled' || resolvedNextStage === 'returned')
+    ) {
+      notificationService
+        .notifyAdminWorkflowAlert({
+          id: `wf-alert-${baseOrder.id}-${resolvedNextStage}`,
+          title: `Order ${baseOrder.orderNumber} ${resolvedNextStage.toUpperCase()}`,
+          message: `${actionSummary} · Total ৳${orderTotal.toLocaleString('en-BD')}`,
+          targetOrderNumber: baseOrder.orderNumber,
+          actionUrl: '/admin?tab=orders',
+          important: resolvedNextStage === 'cancelled' || resolvedNextStage === 'returned',
+          createdBy: safeActor,
+        })
+        .catch(() => {});
+    }
+
     return updatedOrder;
   },
 
-  // Create immediate Walk-In POS Counter Sale
+  // Create immediate Walk-In POS Counter Sale (supports CRM customer, delivery, coupon, partial payment/due, cancelled logging)
   async createPosOrder(params: {
+    customerId?: string;
     customerName: string;
     customerPhone: string;
+    customerEmail?: string;
+    deliveryRequired?: boolean;
+    deliveryZone?: string;
+    deliveryAddress?: string;
+    deliveryCharge?: number;
+    couponCode?: string;
     items: OrderItem[];
     subtotal: number;
     discount: number;
     total: number;
     paymentMethod: PaymentMethod;
+    paidAmount?: number;
+    dueAmount?: number;
+    trxId?: string;
+    senderNumber?: string;
     cashierName: string;
     notes?: string;
+    orderStatusOverride?: 'cancelled';
+    cancelReason?: string;
   }): Promise<{ success: boolean; order?: Order; error?: string }> {
     try {
-      const { customerName, customerPhone, items, subtotal, discount, total, paymentMethod, cashierName, notes } =
-        params;
+      const {
+        customerId,
+        customerName,
+        customerPhone,
+        customerEmail,
+        deliveryRequired,
+        deliveryZone,
+        deliveryAddress,
+        deliveryCharge = 0,
+        couponCode,
+        items,
+        subtotal,
+        discount,
+        total,
+        paymentMethod,
+        paidAmount,
+        dueAmount,
+        trxId,
+        senderNumber,
+        cashierName,
+        notes,
+        orderStatusOverride,
+        cancelReason,
+      } = params;
+
       if (!items || items.length === 0) {
         return { success: false, error: 'Add at least one item to complete POS sale.' };
       }
 
+      const isCancelledSale = orderStatusOverride === 'cancelled';
       const orderNumber = `POS-${Math.floor(100000 + Math.random() * 900000)}`;
       const orderDocRef = doc(collection(db, 'orders'));
       const nowIso = new Date().toISOString();
 
+      const resolvedPaid = isCancelledSale
+        ? 0
+        : typeof paidAmount === 'number'
+          ? Math.max(0, Math.min(total, paidAmount))
+          : paymentMethod === 'due'
+            ? 0
+            : total;
+      const resolvedDue = isCancelledSale
+        ? 0
+        : typeof dueAmount === 'number'
+          ? Math.max(0, dueAmount)
+          : Math.max(0, total - resolvedPaid);
+      const paymentStatus: PaymentStatus = isCancelledSale
+        ? 'failed'
+        : resolvedDue <= 0
+          ? 'paid'
+          : 'pending';
+
+      const initialPaymentHistory: CustomerPaymentLog[] =
+        resolvedPaid > 0 && !isCancelledSale
+          ? [
+              {
+                id: `pay_${Date.now()}`,
+                amount: resolvedPaid,
+                method: paymentMethod,
+                trxId: trxId?.trim() || undefined,
+                senderNumber: senderNumber?.trim() || undefined,
+                receivedBy: cashierName,
+                note: 'POS Counter Initial Payment',
+                date: nowIso.slice(0, 10),
+                timestamp: nowIso,
+              },
+            ]
+          : [];
+
       const newOrder: Order = {
         id: orderDocRef.id,
         orderNumber,
-        customerId: 'walk-in-pos',
+        customerId: customerId || 'walk-in-pos',
         customerName: customerName.trim() || 'Walk-in Customer',
         customerPhone: customerPhone.trim() || 'N/A',
-        customerEmail: '',
+        customerEmail: customerEmail?.trim() || '',
         shippingAddress: {
           fullName: customerName.trim() || 'Walk-in Customer',
           phone: customerPhone.trim() || 'N/A',
-          address: 'In-Store POS Counter',
+          email: customerEmail?.trim() || '',
+          address: deliveryRequired && deliveryAddress ? deliveryAddress.trim() : 'In-Store POS Counter',
           division: 'Dhaka',
           district: 'Dhaka',
           notes: notes || '',
@@ -1520,18 +1928,37 @@ export const orderService = {
         subtotal,
         discount,
         onlineDiscount: 0,
-        deliveryCharge: 0,
-        deliveryZone: 'POS Store Counter',
+        couponCode: couponCode?.trim().toUpperCase() || undefined,
+        deliveryRequired: Boolean(deliveryRequired),
+        deliveryCharge: deliveryRequired ? Math.max(0, Number(deliveryCharge) || 0) : 0,
+        deliveryZone: deliveryRequired ? deliveryZone || 'Delivery Zone' : 'POS Store Counter',
         total,
         paymentMethod,
-        advanceDeliveryPaid: true,
-        advanceAmount: total,
-        dueOnDelivery: 0,
-        paymentStatus: 'paid',
-        orderStatus: 'delivered',
+        paymentDetails:
+          trxId || senderNumber
+            ? {
+                method: paymentMethod,
+                transactionId: trxId?.trim() || undefined,
+                senderNumber: senderNumber?.trim() || undefined,
+                paidAt: resolvedPaid > 0 ? nowIso : undefined,
+              }
+            : undefined,
+        advanceDeliveryPaid: resolvedDue <= 0,
+        advanceAmount: resolvedPaid,
+        dueOnDelivery: resolvedDue,
+        paidAmount: resolvedPaid,
+        dueAmount: resolvedDue,
+        paymentHistory: initialPaymentHistory,
+        posCancelReason: cancelReason?.trim() || undefined,
+        paymentStatus,
+        orderStatus: isCancelledSale ? 'cancelled' : 'delivered',
         orderChannel: 'pos',
         pipeline: {
-          currentStage: 'completed',
+          currentStage: isCancelledSale ? 'cancelled' : 'completed',
+          subStatus: isCancelledSale ? 'CANCELLED' : 'DELIVERED',
+          stockDeducted: !isCancelledSale,
+          stockDeductedAt: !isCancelledSale ? nowIso : undefined,
+          stockDeductedBy: !isCancelledSale ? cashierName : undefined,
           verifiedBy: cashierName,
           verifiedAt: nowIso,
           paymentVerifiedBy: cashierName,
@@ -1539,22 +1966,30 @@ export const orderService = {
           inventoryHandledBy: cashierName,
           inventoryHandledAt: nowIso,
           deliveryHandledBy: cashierName,
-          deliveredAt: nowIso,
+          deliveredAt: !isCancelledSale ? nowIso : undefined,
+          cancelledBy: isCancelledSale ? cashierName : undefined,
+          cancelledAt: isCancelledSale ? nowIso : undefined,
+          cancelledReason: isCancelledSale ? cancelReason?.trim() || 'Cancelled at POS Counter' : undefined,
           handoffHistory: [
             {
-              stage: 'completed',
+              stage: isCancelledSale ? 'cancelled' : 'completed',
+              subStatus: isCancelledSale ? 'CANCELLED' : 'DELIVERED',
               handlerName: cashierName,
-              action: 'Completed Walk-In POS Sale',
-              note: notes || `Paid via ${paymentMethod.toUpperCase()}`,
+              action: isCancelledSale ? 'Cancelled POS Ticket' : 'Completed Walk-In POS Sale',
+              note: isCancelledSale
+                ? cancelReason || 'Cancelled at POS Counter'
+                : notes || `Paid ৳${resolvedPaid.toLocaleString('en-BD')} via ${paymentMethod.toUpperCase()}${resolvedDue > 0 ? ` · Due ৳${resolvedDue.toLocaleString('en-BD')}` : ''}`,
               timestamp: nowIso,
             },
           ],
         },
         timeline: [
           {
-            status: 'delivered',
+            status: isCancelledSale ? 'cancelled' : 'delivered',
             timestamp: nowIso,
-            note: `Completed via POS Counter (${cashierName}) · ${paymentMethod.toUpperCase()}`,
+            note: isCancelledSale
+              ? `POS Sale Cancelled (${cashierName}): ${cancelReason || 'Cancelled at counter'}`
+              : `Completed via POS Counter (${cashierName}) · ${paymentMethod.toUpperCase()}${resolvedDue > 0 ? ` · Due ৳${resolvedDue.toLocaleString('en-BD')}` : ''}`,
           },
         ],
         createdAt: serverTimestamp(),
@@ -1564,17 +1999,26 @@ export const orderService = {
       const localCopy: Order = { ...newOrder, createdAt: nowIso, updatedAt: nowIso };
       this.saveLocalOrder(localCopy);
 
-      // Atomic stock decrement on Firestore + local
-      await productService
-        .decrementProductStock(
-          items.map((i) => ({
-            productId: i.productId,
-            size: i.size || 'Standard',
-            color: i.color || 'Standard',
-            quantity: i.quantity,
-          }))
-        )
-        .catch(() => {});
+      // Atomic stock decrement ONLY for valid completed sales (never on cancelled tickets)
+      if (!isCancelledSale) {
+        await productService
+          .decrementProductStock(
+            items.map((i) => ({
+              productId: i.productId,
+              size: i.size || 'Standard',
+              color: i.color || 'Standard',
+              quantity: i.quantity,
+            })),
+            false,
+            {
+              type: 'sale',
+              referenceId: orderNumber,
+              staffName: cashierName,
+              reason: `POS Counter Sale (${orderNumber})`,
+            }
+          )
+          .catch(() => {});
+      }
 
       try {
         const writePromise = setDoc(orderDocRef, sanitizeForFirestore(newOrder));

@@ -19,7 +19,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
-import { Product, Category } from '../types';
+import { Product, Category, StockMovementEntry, StockMovementType } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 
 // Pure empty database catalog by default (NO demo products, strictly user/admin created items)
@@ -43,8 +43,11 @@ export const DEFAULT_CATEGORIES: Category[] = [];
 const LOCAL_PRODUCTS_KEY = 'selvee_products_catalog_v3';
 const LOCAL_CATEGORIES_KEY = 'selvee_categories_catalog_v3';
 const LOCAL_PENDING_SYNC_KEY = 'selvee_pending_sync_ids_v1';
+const LOCAL_STOCK_MOVEMENTS_KEY = 'selvee_stock_movements_v1';
 const UPDATE_EVENT_NAME = 'selvee_products_updated';
 const CATEGORY_UPDATE_EVENT = 'selvee_categories_updated';
+const STOCK_MOVEMENT_EVENT = 'selvee_stock_movements_updated';
+const STOCK_MOVEMENTS_DOC = doc(db, 'settings', 'stock_movements');
 
 // Purge legacy MEN'S FABRIC demo localStorage keys on startup
 if (typeof window !== 'undefined') {
@@ -63,11 +66,19 @@ let lastFirestoreSyncStatus: { ok: boolean; error?: string } = { ok: true };
 
 // Shared singleton live state so page transitions never re-query Firestore or flash old data
 let liveActiveProducts: Product[] | null = null;
+let liveAllProducts: Product[] | null = null;
 let liveCategories: Category[] | null = null;
+let liveStockMovements: StockMovementEntry[] | null = null;
+
 const activeProductListeners = new Set<(products: Product[]) => void>();
+const allProductListeners = new Set<(products: Product[]) => void>();
 const categoryListeners = new Set<(categories: Category[]) => void>();
+const stockMovementListeners = new Set<(list: StockMovementEntry[]) => void>();
+
 let sharedActiveUnsub: Unsubscribe | null = null;
+let sharedAllProductsUnsub: Unsubscribe | null = null;
 let sharedCategoriesUnsub: Unsubscribe | null = null;
+let sharedStockMovementsUnsub: Unsubscribe | null = null;
 
 const getPendingSyncIds = (): Set<string> => {
   try {
@@ -102,42 +113,6 @@ const getTimeMs = (t: any): number => {
   return 0;
 };
 
-const fromFirestoreValue = (v: any): any => {
-  if (!v || typeof v !== 'object') return v;
-  if ('stringValue' in v) return v.stringValue;
-  if ('booleanValue' in v) return v.booleanValue;
-  if ('integerValue' in v) return Number(v.integerValue);
-  if ('doubleValue' in v) return Number(v.doubleValue);
-  if ('nullValue' in v) return null;
-  if ('timestampValue' in v) return v.timestampValue;
-  if ('arrayValue' in v) return (v.arrayValue?.values || []).map(fromFirestoreValue);
-  if ('mapValue' in v) {
-    const out: Record<string, any> = {};
-    const fields = v.mapValue?.fields || {};
-    for (const k of Object.keys(fields)) out[k] = fromFirestoreValue(fields[k]);
-    return out;
-  }
-  return null;
-};
-
-export const parseRestQueryDocs = (rows: any): Record<string, any>[] => {
-  if (!Array.isArray(rows)) return [];
-  const out: Record<string, any>[] = [];
-  for (const row of rows) {
-    const docObj = row?.document;
-    if (!docObj?.name || !docObj?.fields) continue;
-    const id = docObj.name.split('/').pop();
-    const parsed: Record<string, any> = { id };
-    for (const k of Object.keys(docObj.fields)) {
-      parsed[k] = fromFirestoreValue(docObj.fields[k]);
-    }
-    out.push(parsed);
-  }
-  return out;
-};
-
-let hasRemoteSnapshotArrived = false;
-
 export const cacheProductRecord = (prod: Product) => {
   if (!prod || !prod.id) return;
   cachedProductsMap.set(prod.id, prod);
@@ -155,9 +130,27 @@ export const cacheProductRecord = (prod: Product) => {
   }
 };
 
+const persistProductsBackup = (list: Product[]) => {
+  try {
+    const compact = list.map((p) => ({
+      ...p,
+      images:
+        p.thumbnail && Array.isArray(p.images) && p.images.length === 1 && p.images[0] === p.thumbnail
+          ? []
+          : p.images,
+    }));
+    localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(compact));
+  } catch {
+    // ignore quota limits (IndexedDB persistentLocalCache handles large catalogs)
+  }
+  list.forEach(cacheProductRecord);
+};
+
 export const productService = {
-  // Get persistent local products (reconstructs deduplicated images[0] from thumbnail)
+  // Read live memory first, then localStorage backup (used by mutators & offline error fallbacks)
   getLocalProducts(): Product[] {
+    if (liveAllProducts !== null) return liveAllProducts;
+    if (liveActiveProducts !== null) return liveActiveProducts;
     try {
       const saved = localStorage.getItem(LOCAL_PRODUCTS_KEY);
       if (saved) {
@@ -175,7 +168,7 @@ export const productService = {
                     : [],
             }));
           if (realItems.length !== parsed.length) {
-            this.saveLocalProducts(realItems);
+            persistProductsBackup(realItems);
           }
           realItems.forEach(cacheProductRecord);
           return realItems;
@@ -187,37 +180,34 @@ export const productService = {
     return [];
   },
 
-  // Save to local storage with image deduplication to avoid 5MB quota overflow
+  // Optimistic mutator save: updates live memory + backup and notifies subscribers synchronously (0ms)
   saveLocalProducts(list: Product[]) {
-    try {
-      const compact = list.map((p) => ({
-        ...p,
-        images:
-          p.thumbnail && Array.isArray(p.images) && p.images.length === 1 && p.images[0] === p.thumbnail
-            ? []
-            : p.images,
-      }));
-      localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(compact));
-    } catch {
-      // ignore quota limits (IndexedDB persistentLocalCache handles large catalogs)
-    }
-    list.forEach(cacheProductRecord);
+    persistProductsBackup(list);
+    liveAllProducts = list;
+    const activeOnly = list.filter((p) => p.active !== false);
+    liveActiveProducts = activeOnly;
+    allProductListeners.forEach((cb) => cb(list));
+    activeProductListeners.forEach((cb) => cb(activeOnly));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(UPDATE_EVENT_NAME, { detail: list }));
     }
   },
 
-  // Synchronous instant accessor for zero-skeleton page navigation
+  // Synchronous instant accessors returning ONLY hydrated live memory (never stale localStorage)
   getInstantActiveProducts(): Product[] | null {
-    if (liveActiveProducts !== null) return liveActiveProducts;
-    const local = this.getLocalProducts().filter((p) => p.active !== false);
-    return local.length > 0 ? local : null;
+    return liveActiveProducts;
+  },
+
+  getInstantAllProducts(): Product[] {
+    return liveAllProducts ?? [];
   },
 
   getInstantCategories(): Category[] | null {
-    if (liveCategories !== null) return liveCategories;
-    const local = this.getLocalCategories();
-    return local.length > 0 ? local : null;
+    return liveCategories;
+  },
+
+  getInstantStockMovements(): StockMovementEntry[] {
+    return liveStockMovements ?? [];
   },
 
   ensureSharedActiveListener(onError?: (err: any) => void) {
@@ -238,12 +228,11 @@ export const productService = {
             }
           });
 
-          // Authoritative remote catalog + only genuinely unsynced local drafts (never stale demo data)
           const pendingIds = getPendingSyncIds();
           const map = new Map<string, Product>();
           remoteList.forEach((p) => map.set(p.id, p));
-          if (pendingIds.size > 0) {
-            this.getLocalProducts()
+          if (pendingIds.size > 0 && liveAllProducts) {
+            liveAllProducts
               .filter((p) => p.active !== false && pendingIds.has(p.id))
               .forEach((p) => {
                 if (!map.has(p.id)) map.set(p.id, p);
@@ -253,9 +242,10 @@ export const productService = {
           const merged = Array.from(map.values());
           merged.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
 
-          hasRemoteSnapshotArrived = true;
           liveActiveProducts = merged;
-          this.saveLocalProducts(merged);
+          if (liveAllProducts === null) {
+            persistProductsBackup(merged);
+          }
           activeProductListeners.forEach((cb) => cb(merged));
         },
         (err) => {
@@ -271,131 +261,13 @@ export const productService = {
     } catch (e) {
       console.warn('Firestore subscription exception:', e);
     }
-
-    // Consume early HTML <head> parallel REST prefetch if snapshot hasn't arrived yet
-    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
-    if (prefetch?.products && !hasRemoteSnapshotArrived) {
-      Promise.resolve(prefetch.products)
-        .then((rows) => {
-          if (hasRemoteSnapshotArrived) return;
-          const docs = parseRestQueryDocs(rows);
-          if (docs.length === 0) return;
-          const prefetched: Product[] = docs.map((d: any) => ({
-            ...d,
-            images: Array.isArray(d.images) && d.images.length > 0 ? d.images : d.thumbnail ? [d.thumbnail] : [],
-          }));
-          prefetched.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
-          prefetched.forEach(cacheProductRecord);
-          liveActiveProducts = prefetched;
-          this.saveLocalProducts(prefetched);
-          activeProductListeners.forEach((cb) => cb(prefetched));
-        })
-        .catch(() => {});
-    }
   },
 
-  ensureSharedCategoriesListener() {
-    if (sharedCategoriesUnsub) return;
-    let remoteCatArrived = false;
+  ensureSharedAllProductsListener(onError?: (err: any) => void) {
+    if (sharedAllProductsUnsub) return;
     try {
-      const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
-      sharedCategoriesUnsub = onSnapshot(
-        q,
-        (snap) => {
-          remoteCatArrived = true;
-          const list: Category[] = [];
-          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
-          liveCategories = list;
-          this.saveLocalCategories(list);
-          categoryListeners.forEach((cb) => cb(list));
-        },
-        (err) => {
-          console.warn('Real-time categories remote notice:', err);
-        }
-      );
-    } catch {
-      // ignore
-    }
-
-    const prefetch = typeof window !== 'undefined' ? (window as any).__SELVEE_PREFETCH__ : null;
-    if (prefetch?.categories) {
-      Promise.resolve(prefetch.categories)
-        .then((rows) => {
-          if (remoteCatArrived) return;
-          const docs = parseRestQueryDocs(rows) as Category[];
-          if (docs.length === 0) return;
-          liveCategories = docs;
-          this.saveLocalCategories(docs);
-          categoryListeners.forEach((cb) => cb(docs));
-        })
-        .catch(() => {});
-    }
-  },
-
-  // Real-time listener for active products (Customer Home & Shop pages)
-  subscribeToActiveProducts(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
-    activeProductListeners.add(callback);
-
-    // 1. Emit immediately ONLY if we already have real live/cached products (0ms)
-    const instant = this.getInstantActiveProducts();
-    if (instant !== null) {
-      callback(instant);
-    }
-
-    // 2. Listen to local update events (e.g. instant updates after admin creates a product)
-    const handleLocalUpdate = (e: any) => {
-      const list = ((e.detail as Product[]) || this.getLocalProducts()).filter((p) => p.active !== false);
-      liveActiveProducts = list;
-      callback(list);
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
-    }
-
-    // 3. Ensure shared Firestore realtime listener is running
-    this.ensureSharedActiveListener(onError);
-
-    // Safety fallback if first-ever Firestore connection takes >4s
-    const safetyTimer = instant === null
-      ? window.setTimeout(() => {
-          if (liveActiveProducts === null) {
-            callback([]);
-          }
-        }, 4000)
-      : null;
-
-    return () => {
-      if (safetyTimer) window.clearTimeout(safetyTimer);
-      activeProductListeners.delete(callback);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
-      }
-    };
-  },
-
-  // Real-time listener for all products (Admin panel)
-  subscribeToAllProductsAdmin(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
-    // 1. Immediately emit local products if present for instant admin render
-    const initial = this.getLocalProducts();
-    if (initial.length > 0) {
-      callback(initial);
-    }
-
-    // 2. Listen to local update events
-    const handleLocalUpdate = (e: any) => {
-      const list = (e.detail as Product[]) || this.getLocalProducts();
-      callback(list);
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
-    }
-
-    // 3. Connect to Firestore realtime listener
-    let firestoreUnsub: (() => void) | null = null;
-    try {
-      const colRef = collection(db, 'products');
-      firestoreUnsub = onSnapshot(
-        colRef,
+      sharedAllProductsUnsub = onSnapshot(
+        collection(db, 'products'),
         (snap) => {
           const remoteList: Product[] = [];
           snap.forEach((d) => {
@@ -408,8 +280,8 @@ export const productService = {
           const pendingIds = getPendingSyncIds();
           const map = new Map<string, Product>();
           remoteList.forEach((p) => map.set(p.id, p));
-          if (pendingIds.size > 0) {
-            this.getLocalProducts()
+          if (pendingIds.size > 0 && liveAllProducts) {
+            liveAllProducts
               .filter((p) => pendingIds.has(p.id))
               .forEach((p) => {
                 if (!map.has(p.id)) map.set(p.id, p);
@@ -417,29 +289,96 @@ export const productService = {
           }
 
           const merged = Array.from(map.values());
-          merged.sort((a, b) => {
-            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
-            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
-            return timeB - timeA;
-          });
-          this.saveLocalProducts(merged);
-          callback(merged);
+          merged.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+
+          liveAllProducts = merged;
+          liveActiveProducts = merged.filter((p) => p.active !== false);
+          persistProductsBackup(merged);
+          allProductListeners.forEach((cb) => cb(merged));
+          activeProductListeners.forEach((cb) => cb(liveActiveProducts!));
         },
         (err) => {
-          console.warn('Admin real-time products remote notice (using local-first):', err);
-          callback(this.getLocalProducts());
+          console.warn('Admin real-time products remote notice:', err);
+          if (liveAllProducts === null) {
+            const fallback = this.getLocalProducts();
+            liveAllProducts = fallback;
+            allProductListeners.forEach((cb) => cb(fallback));
+          }
           if (onError) onError(err);
         }
       );
     } catch (e) {
       console.warn('Admin Firestore subscription exception:', e);
     }
+  },
+
+  ensureSharedCategoriesListener() {
+    if (sharedCategoriesUnsub) return;
+    try {
+      const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
+      sharedCategoriesUnsub = onSnapshot(
+        q,
+        (snap) => {
+          const list: Category[] = [];
+          snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
+          liveCategories = list;
+          try {
+            localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(list));
+          } catch {
+            // ignore
+          }
+          categoryListeners.forEach((cb) => cb(list));
+        },
+        (err) => {
+          console.warn('Real-time categories remote notice:', err);
+          if (liveCategories === null) {
+            const fallback = this.getLocalCategories();
+            liveCategories = fallback;
+            categoryListeners.forEach((cb) => cb(fallback));
+          }
+        }
+      );
+    } catch {
+      // ignore
+    }
+  },
+
+  // Real-time listener for active products (Customer Home & Shop pages)
+  subscribeToActiveProducts(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
+    activeProductListeners.add(callback);
+
+    const instant = this.getInstantActiveProducts();
+    if (instant !== null) {
+      callback(instant);
+    }
+
+    this.ensureSharedActiveListener(onError);
+
+    const safetyTimer =
+      instant === null
+        ? window.setTimeout(() => {
+            if (liveActiveProducts === null) {
+              callback([]);
+            }
+          }, 4000)
+        : null;
 
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener(UPDATE_EVENT_NAME, handleLocalUpdate);
-      }
-      if (firestoreUnsub) firestoreUnsub();
+      if (safetyTimer) window.clearTimeout(safetyTimer);
+      activeProductListeners.delete(callback);
+    };
+  },
+
+  // Real-time listener for all products (Admin panel - shared warm stream)
+  subscribeToAllProductsAdmin(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
+    allProductListeners.add(callback);
+    if (liveAllProducts !== null) {
+      callback(liveAllProducts);
+    }
+    this.ensureSharedAllProductsListener(onError);
+
+    return () => {
+      allProductListeners.delete(callback);
     };
   },
 
@@ -452,26 +391,15 @@ export const productService = {
       callback(instant);
     }
 
-    const handleLocalCat = (e: any) => {
-      const list = (e.detail as Category[]) || this.getLocalCategories();
-      liveCategories = list;
-      callback(list);
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener(CATEGORY_UPDATE_EVENT, handleLocalCat);
-    }
-
     this.ensureSharedCategoriesListener();
 
     return () => {
       categoryListeners.delete(callback);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener(CATEGORY_UPDATE_EVENT, handleLocalCat);
-      }
     };
   },
 
   getLocalCategories(): Category[] {
+    if (liveCategories !== null) return liveCategories;
     try {
       const saved = localStorage.getItem(LOCAL_CATEGORIES_KEY);
       if (saved) {
@@ -485,6 +413,8 @@ export const productService = {
   },
 
   saveLocalCategories(list: Category[]) {
+    liveCategories = list;
+    categoryListeners.forEach((cb) => cb(list));
     try {
       localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(list));
     } catch {
@@ -760,14 +690,141 @@ export const productService = {
     }
   },
 
+  // Stock Movement Audit History
+  getLocalStockMovements(): StockMovementEntry[] {
+    if (liveStockMovements !== null) return liveStockMovements;
+    try {
+      const raw = localStorage.getItem(LOCAL_STOCK_MOVEMENTS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  },
+
+  saveLocalStockMovements(list: StockMovementEntry[]) {
+    const trimmed = list.slice(0, 350);
+    liveStockMovements = trimmed;
+    stockMovementListeners.forEach((cb) => cb(trimmed));
+    try {
+      localStorage.setItem(LOCAL_STOCK_MOVEMENTS_KEY, JSON.stringify(trimmed));
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(STOCK_MOVEMENT_EVENT, { detail: trimmed }));
+    }
+  },
+
+  async recordStockMovement(
+    entry: Omit<StockMovementEntry, 'id' | 'date' | 'timestamp'> & { date?: string; timestamp?: string }
+  ): Promise<StockMovementEntry> {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const record: StockMovementEntry = {
+      ...entry,
+      id: `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      date: entry.date || `${yyyy}-${mm}-${dd}`,
+      timestamp: entry.timestamp || now.toISOString(),
+    };
+
+    const next = [record, ...this.getLocalStockMovements()].slice(0, 350);
+    this.saveLocalStockMovements(next);
+
+    try {
+      await setDoc(
+        STOCK_MOVEMENTS_DOC,
+        sanitizeForFirestore({
+          items: next.slice(0, 250),
+          updatedAt: serverTimestamp(),
+        }),
+        { merge: true }
+      );
+    } catch {
+      // non-blocking offline backup
+    }
+    return record;
+  },
+
+  subscribeToStockMovements(cb: (list: StockMovementEntry[]) => void): Unsubscribe {
+    stockMovementListeners.add(cb);
+    if (liveStockMovements !== null) {
+      cb(liveStockMovements);
+    }
+
+    if (!sharedStockMovementsUnsub) {
+      try {
+        sharedStockMovementsUnsub = onSnapshot(
+          STOCK_MOVEMENTS_DOC,
+          (snap) => {
+            if (snap.exists() && Array.isArray(snap.data()?.items)) {
+              const sorted = [...(snap.data().items as StockMovementEntry[])]
+                .filter((m) => Boolean(m?.id))
+                .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))
+                .slice(0, 350);
+              liveStockMovements = sorted;
+              try {
+                localStorage.setItem(LOCAL_STOCK_MOVEMENTS_KEY, JSON.stringify(sorted));
+              } catch {
+                // ignore
+              }
+              stockMovementListeners.forEach((listener) => listener(sorted));
+            } else if (liveStockMovements === null) {
+              liveStockMovements = [];
+              stockMovementListeners.forEach((listener) => listener([]));
+            }
+          },
+          () => {
+            if (liveStockMovements === null) {
+              const fallback = this.getLocalStockMovements();
+              liveStockMovements = fallback;
+              stockMovementListeners.forEach((listener) => listener(fallback));
+            }
+          }
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return () => {
+      stockMovementListeners.delete(cb);
+    };
+  },
+
   // Quick Stock Update (Admin)
-  async quickUpdateStock(id: string, newStock: number) {
+  async quickUpdateStock(
+    id: string,
+    newStock: number,
+    meta?: { reason?: string; staffName?: string; type?: StockMovementType }
+  ) {
     const safeStock = Math.max(0, Math.floor(newStock));
 
     // Update local catalog immediately
     const current = this.getLocalProducts();
+    const target = current.find((p) => p.id === id);
+    const prevStock = Number(target?.totalStock) || 0;
     const updated = current.map((p) => (p.id === id ? { ...p, totalStock: safeStock } : p));
     this.saveLocalProducts(updated);
+
+    if (target && safeStock !== prevStock) {
+      this.recordStockMovement({
+        productId: target.id,
+        productName: target.name,
+        sku: target.sku || '',
+        previousStock: prevStock,
+        change: safeStock - prevStock,
+        newStock: safeStock,
+        type: meta?.type || 'manual',
+        reason: meta?.reason || 'Quick catalog stock edit',
+        staffName: meta?.staffName || 'Admin',
+      }).catch(() => {});
+    }
 
     // Attempt remote Firestore persistence
     try {
@@ -784,19 +841,95 @@ export const productService = {
     }
   },
 
-  // Automatically decrement product inventory when an order is placed
+  // Explicit Stock Adjustment (Add, Manual Set, Damaged Deduction) with Audit Trail
+  async adjustProductStockWithMovement(params: {
+    productId: string;
+    mode: 'add' | 'set' | 'damaged';
+    quantity: number;
+    reason: string;
+    staffName: string;
+    referenceId?: string;
+  }): Promise<Product | null> {
+    const current = this.getLocalProducts();
+    const target = current.find((p) => p.id === params.productId);
+    if (!target) return null;
+
+    const prevStock = Math.max(0, Number(target.totalStock) || 0);
+    const qty = Math.max(0, Math.floor(Number(params.quantity) || 0));
+    let newStock = prevStock;
+    let damagedStock = Number(target.damagedStock) || 0;
+
+    if (params.mode === 'add') {
+      newStock = prevStock + qty;
+    } else if (params.mode === 'set') {
+      newStock = qty;
+    } else if (params.mode === 'damaged') {
+      newStock = Math.max(0, prevStock - qty);
+      damagedStock += Math.min(prevStock, qty);
+    }
+
+    const updatedProduct: Product = {
+      ...target,
+      totalStock: newStock,
+      damagedStock,
+      updatedAt: new Date().toISOString() as any,
+    };
+
+    this.saveLocalProducts(current.map((p) => (p.id === target.id ? updatedProduct : p)));
+
+    await this.recordStockMovement({
+      productId: target.id,
+      productName: target.name,
+      sku: target.sku || '',
+      previousStock: prevStock,
+      change: newStock - prevStock,
+      newStock,
+      type: params.mode === 'damaged' ? 'damaged' : 'adjustment',
+      reason:
+        params.reason.trim() ||
+        (params.mode === 'damaged'
+          ? `Damaged / defective stock write-off (-${qty} pcs)`
+          : params.mode === 'add'
+            ? `Manual stock addition (+${qty} pcs)`
+            : `Manual stock count reset (${prevStock} -> ${newStock})`),
+      referenceId: params.referenceId,
+      staffName: params.staffName || 'Admin',
+    });
+
+    try {
+      await setDoc(
+        doc(db, 'products', target.id),
+        sanitizeForFirestore({
+          totalStock: newStock,
+          damagedStock,
+          updatedAt: serverTimestamp(),
+        }),
+        { merge: true }
+      );
+    } catch {
+      // queued offline
+    }
+
+    return updatedProduct;
+  },
+
+  // Automatically decrement product inventory when an order is placed or stock-approved
   async decrementProductStock(
     items: { productId: string; size?: string; color?: string; quantity: number }[],
-    syncLocalOnly = false
+    syncLocalOnly = false,
+    meta?: { reason?: string; referenceId?: string; staffName?: string; type?: StockMovementType }
   ): Promise<void> {
     if (!items || items.length === 0) return;
 
     const currentProducts = this.getLocalProducts();
+    const movementsToLog: Array<Omit<StockMovementEntry, 'id' | 'date' | 'timestamp'>> = [];
+
     const updatedProducts = currentProducts.map((p) => {
       const matchingItems = items.filter((it) => it.productId === p.id);
       if (matchingItems.length === 0) return p;
 
-      let newTotalStock = typeof p.totalStock === 'number' ? p.totalStock : 0;
+      const prevTotalStock = typeof p.totalStock === 'number' ? p.totalStock : 0;
+      let newTotalStock = prevTotalStock;
       let newVariants = p.variants ? [...p.variants] : [];
 
       for (const it of matchingItems) {
@@ -819,6 +952,21 @@ export const productService = {
         newTotalStock = newVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
       }
 
+      movementsToLog.push({
+        productId: p.id,
+        productName: p.name,
+        sku: p.sku || '',
+        size: matchingItems.map((m) => m.size).filter(Boolean).join(', '),
+        color: matchingItems.map((m) => m.color).filter(Boolean).join(', '),
+        previousStock: prevTotalStock,
+        change: newTotalStock - prevTotalStock,
+        newStock: newTotalStock,
+        type: meta?.type || 'sale',
+        reason: meta?.reason || 'Order / POS stock deduction',
+        referenceId: meta?.referenceId,
+        staffName: meta?.staffName || 'System',
+      });
+
       return {
         ...p,
         totalStock: newTotalStock,
@@ -829,6 +977,9 @@ export const productService = {
 
     // 1. Immediately update persistent local catalog and dispatch event for instant UI update
     this.saveLocalProducts(updatedProducts);
+    for (const mv of movementsToLog) {
+      this.recordStockMovement(mv).catch(() => {});
+    }
 
     if (syncLocalOnly) return;
 
@@ -845,6 +996,92 @@ export const productService = {
           await setDoc(doc(db, 'products', updatedP.id), payload, { merge: true });
         } catch (err) {
           console.warn(`Remote stock decrement notice for ${updatedP.id}:`, err);
+        }
+      }
+    }
+  },
+
+  // Restore product inventory when an order is returned or cancelled after stock deduction
+  async restoreProductStock(
+    items: { productId: string; size?: string; color?: string; quantity: number }[],
+    meta?: { reason?: string; referenceId?: string; staffName?: string }
+  ): Promise<void> {
+    if (!items || items.length === 0) return;
+
+    const currentProducts = this.getLocalProducts();
+    const movementsToLog: Array<Omit<StockMovementEntry, 'id' | 'date' | 'timestamp'>> = [];
+
+    const updatedProducts = currentProducts.map((p) => {
+      const matchingItems = items.filter((it) => it.productId === p.id);
+      if (matchingItems.length === 0) return p;
+
+      const prevTotalStock = typeof p.totalStock === 'number' ? p.totalStock : 0;
+      let newTotalStock = prevTotalStock;
+      let newVariants = p.variants ? [...p.variants] : [];
+
+      for (const it of matchingItems) {
+        const qty = Math.max(0, Number(it.quantity) || 0);
+        if (qty <= 0) continue;
+        newTotalStock = newTotalStock + qty;
+
+        if (newVariants.length > 0) {
+          newVariants = newVariants.map((v) => {
+            const sizeMatches = !it.size || it.size === 'Standard' || v.size === it.size;
+            const colorMatches = !it.color || it.color === 'Standard' || !v.color || v.color === it.color;
+            if (sizeMatches && colorMatches) {
+              return { ...v, stock: (Number(v.stock) || 0) + qty };
+            }
+            return v;
+          });
+        }
+      }
+
+      if (newVariants.length > 0) {
+        newTotalStock = newVariants.reduce((sum, v) => sum + (Number(v.stock) || 0), 0);
+      }
+
+      if (newTotalStock !== prevTotalStock) {
+        movementsToLog.push({
+          productId: p.id,
+          productName: p.name,
+          sku: p.sku || '',
+          size: matchingItems.map((m) => m.size).filter(Boolean).join(', '),
+          color: matchingItems.map((m) => m.color).filter(Boolean).join(', '),
+          previousStock: prevTotalStock,
+          change: newTotalStock - prevTotalStock,
+          newStock: newTotalStock,
+          type: 'return',
+          reason: meta?.reason || 'Order return / cancellation restock',
+          referenceId: meta?.referenceId,
+          staffName: meta?.staffName || 'System',
+        });
+      }
+
+      return {
+        ...p,
+        totalStock: newTotalStock,
+        variants: newVariants,
+        updatedAt: new Date().toISOString() as any,
+      };
+    });
+
+    this.saveLocalProducts(updatedProducts);
+    for (const mv of movementsToLog) {
+      this.recordStockMovement(mv).catch(() => {});
+    }
+
+    for (const it of items) {
+      const updatedP = updatedProducts.find((p) => p.id === it.productId);
+      if (updatedP) {
+        try {
+          const payload = sanitizeForFirestore({
+            totalStock: updatedP.totalStock,
+            variants: updatedP.variants || [],
+            updatedAt: serverTimestamp(),
+          });
+          await setDoc(doc(db, 'products', updatedP.id), payload, { merge: true });
+        } catch (err) {
+          console.warn(`Remote stock restore notice for ${updatedP.id}:`, err);
         }
       }
     }

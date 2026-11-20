@@ -28,23 +28,30 @@ const LOGS_DOC = doc(db, 'settings', 'staff_activity_logs');
 export const ALL_ADMIN_TABS: AdminTabId[] = [
   'dashboard',
   'pos',
-  'pnl',
+  'desk_order_verify',
+  'desk_payment_verify',
+  'desk_stock_packing',
+  'desk_delivery_dispatch',
   'pipeline',
   'orders',
+  'sales_history',
+  'returns',
   'products',
+  'stock',
+  'categories',
   'purchases',
   'suppliers',
   'expenses',
-  'categories',
+  'pnl',
   'customers',
-  'reviews',
   'coupons',
   'delivery',
+  'reviews',
   'banners',
   'notifications',
-  'settings',
   'admins',
   'audit',
+  'settings',
 ];
 
 export const ALL_ORDER_ACTIONS: OrderActionPermission[] = [
@@ -57,25 +64,32 @@ export const ALL_ORDER_ACTIONS: OrderActionPermission[] = [
 ];
 
 export const MENU_PERMISSION_OPTIONS: { id: AdminTabId; label: string }[] = [
-  { id: 'dashboard', label: 'ড্যাশবোর্ড (POS Dashboard)' },
-  { id: 'pos', label: 'নিউ সেল / POS Counter' },
-  { id: 'pnl', label: 'লাভ-লস ও টার্গেট (Profit & Loss)' },
-  { id: 'pipeline', label: 'অর্ডার ওয়ার্কফ্লো (Order Workflow)' },
-  { id: 'orders', label: 'অর্ডার ও ইনভয়েস (Orders & Invoices)' },
-  { id: 'products', label: 'প্রোডাক্ট তালিকা (Products & Stock)' },
+  { id: 'dashboard', label: 'ড্যাশবোর্ড (Dashboard)' },
+  { id: 'pos', label: 'পয়েন্ট অব সেল (Point of Sale)' },
+  { id: 'desk_order_verify', label: 'অর্ডার ভেরিফাই (Order Verify)' },
+  { id: 'desk_payment_verify', label: 'পেমেন্ট ভেরিফাই (Payment Verify)' },
+  { id: 'desk_stock_packing', label: 'স্টক ও প্যাকিং (Stock & Packing)' },
+  { id: 'desk_delivery_dispatch', label: 'ডেলিভারি ডেস্ক (Delivery)' },
+  { id: 'pipeline', label: 'অর্ডার ওয়ার্কফ্লো ওভারভিউ (Overview)' },
+  { id: 'orders', label: 'ইনভয়েস ও রিসিপ্ট (Invoices)' },
+  { id: 'sales_history', label: 'বিক্রয় হিস্টোরি (Sales History)' },
+  { id: 'returns', label: 'রিটার্ন (Returns)' },
+  { id: 'products', label: 'প্রোডাক্ট ক্যাটালগ (Products)' },
+  { id: 'stock', label: 'স্টক ও ইনভেন্টরি (Stock)' },
   { id: 'categories', label: 'ক্যাটাগরি (Categories)' },
   { id: 'purchases', label: 'পণ্য ক্রয় (Purchases)' },
   { id: 'suppliers', label: 'সাপ্লায়ার (Suppliers)' },
-  { id: 'expenses', label: 'খরচ এন্ট্রি (Expenses Entry)' },
+  { id: 'expenses', label: 'খরচ এন্ট্রি (Expenses)' },
+  { id: 'pnl', label: 'লাভ-লস হিসাব (Profit & Loss)' },
   { id: 'customers', label: 'কাস্টমার লেজার (Customers)' },
-  { id: 'reviews', label: 'রিভিউ (Reviews)' },
   { id: 'coupons', label: 'কুপন (Coupons)' },
   { id: 'delivery', label: 'ডেলিভারি জোন (Delivery Zones)' },
+  { id: 'reviews', label: 'রিভিউ (Reviews)' },
   { id: 'banners', label: 'ব্যানার (Banners)' },
   { id: 'notifications', label: 'নোটিফিকেশন (Notifications)' },
-  { id: 'settings', label: 'স্টোর সেটিংস (Store Settings)' },
   { id: 'admins', label: 'স্টাফ ম্যানেজমেন্ট (Staff & Roles)' },
   { id: 'audit', label: 'অডিট লগ (Audit Logs)' },
+  { id: 'settings', label: 'স্টোর সেটিংস (Store Settings)' },
 ];
 
 export const ORDER_ACTION_OPTIONS: {
@@ -106,17 +120,32 @@ export const ROLE_PRESETS: Record<
   },
   store_manager: {
     designation: 'Order & Store Manager',
-    menus: ['dashboard', 'pos', 'pipeline', 'orders', 'products', 'customers', 'delivery'],
+    menus: [
+      'dashboard',
+      'pos',
+      'desk_order_verify',
+      'desk_payment_verify',
+      'desk_stock_packing',
+      'desk_delivery_dispatch',
+      'pipeline',
+      'orders',
+      'sales_history',
+      'returns',
+      'products',
+      'stock',
+      'customers',
+      'delivery',
+    ],
     orders: ['order_approve', 'payment_verify', 'packaging', 'shipping', 'order_return', 'order_cancel'],
   },
   inventory_editor: {
     designation: 'Inventory & Packing Officer',
-    menus: ['dashboard', 'pipeline', 'orders', 'products', 'purchases', 'suppliers', 'categories'],
+    menus: ['dashboard', 'desk_stock_packing', 'orders', 'products', 'stock', 'purchases', 'suppliers', 'categories', 'returns'],
     orders: ['packaging'],
   },
   support_staff: {
     designation: 'Order Verifier & Support',
-    menus: ['dashboard', 'pipeline', 'orders', 'customers', 'reviews'],
+    menus: ['dashboard', 'desk_order_verify', 'orders', 'sales_history', 'returns', 'customers', 'reviews'],
     orders: ['order_approve', 'order_cancel', 'order_return'],
   },
   custom_staff: {
@@ -167,6 +196,14 @@ const normalizeStaffRecord = (raw: any): StaffAccount => {
   };
 };
 
+// Shared singleton live state (never emits stale localStorage before Firestore onSnapshot)
+let liveStaff: StaffAccount[] | null = null;
+let liveStaffLogs: StaffLoginLog[] | null = null;
+const staffListeners = new Set<(list: StaffAccount[]) => void>();
+const logsListeners = new Set<(logs: StaffLoginLog[]) => void>();
+let sharedStaffUnsub: Unsubscribe | null = null;
+let sharedLogsUnsub: Unsubscribe | null = null;
+
 const readLocalStaff = (): StaffAccount[] => {
   try {
     const raw = localStorage.getItem(LOCAL_STAFF_KEY);
@@ -180,13 +217,18 @@ const readLocalStaff = (): StaffAccount[] => {
   return [];
 };
 
-const writeLocalStaff = (list: StaffAccount[]) => {
+const persistLocalStaff = (list: StaffAccount[]) => {
   try {
     localStorage.setItem(LOCAL_STAFF_KEY, JSON.stringify(list));
-    window.dispatchEvent(new CustomEvent('mf_staff_updated', { detail: list }));
   } catch {
     // ignore
   }
+};
+
+const emitStaff = (list: StaffAccount[]) => {
+  liveStaff = list;
+  persistLocalStaff(list);
+  staffListeners.forEach((cb) => cb(list));
 };
 
 const readLocalLogs = (): StaffLoginLog[] => {
@@ -202,18 +244,27 @@ const readLocalLogs = (): StaffLoginLog[] => {
   return [];
 };
 
-const writeLocalLogs = (list: StaffLoginLog[]) => {
+const persistLocalLogs = (list: StaffLoginLog[]) => {
   try {
     localStorage.setItem(LOCAL_LOGS_KEY, JSON.stringify(list));
-    window.dispatchEvent(new CustomEvent('mf_staff_logs_updated', { detail: list }));
   } catch {
     // ignore
   }
 };
 
+const emitLogs = (list: StaffLoginLog[]) => {
+  liveStaffLogs = list;
+  persistLocalLogs(list);
+  logsListeners.forEach((cb) => cb(list));
+};
+
 export const staffService = {
+  getInstantStaff(): StaffAccount[] {
+    return liveStaff ?? [];
+  },
+
   getLocalStaff(): StaffAccount[] {
-    return readLocalStaff();
+    return liveStaff ?? readLocalStaff();
   },
 
   async fetchAllStaff(): Promise<StaffAccount[]> {
@@ -222,40 +273,39 @@ export const staffService = {
       if (snap.exists()) {
         const map = snap.data()?.admins || {};
         const list = Object.values(map).map(normalizeStaffRecord);
-        writeLocalStaff(list);
+        emitStaff(list);
         return list;
       }
     } catch {
-      // fallback to local
+      // fallback to live memory or local
     }
-    return readLocalStaff();
+    return liveStaff ?? readLocalStaff();
   },
 
   subscribeToStaff(cb: (list: StaffAccount[]) => void): Unsubscribe {
-    cb(readLocalStaff());
+    staffListeners.add(cb);
+    if (liveStaff !== null) {
+      cb(liveStaff);
+    }
 
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<StaffAccount[]>).detail;
-      if (Array.isArray(detail)) cb(detail);
-    };
-    window.addEventListener('mf_staff_updated', handleLocal);
-
-    const unsub = onSnapshot(
-      ADMINS_DOC,
-      (snap) => {
-        if (snap.exists()) {
-          const map = snap.data()?.admins || {};
-          const list = Object.values(map).map(normalizeStaffRecord);
-          writeLocalStaff(list);
-          cb(list);
-        }
-      },
-      () => {}
-    );
+    if (!sharedStaffUnsub) {
+      sharedStaffUnsub = onSnapshot(
+        ADMINS_DOC,
+        (snap) => {
+          if (snap.exists()) {
+            const map = snap.data()?.admins || {};
+            const list = Object.values(map).map(normalizeStaffRecord);
+            emitStaff(list);
+          } else {
+            emitStaff([]);
+          }
+        },
+        () => {}
+      );
+    }
 
     return () => {
-      window.removeEventListener('mf_staff_updated', handleLocal);
-      unsub();
+      staffListeners.delete(cb);
     };
   },
 
@@ -265,12 +315,12 @@ export const staffService = {
       updatedAt: new Date().toISOString(),
     });
 
-    const current = readLocalStaff();
+    const current = liveStaff ?? readLocalStaff();
     const exists = current.some((s) => s.id === normalized.id);
     const next = exists
       ? current.map((s) => (s.id === normalized.id ? normalized : s))
       : [normalized, ...current];
-    writeLocalStaff(next);
+    emitStaff(next);
 
     try {
       await setDoc(
@@ -304,8 +354,8 @@ export const staffService = {
   },
 
   async deleteStaff(staffId: string): Promise<void> {
-    const next = readLocalStaff().filter((s) => s.id !== staffId);
-    writeLocalStaff(next);
+    const next = (liveStaff ?? readLocalStaff()).filter((s) => s.id !== staffId);
+    emitStaff(next);
 
     try {
       await updateDoc(ADMINS_DOC, {
@@ -349,7 +399,18 @@ export const staffService = {
     if (isSuperAdmin) return true;
     if (!staff || staff.active === false) return false;
     if (staff.fullAccess || staff.isSuperAdmin) return true;
-    return Array.isArray(staff.menuPermissions) && staff.menuPermissions.includes(tab);
+    const menus = Array.isArray(staff.menuPermissions) ? staff.menuPermissions : [];
+    if (menus.includes(tab)) return true;
+
+    // Legacy support: staff created before the 4-desk split with 'pipeline' + order action
+    if (menus.includes('pipeline')) {
+      const actions = Array.isArray(staff.orderPermissions) ? staff.orderPermissions : [];
+      if (tab === 'desk_order_verify' && actions.includes('order_approve')) return true;
+      if (tab === 'desk_payment_verify' && actions.includes('payment_verify')) return true;
+      if (tab === 'desk_stock_packing' && actions.includes('packaging')) return true;
+      if (tab === 'desk_delivery_dispatch' && actions.includes('shipping')) return true;
+    }
+    return false;
   },
 
   hasOrderActionAccess(
@@ -364,34 +425,37 @@ export const staffService = {
   },
 
   // ======================== LIVE LOGIN & ACTIVITY HISTORY ========================
+  getInstantLogs(): StaffLoginLog[] {
+    return liveStaffLogs ?? [];
+  },
+
   getLocalLogs(): StaffLoginLog[] {
-    return readLocalLogs();
+    return liveStaffLogs ?? readLocalLogs();
   },
 
   subscribeToLogs(cb: (logs: StaffLoginLog[]) => void): Unsubscribe {
-    cb(readLocalLogs());
+    logsListeners.add(cb);
+    if (liveStaffLogs !== null) {
+      cb(liveStaffLogs);
+    }
 
-    const handleLocal = (e: Event) => {
-      const detail = (e as CustomEvent<StaffLoginLog[]>).detail;
-      if (Array.isArray(detail)) cb(detail);
-    };
-    window.addEventListener('mf_staff_logs_updated', handleLocal);
-
-    const unsub = onSnapshot(
-      LOGS_DOC,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.logs)) {
-          const remote = snap.data().logs as StaffLoginLog[];
-          writeLocalLogs(remote);
-          cb(remote);
-        }
-      },
-      () => {}
-    );
+    if (!sharedLogsUnsub) {
+      sharedLogsUnsub = onSnapshot(
+        LOGS_DOC,
+        (snap) => {
+          if (snap.exists() && Array.isArray(snap.data()?.logs)) {
+            const remote = snap.data().logs as StaffLoginLog[];
+            emitLogs(remote);
+          } else {
+            emitLogs([]);
+          }
+        },
+        () => {}
+      );
+    }
 
     return () => {
-      window.removeEventListener('mf_staff_logs_updated', handleLocal);
-      unsub();
+      logsListeners.delete(cb);
     };
   },
 
@@ -427,7 +491,7 @@ export const staffService = {
     }
 
     // Read latest remote logs so we don't clobber other staff's entries
-    let baseLogs = readLocalLogs();
+    let baseLogs = liveStaffLogs ?? readLocalLogs();
     try {
       const snap = await getDoc(LOGS_DOC);
       if (snap.exists() && Array.isArray(snap.data()?.logs)) {
@@ -438,7 +502,7 @@ export const staffService = {
     }
 
     const next = [entry, ...baseLogs].slice(0, 80);
-    writeLocalLogs(next);
+    emitLogs(next);
 
     try {
       await setDoc(
@@ -464,7 +528,7 @@ export const staffService = {
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const logs = readLocalLogs();
+    const logs = liveStaffLogs ?? readLocalLogs();
     const target = logs.find((l) => l.id === logId);
     if (!target || target.status !== 'online') return;
 
@@ -472,7 +536,7 @@ export const staffService = {
     const next = logs.map((l) =>
       l.id === logId ? { ...l, lastActiveTime: nowIso, durationMs } : l
     );
-    writeLocalLogs(next);
+    emitLogs(next);
 
     try {
       await setDoc(
@@ -497,7 +561,7 @@ export const staffService = {
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    let baseLogs = readLocalLogs();
+    let baseLogs = liveStaffLogs ?? readLocalLogs();
     try {
       const snap = await getDoc(LOGS_DOC);
       if (snap.exists() && Array.isArray(snap.data()?.logs)) {
@@ -518,7 +582,7 @@ export const staffService = {
         durationMs,
       };
     });
-    writeLocalLogs(next);
+    emitLogs(next);
 
     try {
       await setDoc(
@@ -532,8 +596,8 @@ export const staffService = {
   },
 
   async clearOldLogs(): Promise<void> {
-    const activeOnly = readLocalLogs().filter((l) => l.status === 'online').slice(0, 10);
-    writeLocalLogs(activeOnly);
+    const activeOnly = (liveStaffLogs ?? readLocalLogs()).filter((l) => l.status === 'online').slice(0, 10);
+    emitLogs(activeOnly);
     try {
       await setDoc(
         LOGS_DOC,

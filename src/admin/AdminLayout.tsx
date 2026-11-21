@@ -21,7 +21,6 @@ import {
   Bell,
   BellRing,
   Receipt,
-  GitBranch,
   ShoppingCart,
   Building2,
   Wallet,
@@ -42,9 +41,10 @@ import {
   getReadNotificationIds,
   saveReadNotificationIds,
 } from '../services/notificationService';
+import { orderService } from '../services/orderService';
 import { productService } from '../services/productService';
 import { posService } from '../services/posService';
-import { AppNotification, Product } from '../types';
+import { AppNotification, Order, Product } from '../types';
 import { formatDateTime } from '../lib/dateFormat';
 
 export type AdminTab =
@@ -55,7 +55,6 @@ export type AdminTab =
   | 'desk_stock_packing'
   | 'desk_delivery_dispatch'
   | 'pipeline'
-  | 'orders'
   | 'sales_history'
   | 'returns'
   | 'products'
@@ -155,6 +154,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [adminAlerts, setAdminAlerts] = useState<AppNotification[]>([]);
   const [readAlertIds, setReadAlertIds] = useState<Set<string>>(() => getReadNotificationIds());
+  const [liveOrders, setLiveOrders] = useState<Order[]>(() => orderService.getInstantOrders());
   const [products, setProducts] = useState<Product[]>(() => productService.getInstantAllProducts());
   const [lowStockLimit, setLowStockLimit] = useState<number>(
     () => posService.getInstantTargets().lowStockThresholdDefault || 5
@@ -167,6 +167,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     const unsubAlerts = notificationService.subscribeToAllNotifications((list) => {
       setAdminAlerts(list.filter((n) => n.audience === 'authorized_devices').slice(0, 20));
     });
+    const unsubOrders = orderService.subscribeToAllOrdersAdmin(setLiveOrders);
     const unsubProds = productService.subscribeToAllProductsAdmin(setProducts);
     const unsubTargets = posService.subscribeToTargets((cfg) => {
       setLowStockLimit(cfg.lowStockThresholdDefault || 5);
@@ -174,6 +175,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     return () => {
       unsub();
       unsubAlerts();
+      unsubOrders();
       unsubProds();
       unsubTargets();
     };
@@ -198,6 +200,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     currentTab === 'desk_stock_packing' ||
     currentTab === 'desk_delivery_dispatch';
 
+  const activeOrderNotifications = liveOrders.filter((ord) => {
+    const st = orderService.getOrderPipelineStage(ord);
+    return st !== 'completed' && st !== 'cancelled' && st !== 'returned';
+  }).length;
+
   const unreadWorkflowCount = adminAlerts.filter((a) => !readAlertIds.has(a.id)).length;
   const lowOrOutStockProducts = products.filter((p) => {
     const s = Math.max(0, Number(p.totalStock) || 0);
@@ -216,8 +223,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const allMenuItems: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'pos', label: 'Point of Sale', icon: <Receipt className="w-4 h-4" /> },
-    { id: 'pipeline', label: 'Order Workflow', icon: <GitBranch className="w-4 h-4" /> },
-    { id: 'orders', label: 'Invoices', icon: <ShoppingBag className="w-4 h-4" /> },
+    { id: 'pipeline', label: 'Orders', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'sales_history', label: 'Sales History', icon: <FileSpreadsheet className="w-4 h-4" /> },
     { id: 'returns', label: 'Returns', icon: <RotateCcw className="w-4 h-4" /> },
     { id: 'products', label: 'Products', icon: <Package className="w-4 h-4" /> },
@@ -347,6 +353,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                     {item.icon}
                     <span>{item.label}</span>
                   </span>
+                  {item.id === 'pipeline' && activeOrderNotifications > 0 && (
+                    <span
+                      className={`px-1.5 py-0.5 text-[10px] font-extrabold rounded-full font-mono ${
+                        isActive ? 'bg-black text-white' : 'bg-red-600 text-white'
+                      }`}
+                    >
+                      {activeOrderNotifications}
+                    </span>
+                  )}
                   {item.id === 'settings' && pendingDeviceCount > 0 && (
                     <span className="px-1.5 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500 text-white">
                       {pendingDeviceCount}
@@ -503,14 +518,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                         setReadAlertIds(next);
                         saveReadNotificationIds(next);
                         setAlertsOpen(false);
-                        if (alert.actionUrl?.includes('pipeline')) {
-                          if (hasMenuPermission('desk_order_verify')) onSelectTab('desk_order_verify');
-                          else if (hasMenuPermission('desk_payment_verify')) onSelectTab('desk_payment_verify');
-                          else if (hasMenuPermission('desk_stock_packing')) onSelectTab('desk_stock_packing');
-                          else if (hasMenuPermission('desk_delivery_dispatch')) onSelectTab('desk_delivery_dispatch');
-                          else if (hasMenuPermission('pipeline')) onSelectTab('pipeline');
-                        } else if (hasMenuPermission('orders')) {
-                          onSelectTab('orders');
+                        if (firstPermittedWorkflowTab) {
+                          onSelectTab(firstPermittedWorkflowTab);
                         }
                       }}
                       className={`w-full text-left p-3 hover:bg-neutral-50 transition-colors cursor-pointer ${

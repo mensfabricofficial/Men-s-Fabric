@@ -35,7 +35,7 @@ import { posService } from '../services/posService';
 import { getOrderPaidAndDue } from '../lib/accountingUtils';
 import { useAuth } from '../context/AuthContext';
 import { printElementById } from '../lib/printHelper';
-import { BrandLogo } from '../components/common/BrandLogo';
+import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { formatDateTime } from '../lib/dateFormat';
 import { AdminPageHeader } from './AdminLayout';
 
@@ -1783,102 +1783,14 @@ export const AdminPosTerminal: React.FC = () => {
               </button>
             </div>
 
-            <div
-              id="printable-pos-receipt"
-              className="max-w-[320px] mx-auto bg-white p-4 border border-dashed border-neutral-300 font-mono text-[11px] text-neutral-900 space-y-2.5"
-            >
-              <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
-                <BrandLogo variant="dark" imgClassName="h-6 mx-auto" />
-                <p className="text-[10px] text-neutral-600">POS Counter Receipt</p>
-              </div>
-              <div className="space-y-0.5 text-[10px] pb-2 border-b border-dashed border-neutral-400">
-                <div className="flex justify-between">
-                  <span>RECEIPT:</span>
-                  <span className="font-bold">{completedOrder.orderNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>DATE:</span>
-                  <span>{formatDateTime(completedOrder.createdAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>CUSTOMER:</span>
-                  <span>
-                    {completedOrder.customerName}
-                    {completedOrder.customerId && completedOrder.customerId !== 'walk-in-pos'
-                      ? ` (${completedOrder.customerId})`
-                      : ''}
-                  </span>
-                </div>
-                {completedOrder.customerPhone && completedOrder.customerPhone !== 'N/A' && (
-                  <div className="flex justify-between">
-                    <span>PHONE:</span>
-                    <span>{completedOrder.customerPhone}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span>PAYMENT:</span>
-                  <span className="uppercase font-bold">
-                    {completedOrder.paymentMethod === 'cod' ? 'CASH' : completedOrder.paymentMethod} (
-                    {completedOrder.paymentStatus.toUpperCase()})
-                  </span>
-                </div>
-                {completedOrder.couponCode && (
-                  <div className="flex justify-between">
-                    <span>COUPON:</span>
-                    <span className="font-bold">{completedOrder.couponCode}</span>
-                  </div>
-                )}
-              </div>
-              <div className="space-y-1.5 pb-2 border-b border-dashed border-neutral-400">
-                {completedOrder.items.map((it, i) => (
-                  <div key={i}>
-                    <p className="font-bold">{it.productName}</p>
-                    <div className="flex justify-between text-[10px] text-neutral-700">
-                      <span>{it.size} / {it.color}</span>
-                      <span>{it.quantity} x ৳{it.unitPrice} = ৳{it.totalPrice}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-0.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span>Subtotal:</span>
-                  <span>৳{completedOrder.subtotal.toLocaleString('en-BD')}</span>
-                </div>
-                {completedOrder.discount > 0 && (
-                  <div className="flex justify-between">
-                    <span>Discount:</span>
-                    <span>-৳{completedOrder.discount.toLocaleString('en-BD')}</span>
-                  </div>
-                )}
-                {completedOrder.deliveryCharge > 0 && (
-                  <div className="flex justify-between">
-                    <span>Delivery ({completedOrder.deliveryZone}):</span>
-                    <span>+৳{completedOrder.deliveryCharge.toLocaleString('en-BD')}</span>
-                  </div>
-                )}
-                <div className="flex justify-between font-extrabold text-xs pt-1 border-t border-neutral-300">
-                  <span>GRAND TOTAL:</span>
-                  <span>৳{completedOrder.total.toLocaleString('en-BD')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>PAID:</span>
-                  <span>৳{(completedOrder.paidAmount ?? completedOrder.total).toLocaleString('en-BD')}</span>
-                </div>
-                {(completedOrder.dueAmount || 0) > 0 && (
-                  <div className="flex justify-between font-bold text-red-700">
-                    <span>REMAINING DUE:</span>
-                    <span>৳{completedOrder.dueAmount!.toLocaleString('en-BD')}</span>
-                  </div>
-                )}
-              </div>
-              <p className="text-center text-[10px] text-neutral-500 pt-2">Thank you for shopping with Selvee!</p>
+            <div id="printable-pos-receipt">
+              <ThermalPosReceipt order={completedOrder} receiptTitle="POS Counter Receipt" />
             </div>
 
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => printElementById('printable-pos-receipt', completedOrder.orderNumber)}
+                onClick={() => printElementById('printable-pos-receipt', completedOrder.orderNumber, 'thermal')}
                 className="flex-1 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-neutral-800 cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <Printer className="w-4 h-4" />

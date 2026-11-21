@@ -703,7 +703,7 @@ export const notificationService = {
       message: `${params.customerName || 'Customer'} (${params.customerPhone || 'N/A'}) ordered ${itemsLabel} via ${params.paymentMethod.toUpperCase()}.`,
       audience: 'authorized_devices',
       targetOrderNumber: cleanNum,
-      actionUrl: '/admin?tab=orders',
+      actionUrl: '/admin?tab=pipeline',
       important: true,
       createdBy: 'order-system',
     });

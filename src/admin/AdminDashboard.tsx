@@ -833,10 +833,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
           </span>
           <div className="flex items-center gap-2">
             {renderCalendarButton('sec_today', 'day')}
-            {hasMenuPermission('orders') && (
+            {hasMenuPermission('pipeline') && (
               <button
                 type="button"
-                onClick={() => onNavigateTab('orders')}
+                onClick={() => onNavigateTab('pipeline')}
                 className="text-xs font-bold text-neutral-900 hover:underline cursor-pointer"
               >
                 View Orders →
@@ -847,7 +847,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
           <div
-            onClick={() => hasMenuPermission('orders') && onNavigateTab('orders')}
+            onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
             className="bg-white p-3.5 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
           >
             <div className="flex items-center justify-between text-neutral-500 mb-1">
@@ -956,7 +956,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
           <div
-            onClick={() => hasMenuPermission('orders') && onNavigateTab('orders')}
+            onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
             className="bg-white p-3.5 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors"
           >
             <div className="flex items-center justify-between text-neutral-500 mb-1">
@@ -1324,10 +1324,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
           </span>
           <div className="flex items-center gap-2">
             {renderCalendarButton('sec_stats', 'both')}
-            {hasMenuPermission('orders') && (
+            {hasMenuPermission('pipeline') && (
               <button
                 type="button"
-                onClick={() => onNavigateTab('orders')}
+                onClick={() => onNavigateTab('pipeline')}
                 className="text-xs font-bold text-neutral-900 hover:underline cursor-pointer"
               >
                 All Orders →
@@ -1338,7 +1338,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
           <div
-            onClick={() => hasMenuPermission('orders') && onNavigateTab('orders')}
+            onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
             className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors space-y-2"
           >
             <div className="flex items-center justify-between">
@@ -1362,7 +1362,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
           </div>
 
           <div
-            onClick={() => hasMenuPermission('orders') && onNavigateTab('orders')}
+            onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
             className="bg-white p-4 rounded-xl border border-neutral-200 hover:border-black cursor-pointer transition-colors space-y-2"
           >
             <div className="flex items-center justify-between">
@@ -1864,13 +1864,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
           </div>
           <div className="flex items-center gap-2">
             {renderCalendarButton('sec_recent_orders', 'both')}
-            {hasMenuPermission('orders') && (
+            {hasMenuPermission('pipeline') && (
               <button
                 type="button"
-                onClick={() => onNavigateTab('orders')}
+                onClick={() => onNavigateTab('pipeline')}
                 className="text-xs font-bold text-neutral-900 hover:underline cursor-pointer"
               >
-                View All Invoices →
+                View All Orders →
               </button>
             )}
           </div>
@@ -1902,7 +1902,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                   return (
                     <tr
                       key={ord.id}
-                      onClick={() => hasMenuPermission('orders') && onNavigateTab('orders')}
+                      onClick={() => hasMenuPermission('pipeline') && onNavigateTab('pipeline')}
                       className="hover:bg-neutral-50 cursor-pointer transition-colors"
                     >
                       <td className="py-3 px-4 font-mono font-bold text-neutral-900">

@@ -2,7 +2,11 @@
  * Dedicated high-reliability print helper for invoices and receipts
  * Works across desktop, mobile web, sandboxed iframes, and modern browsers
  */
-export const printElementById = (elementId: string, documentTitle: string = 'Invoice'): void => {
+export const printElementById = (
+  elementId: string,
+  documentTitle: string = 'Invoice',
+  format: 'a4' | 'thermal' = 'a4'
+): void => {
   const targetElement = document.getElementById(elementId);
   if (!targetElement) {
     if (typeof window !== 'undefined') {
@@ -35,6 +39,8 @@ export const printElementById = (elementId: string, documentTitle: string = 'Inv
       .map((tag) => tag.outerHTML)
       .join('\n');
 
+    const isThermal = format === 'thermal';
+
     frameDoc.open();
     frameDoc.write(`
       <!DOCTYPE html>
@@ -46,15 +52,15 @@ export const printElementById = (elementId: string, documentTitle: string = 'Inv
           ${styleTags}
           <style>
             @page {
-              size: A4 portrait;
-              margin: 10mm;
+              size: ${isThermal ? '80mm auto' : 'A4 portrait'};
+              margin: ${isThermal ? '0' : '10mm'};
             }
             html, body {
               background: #ffffff !important;
               color: #000000 !important;
               margin: 0 !important;
               padding: 0 !important;
-              font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              font-family: ${isThermal ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'};
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
@@ -62,10 +68,10 @@ export const printElementById = (elementId: string, documentTitle: string = 'Inv
               display: none !important;
             }
             #${elementId} {
-              width: 100% !important;
-              max-width: 100% !important;
-              margin: 0 !important;
-              padding: 5mm !important;
+              width: ${isThermal ? '80mm' : '100%'} !important;
+              max-width: ${isThermal ? '80mm' : '100%'} !important;
+              margin: ${isThermal ? '0 auto' : '0'} !important;
+              padding: ${isThermal ? '4mm' : '5mm'} !important;
               display: block !important;
               visibility: visible !important;
             }

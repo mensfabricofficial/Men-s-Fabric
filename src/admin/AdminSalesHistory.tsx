@@ -5,6 +5,8 @@ import {
   X,
   FileSpreadsheet,
   Calendar,
+  Receipt,
+  FileText,
 } from 'lucide-react';
 import { Order, Product } from '../types';
 import { orderService } from '../services/orderService';
@@ -24,6 +26,7 @@ import {
 } from '../lib/accountingUtils';
 import { formatDatePart, formatTimePart } from '../lib/dateFormat';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
+import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { printElementById } from '../lib/printHelper';
 import { AdminPageHeader } from './AdminLayout';
 
@@ -43,6 +46,7 @@ export const AdminSalesHistory: React.FC = () => {
   const [search, setSearch] = useState('');
 
   const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
+  const [invoiceFormat, setInvoiceFormat] = useState<'thermal' | 'a4'>('a4');
 
   useEffect(() => {
     const unsubOrders = orderService.subscribeToAllOrdersAdmin(setOrders);
@@ -388,21 +392,43 @@ export const AdminSalesHistory: React.FC = () => {
         )}
       </div>
 
-      {/* Invoice Viewer */}
+      {/* Invoice / Thermal POS Viewer */}
       {invoiceOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 overflow-y-auto">
-          <div className="bg-white rounded-xl max-w-3xl w-full p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+          <div className={`bg-white rounded-xl w-full p-5 space-y-4 ${invoiceFormat === 'thermal' ? 'max-w-md' : 'max-w-3xl'}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-3">
               <span className="font-bold text-sm">
-                Invoice {getFormattedInvoiceNumber(invoiceOrder.orderNumber, invoiceOrder.id)}
+                Receipt {getFormattedInvoiceNumber(invoiceOrder.orderNumber, invoiceOrder.id)}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceFormat('thermal')}
+                    className={`px-2.5 py-1 rounded-md flex items-center gap-1 cursor-pointer ${
+                      invoiceFormat === 'thermal' ? 'bg-white text-black font-bold shadow-xs' : 'text-neutral-600'
+                    }`}
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Thermal POS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceFormat('a4')}
+                    className={`px-2.5 py-1 rounded-md flex items-center gap-1 cursor-pointer ${
+                      invoiceFormat === 'a4' ? 'bg-white text-black font-bold shadow-xs' : 'text-neutral-600'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>A4</span>
+                  </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => printElementById('sales-history-printable-invoice', invoiceOrder.orderNumber)}
+                  onClick={() => printElementById('sales-history-printable-invoice', invoiceOrder.orderNumber, invoiceFormat)}
                   className="px-3.5 py-1.5 bg-black text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  <Printer className="w-3.5 h-3.5" /> Print Invoice
+                  <Printer className="w-3.5 h-3.5" /> Print {invoiceFormat === 'thermal' ? '80mm POS' : 'A4'}
                 </button>
                 <button
                   type="button"
@@ -414,7 +440,11 @@ export const AdminSalesHistory: React.FC = () => {
               </div>
             </div>
             <div id="sales-history-printable-invoice" className="max-h-[75vh] overflow-y-auto">
-              <InvoiceSheet order={invoiceOrder} />
+              {invoiceFormat === 'thermal' ? (
+                <ThermalPosReceipt order={invoiceOrder} />
+              ) : (
+                <InvoiceSheet order={invoiceOrder} />
+              )}
             </div>
           </div>
         </div>

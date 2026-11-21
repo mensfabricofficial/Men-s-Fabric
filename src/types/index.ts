@@ -190,6 +190,7 @@ export type OrderPipelineStage =
   | 'payment_verification'
   | 'inventory_packing'
   | 'delivery_dispatch'
+  | 'cod_reconciliation'
   | 'completed'
   | 'returned'
   | 'cancelled';
@@ -198,22 +199,184 @@ export type OrderPipelineSubStatus =
   | 'NEW'
   | 'ORDER_CHECKING'
   | 'ORDER_CHECKED'
+  | 'INITIAL_PAYMENT_VERIFIED'
   | 'PAYMENT_PENDING'
   | 'PAYMENT_VERIFIED'
   | 'ORDER_APPROVED'
   | 'STOCK_PENDING'
   | 'STOCK_APPROVED'
+  | 'STOCK_UPDATED'
   | 'PACKING'
   | 'PACKED'
+  | 'COURIER_CONFIRMED'
+  | 'TRACKING_ADDED'
   | 'SHIPPED'
   | 'OUT_FOR_DELIVERY'
   | 'DELIVERED'
+  | 'COD_AWAITING_COLLECTION'
+  | 'RECONCILIATION_REQUIRED'
+  | 'COMPLETED'
   | 'CANCELLED'
   | 'RETURN_REQUESTED'
   | 'RETURN_APPROVED'
   | 'RETURNED'
   | 'REFUND_PENDING'
   | 'REFUNDED';
+
+export type CustomerVerificationFieldKey =
+  | 'name'
+  | 'phone'
+  | 'email'
+  | 'division'
+  | 'district'
+  | 'address';
+
+export type VerificationFieldStatus = 'pending' | 'verified' | 'needs_correction';
+
+export interface FieldVerificationEntry {
+  status: VerificationFieldStatus;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  correctionNote?: string;
+  correctedValue?: string;
+  correctedBy?: string;
+  correctedAt?: string;
+}
+
+export interface InitialPaymentVerificationState {
+  paymentAmount: FieldVerificationEntry;
+  paymentMethod: FieldVerificationEntry;
+  completed?: boolean;
+  completedBy?: string;
+  completedAt?: string;
+}
+
+export interface OrderFinancialSnapshot {
+  productPrice: number;
+  discount: number;
+  couponDiscount: number;
+  onlineDiscount?: number;
+  shippingCharge: number;
+  codCharge: number;
+  finalPayable: number;
+  paymentMethod: PaymentMethod;
+  couponCode?: string;
+  capturedAt: string;
+  capturedBy: string;
+}
+
+export type PaymentVerifyStepKey =
+  | 'productPrice'
+  | 'onlineDiscount'
+  | 'discount'
+  | 'couponDiscount'
+  | 'shipping'
+  | 'codCharge'
+  | 'finalPayable'
+  | 'advancePaid'
+  | 'dueOnDelivery'
+  | 'senderNumber'
+  | 'trxId'
+  | 'proof'
+  | 'confirmation';
+
+export interface RoleCPaymentVerificationState {
+  transactionChecked?: boolean;
+  trxIdVerified?: boolean;
+  amountVerified?: boolean;
+  paymentConfirmed?: boolean;
+  codAwaitingCollection?: boolean;
+  statusLabel?: string;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  steps?: Partial<Record<PaymentVerifyStepKey, FieldVerificationEntry>>;
+}
+
+export type StockVerifyFieldKey =
+  | 'product'
+  | 'sku'
+  | 'size'
+  | 'color'
+  | 'quantity'
+  | 'currentStock'
+  | 'stockUpdate';
+
+export interface StockUpdateSnapshotItem {
+  productId: string;
+  productName: string;
+  sku: string;
+  size: string;
+  color: string;
+  stockBefore: number;
+  orderQuantity: number;
+  stockAfter: number;
+}
+
+export interface RoleBStockVerificationState {
+  stockVerified?: boolean;
+  stockUpdated?: boolean;
+  itemsSnapshot?: StockUpdateSnapshotItem[];
+  verifiedItemIndices?: number[];
+  stepEntries?: Record<string, FieldVerificationEntry>;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export type DeliveryStepKey =
+  | 'productCheck'
+  | 'sizeCheck'
+  | 'colourCheck'
+  | 'quantityCheck'
+  | 'packing'
+  | 'packed'
+  | 'courierConfirmed'
+  | 'trackingAdded'
+  | 'shipped'
+  | 'outForDelivery'
+  | 'delivered';
+
+export interface DeliveryStepRecord {
+  completed: boolean;
+  completedBy?: string;
+  completedAt?: string;
+  note?: string;
+}
+
+export type DeliveryProgressState = Partial<Record<DeliveryStepKey, DeliveryStepRecord>>;
+
+export interface CodReconciliationState {
+  expectedCash: number;
+  collectedCash?: number;
+  discrepancyAmount?: number;
+  reconciliationRequired?: boolean;
+  discrepancyNote?: string;
+  resolved?: boolean;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  collectedBy?: string;
+  collectedAt?: string;
+  reconciledBy?: string;
+  reconciledAt?: string;
+}
+
+export interface OrderActivityLogEntry {
+  id: string;
+  stepKey: string;
+  label: string;
+  category:
+    | 'order'
+    | 'customer'
+    | 'initial_payment'
+    | 'payment'
+    | 'stock'
+    | 'delivery'
+    | 'reconciliation';
+  actorName: string;
+  actorEmail?: string;
+  roleLabel?: string;
+  note?: string;
+  timestamp: string;
+}
 
 export interface OrderPipelineStepLog {
   stage: OrderPipelineStage;
@@ -228,6 +391,22 @@ export interface OrderPipelineStepLog {
 export interface OrderPipelineData {
   currentStage: OrderPipelineStage;
   subStatus?: OrderPipelineSubStatus;
+  currentActionLabel?: string;
+  // Granular Role A state
+  customerVerification?: Partial<Record<CustomerVerificationFieldKey, FieldVerificationEntry>>;
+  initialPaymentVerification?: InitialPaymentVerificationState;
+  // Immutable Financial Snapshot + Role C Payment Verification
+  financialSnapshot?: OrderFinancialSnapshot;
+  paymentVerification?: RoleCPaymentVerificationState;
+  // Role B Stock Verification & Idempotent Update
+  stockVerification?: RoleBStockVerificationState;
+  // Role D 11-step Packing & Delivery Progress
+  deliveryProgress?: DeliveryProgressState;
+  // Role C Post-Delivery COD Collection / Finance Reconciliation
+  codReconciliation?: CodReconciliationState;
+  // Immutable Activity Log
+  activityLog?: OrderActivityLogEntry[];
+
   verifiedBy?: string;
   verifiedAt?: string;
   verificationNote?: string;
@@ -284,7 +463,6 @@ export type AdminTabId =
   | 'desk_stock_packing'
   | 'desk_delivery_dispatch'
   | 'pipeline'
-  | 'orders'
   | 'sales_history'
   | 'returns'
   | 'products'

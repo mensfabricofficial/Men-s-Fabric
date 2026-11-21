@@ -37,7 +37,6 @@ import { AdminExpenses } from './admin/AdminExpenses';
 import { AdminProducts } from './admin/AdminProducts';
 import { AdminStock } from './admin/AdminStock';
 import { AdminCategories } from './admin/AdminCategories';
-import { AdminOrders } from './admin/AdminOrders';
 import { AdminCoupons } from './admin/AdminCoupons';
 import { AdminDelivery } from './admin/AdminDelivery';
 import { AdminBanners } from './admin/AdminBanners';
@@ -56,7 +55,6 @@ const VALID_ADMIN_TABS: AdminTab[] = [
   'desk_stock_packing',
   'desk_delivery_dispatch',
   'pipeline',
-  'orders',
   'sales_history',
   'returns',
   'products',
@@ -81,9 +79,10 @@ const getInitialAdminTabFromUrl = (): AdminTab => {
   if (typeof window === 'undefined') return 'dashboard';
   try {
     if (window.location.pathname.startsWith('/admin')) {
-      const tabParam = new URLSearchParams(window.location.search).get('tab') as AdminTab | null;
-      if (tabParam && VALID_ADMIN_TABS.includes(tabParam)) {
-        return tabParam;
+      const rawTab = new URLSearchParams(window.location.search).get('tab');
+      const mapped = (rawTab === 'orders' ? 'pipeline' : rawTab) as AdminTab | null;
+      if (mapped && VALID_ADMIN_TABS.includes(mapped)) {
+        return mapped;
       }
     }
   } catch {
@@ -105,9 +104,10 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     if (currentRoute.startsWith('/admin')) {
       const search = currentRoute.includes('?') ? currentRoute.split('?')[1] : '';
-      const tabParam = new URLSearchParams(search).get('tab') as AdminTab | null;
-      if (tabParam && validAdminTabs.includes(tabParam) && hasMenuPermission(tabParam)) {
-        setAdminTab(tabParam);
+      const rawTab = new URLSearchParams(search).get('tab');
+      const mapped = (rawTab === 'orders' ? 'pipeline' : rawTab) as AdminTab | null;
+      if (mapped && validAdminTabs.includes(mapped) && hasMenuPermission(mapped)) {
+        setAdminTab(mapped);
       }
     }
   }, [currentRoute, hasMenuPermission]);
@@ -169,20 +169,11 @@ const AppContent: React.FC = () => {
         >
           {effectiveAdminTab === 'dashboard' && <AdminDashboard onNavigateTab={handleSelectAdminTab} />}
           {effectiveAdminTab === 'pos' && <AdminPosTerminal />}
-          {effectiveAdminTab === 'desk_order_verify' && (
-            <AdminOrderPipeline deskStage="order_verification" onNavigateTab={handleSelectAdminTab} />
-          )}
-          {effectiveAdminTab === 'desk_payment_verify' && (
-            <AdminOrderPipeline deskStage="payment_verification" onNavigateTab={handleSelectAdminTab} />
-          )}
-          {effectiveAdminTab === 'desk_stock_packing' && (
-            <AdminOrderPipeline deskStage="inventory_packing" onNavigateTab={handleSelectAdminTab} />
-          )}
-          {effectiveAdminTab === 'desk_delivery_dispatch' && (
-            <AdminOrderPipeline deskStage="delivery_dispatch" onNavigateTab={handleSelectAdminTab} />
-          )}
-          {effectiveAdminTab === 'pipeline' && <AdminOrderPipeline onNavigateTab={handleSelectAdminTab} />}
-          {effectiveAdminTab === 'orders' && <AdminOrders />}
+          {(effectiveAdminTab === 'pipeline' ||
+            effectiveAdminTab === 'desk_order_verify' ||
+            effectiveAdminTab === 'desk_payment_verify' ||
+            effectiveAdminTab === 'desk_stock_packing' ||
+            effectiveAdminTab === 'desk_delivery_dispatch') && <AdminOrderPipeline />}
           {effectiveAdminTab === 'sales_history' && <AdminSalesHistory />}
           {effectiveAdminTab === 'returns' && <AdminReturns />}
           {effectiveAdminTab === 'products' && <AdminProducts />}

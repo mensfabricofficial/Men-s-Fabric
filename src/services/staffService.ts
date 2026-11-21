@@ -33,7 +33,6 @@ export const ALL_ADMIN_TABS: AdminTabId[] = [
   'desk_stock_packing',
   'desk_delivery_dispatch',
   'pipeline',
-  'orders',
   'sales_history',
   'returns',
   'products',
@@ -66,12 +65,7 @@ export const ALL_ORDER_ACTIONS: OrderActionPermission[] = [
 export const MENU_PERMISSION_OPTIONS: { id: AdminTabId; label: string }[] = [
   { id: 'dashboard', label: 'ড্যাশবোর্ড (Dashboard)' },
   { id: 'pos', label: 'পয়েন্ট অব সেল (Point of Sale)' },
-  { id: 'desk_order_verify', label: 'অর্ডার ভেরিফাই (Order Verify)' },
-  { id: 'desk_payment_verify', label: 'পেমেন্ট ভেরিফাই (Payment Verify)' },
-  { id: 'desk_stock_packing', label: 'স্টক ও প্যাকিং (Stock & Packing)' },
-  { id: 'desk_delivery_dispatch', label: 'ডেলিভারি ডেস্ক (Delivery)' },
-  { id: 'pipeline', label: 'অর্ডার ওয়ার্কফ্লো ওভারভিউ (Overview)' },
-  { id: 'orders', label: 'ইনভয়েস ও রিসিপ্ট (Invoices)' },
+  { id: 'pipeline', label: 'অর্ডারস (Orders)' },
   { id: 'sales_history', label: 'বিক্রয় হিস্টোরি (Sales History)' },
   { id: 'returns', label: 'রিটার্ন (Returns)' },
   { id: 'products', label: 'প্রোডাক্ট ক্যাটালগ (Products)' },
@@ -97,10 +91,26 @@ export const ORDER_ACTION_OPTIONS: {
   label: string;
   desc: string;
 }[] = [
-  { id: 'order_approve', label: 'Order Approve', desc: 'Verify & confirm new orders' },
-  { id: 'payment_verify', label: 'Payment Verify', desc: 'Approve TrxID & mark paid' },
-  { id: 'packaging', label: 'Packaging & Inventory', desc: 'Check SKU & mark packed' },
-  { id: 'shipping', label: 'Shipping & Delivery', desc: 'Courier dispatch & delivered' },
+  {
+    id: 'order_approve',
+    label: '1. Order Verify — Customer & Initial Payment',
+    desc: 'Sequential customer field verify, correction & initial payment amount/method check',
+  },
+  {
+    id: 'payment_verify',
+    label: '2. Payment Verify — Payment & Finance',
+    desc: 'Verify transactions/TrxID, COD awaiting status & post-delivery COD reconciliation',
+  },
+  {
+    id: 'packaging',
+    label: '3. Stock Verify — Stock Verification & Update',
+    desc: 'Verify SKU stock and deduct inventory once (idempotent)',
+  },
+  {
+    id: 'shipping',
+    label: '4. Delivery — Packing & Delivery',
+    desc: '11-step sequential check, pack, courier, tracking & delivered progression',
+  },
   { id: 'order_return', label: 'Order Return', desc: 'Mark order as returned' },
   { id: 'order_cancel', label: 'Order Cancel', desc: 'Cancel active orders' },
 ];
@@ -123,12 +133,7 @@ export const ROLE_PRESETS: Record<
     menus: [
       'dashboard',
       'pos',
-      'desk_order_verify',
-      'desk_payment_verify',
-      'desk_stock_packing',
-      'desk_delivery_dispatch',
       'pipeline',
-      'orders',
       'sales_history',
       'returns',
       'products',
@@ -139,18 +144,18 @@ export const ROLE_PRESETS: Record<
     orders: ['order_approve', 'payment_verify', 'packaging', 'shipping', 'order_return', 'order_cancel'],
   },
   inventory_editor: {
-    designation: 'Inventory & Packing Officer',
-    menus: ['dashboard', 'desk_stock_packing', 'orders', 'products', 'stock', 'purchases', 'suppliers', 'categories', 'returns'],
+    designation: 'Stock Verification & Update',
+    menus: ['dashboard', 'pipeline', 'products', 'stock', 'purchases', 'suppliers', 'categories'],
     orders: ['packaging'],
   },
   support_staff: {
-    designation: 'Order Verifier & Support',
-    menus: ['dashboard', 'desk_order_verify', 'orders', 'sales_history', 'returns', 'customers', 'reviews'],
-    orders: ['order_approve', 'order_cancel', 'order_return'],
+    designation: 'Customer & Initial Payment Verification',
+    menus: ['dashboard', 'pipeline'],
+    orders: ['order_approve', 'order_cancel'],
   },
   custom_staff: {
     designation: 'Staff Member',
-    menus: ['dashboard', 'orders'],
+    menus: ['dashboard'],
     orders: [],
   },
 };
@@ -160,11 +165,17 @@ const normalizeStaffRecord = (raw: any): StaffAccount => {
   const preset = ROLE_PRESETS[role] || ROLE_PRESETS.custom_staff;
   const fullAccess = Boolean(raw?.fullAccess || raw?.isSuperAdmin || role === 'super_admin');
 
-  const menuPermissions: AdminTabId[] = fullAccess
+  const rawMenus = fullAccess
     ? ALL_ADMIN_TABS
     : Array.isArray(raw?.menuPermissions)
     ? raw.menuPermissions
     : preset.menus;
+
+  const menuPermissions: AdminTabId[] = Array.from(
+    new Set(
+      rawMenus.map((m: string) => (m === 'orders' ? 'pipeline' : m))
+    )
+  ).filter((m): m is AdminTabId => ALL_ADMIN_TABS.includes(m as AdminTabId));
 
   const orderPermissions: OrderActionPermission[] = fullAccess
     ? ALL_ORDER_ACTIONS

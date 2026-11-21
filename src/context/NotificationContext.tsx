@@ -621,7 +621,7 @@ export const NotificationProvider: React.FC<{
       title: 'Test Order Alert #999999 — ৳2,450',
       message: 'Instant new-order browser notifications are active on this approved admin device.',
       audience: 'authorized_devices',
-      actionUrl: '/admin?tab=orders',
+      actionUrl: '/admin?tab=pipeline',
       important: true,
       createdAt: new Date().toISOString(),
       createdAtMs: Date.now(),

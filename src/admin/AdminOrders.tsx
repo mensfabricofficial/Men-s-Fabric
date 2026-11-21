@@ -25,14 +25,15 @@ import {
   Receipt,
   Package,
   RotateCcw,
+  ChevronDown,
 } from 'lucide-react';
 import { Order, OrderPipelineStage, OrderStatus, PaymentStatus } from '../types';
-import { orderService } from '../services/orderService';
+import { orderService, getOrderWorkflowStatus } from '../services/orderService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { printElementById } from '../lib/printHelper';
-import { BrandLogo } from '../components/common/BrandLogo';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
+import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
 import { getOrderPaidAndDue } from '../lib/accountingUtils';
 import { AdminPageHeader } from './AdminLayout';
@@ -52,6 +53,8 @@ export const AdminOrders: React.FC = () => {
   const [updating, setUpdating] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [invoiceFormat, setInvoiceFormat] = useState<'a4' | 'thermal'>('a4');
+  const [paymentActionMenuOpen, setPaymentActionMenuOpen] = useState(false);
+  const [workflowActionMenuOpen, setWorkflowActionMenuOpen] = useState(false);
 
   // Screenshot Zoom Modal
   const [zoomedProofUrl, setZoomedProofUrl] = useState<string | null>(null);
@@ -71,6 +74,8 @@ export const AdminOrders: React.FC = () => {
     setSelectedOrder(ord);
     setNewStatus(ord.orderStatus);
     setStatusNote('');
+    setPaymentActionMenuOpen(false);
+    setWorkflowActionMenuOpen(false);
   };
 
   const copyToClipboard = (text: string, key: string) => {
@@ -199,7 +204,11 @@ export const AdminOrders: React.FC = () => {
 
   const handlePrintInvoice = () => {
     if (selectedOrder) {
-      printElementById('printable-invoice-container', getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id));
+      printElementById(
+        'printable-invoice-container',
+        getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id),
+        invoiceFormat
+      );
     } else {
       window.print();
     }
@@ -460,10 +469,11 @@ export const AdminOrders: React.FC = () => {
                       <span className="block text-[10px] text-neutral-500 mt-1">
                         {(() => {
                           const st = orderService.getOrderPipelineStage(ord);
-                          if (st === 'order_verification') return '1. Order Verify';
-                          if (st === 'payment_verification') return '2. Payment Verify';
-                          if (st === 'inventory_packing') return '3. Stock & Pack';
-                          if (st === 'delivery_dispatch') return '4. Delivery Desk';
+                          if (st === 'order_verification') return 'Order Verify';
+                          if (st === 'payment_verification') return 'Payment Verify';
+                          if (st === 'inventory_packing') return 'Stock Verify';
+                          if (st === 'delivery_dispatch') return 'Packing & Delivery';
+                          if (st === 'cod_reconciliation') return 'COD Reconciliation';
                           if (st === 'completed') return ord.orderChannel === 'pos' ? 'POS Sale' : 'Completed';
                           if (st === 'returned') return 'Returned';
                           return 'Cancelled';
@@ -586,153 +596,8 @@ export const AdminOrders: React.FC = () => {
               {/* Printable Invoice Container */}
               <div id="printable-invoice-container">
                 {invoiceFormat === 'thermal' ? (
-                  /* ================= THERMAL POS RECEIPT LAYOUT (80mm) ================= */
-                  <div className="max-w-[340px] mx-auto bg-white p-5 border border-dashed border-neutral-300 font-mono text-[11px] text-neutral-900 space-y-3 leading-tight print:border-none print:p-0 print:max-w-none">
-                    {/* Store Header (Logo only — no repeated brand name below) */}
-                    <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
-                      <BrandLogo variant="dark" imgClassName="h-6 mx-auto" />
-                      <p className="text-[10px] text-neutral-600">Dhaka, Bangladesh</p>
-                      <p className="text-[10px] text-neutral-600">Hotline: +880 1700-000000</p>
-                    </div>
-
-                    {/* Order & Customer Metadata */}
-                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
-                      <div className="flex justify-between">
-                        <span className="font-bold">INVOICE:</span>
-                        <span className="font-bold">{getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>ORDER:</span>
-                        <span>{selectedOrder.orderNumber}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>DATE:</span>
-                        <span>{formatDateTime(selectedOrder.createdAt, formatDateTime(new Date()))}</span>
-                      </div>
-                      {selectedOrder.customerId && selectedOrder.customerId !== 'guest' && selectedOrder.customerId !== 'walk-in-pos' && (
-                        <div className="flex justify-between">
-                          <span>CUSTOMER ID:</span>
-                          <span className="font-bold">{selectedOrder.customerId}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span>CUSTOMER:</span>
-                        <span className="font-bold truncate max-w-[170px]">{selectedOrder.customerName}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>PHONE:</span>
-                        <span className="font-bold">{selectedOrder.customerPhone}</span>
-                      </div>
-                      <div>
-                        <span>DESTINATION:</span>
-                        <p className="text-neutral-700 pl-1">{selectedOrder.shippingAddress.address}, {selectedOrder.shippingAddress.district}</p>
-                      </div>
-                    </div>
-
-                    {/* Itemized Table */}
-                    <div className="pb-2 border-b border-dashed border-neutral-400">
-                      <div className="flex justify-between font-bold border-b border-neutral-300 pb-1 mb-1 text-[10px]">
-                        <span>ITEM / VARIANT</span>
-                        <span>QTY x PRICE = TOTAL</span>
-                      </div>
-                      <div className="space-y-2">
-                        {selectedOrder.items.map((item, idx) => (
-                          <div key={idx} className="space-y-0.5">
-                            <p className="font-bold">{item.productName}</p>
-                            <div className="flex justify-between text-[10px] text-neutral-700">
-                              <span>{item.size} / {item.color}</span>
-                              <span>{item.quantity} x ৳{item.unitPrice} = <b>৳{item.totalPrice}</b></span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Summary Totals */}
-                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[11px]">
-                      <div className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span>৳{selectedOrder.subtotal.toLocaleString('en-BD')}</span>
-                      </div>
-                      {selectedOrder.discount > 0 && (
-                        <div className="flex justify-between text-emerald-800">
-                          <span>Coupon ({selectedOrder.couponCode}):</span>
-                          <span>-৳{selectedOrder.discount.toLocaleString('en-BD')}</span>
-                        </div>
-                      )}
-                      {selectedOrder.onlineDiscount && selectedOrder.onlineDiscount > 0 ? (
-                        <div className="flex justify-between text-emerald-800 font-bold">
-                          <span>Online Prepayment Discount:</span>
-                          <span>-৳{selectedOrder.onlineDiscount.toLocaleString('en-BD')}</span>
-                        </div>
-                      ) : null}
-                      <div className="flex justify-between">
-                        <span>Delivery Fee:</span>
-                        <span>{selectedOrder.deliveryCharge === 0 ? 'FREE (৳0)' : `৳${selectedOrder.deliveryCharge.toLocaleString('en-BD')}`}</span>
-                      </div>
-                      {selectedOrder.advanceDeliveryPaid && (selectedOrder.advanceAmount || 0) > 0 && (
-                        <div className="flex justify-between text-emerald-800 font-bold">
-                          <span>Adv. Delivery Paid ({selectedOrder.advanceGateway?.toUpperCase() || 'MFS'}):</span>
-                          <span>-৳{(selectedOrder.advanceAmount || selectedOrder.deliveryCharge).toLocaleString('en-BD')}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between text-xs font-extrabold pt-1 border-t border-neutral-300">
-                        <span>ORDER TOTAL:</span>
-                        <span>৳{selectedOrder.total.toLocaleString('en-BD')}</span>
-                      </div>
-                      {(() => {
-                        const { paid, due } = getOrderPaidAndDue(selectedOrder);
-                        return (
-                          <>
-                            <div className="flex justify-between text-[11px] font-bold text-emerald-800 pt-0.5">
-                              <span>PAID AMOUNT:</span>
-                              <span>৳{paid.toLocaleString('en-BD')}</span>
-                            </div>
-                            <div className={`flex justify-between text-xs font-black pt-0.5 ${due > 0 ? 'text-red-700' : 'text-neutral-700'}`}>
-                              <span>{selectedOrder.paymentMethod === 'cod' ? 'DUE ON DELIVERY:' : 'REMAINING DUE:'}</span>
-                              <span>৳{due.toLocaleString('en-BD')}</span>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Payment Details */}
-                    <div className="space-y-1 pb-2 border-b border-dashed border-neutral-400 text-[10px]">
-                      <div className="flex justify-between">
-                        <span className="font-bold">PAYMENT METHOD:</span>
-                        <span className="font-extrabold uppercase">{selectedOrder.paymentMethod}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-bold">PAYMENT STATUS:</span>
-                        <span className="font-extrabold uppercase">{selectedOrder.paymentStatus}</span>
-                      </div>
-                      {selectedOrder.paymentDetails?.transactionId && (
-                        <div className="flex justify-between">
-                          <span>TrxID:</span>
-                          <span className="font-bold">{selectedOrder.paymentDetails.transactionId}</span>
-                        </div>
-                      )}
-                      {selectedOrder.paymentDetails?.senderNumber && (
-                        <div className="flex justify-between">
-                          <span>Sender No:</span>
-                          <span className="font-bold">{selectedOrder.paymentDetails.senderNumber}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Footer */}
-                    <div className="text-center pt-2 space-y-1.5">
-                      <div className="tracking-[4px] font-bold text-xs">
-                        ||| | |||| | ||| || ||||| | |||
-                      </div>
-                      <p className="text-[9px] font-mono tracking-widest">{getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}</p>
-                      <p className="text-[10px] font-bold uppercase pt-1">Thank You!</p>
-                      <p className="text-[9px] text-neutral-500">3-Day exchange with original invoice &amp; parcel tag.</p>
-                    </div>
-                  </div>
+                  <ThermalPosReceipt order={selectedOrder} />
                 ) : (
-                  /* ================= MINIMAL UNIFIED A4 INVOICE LAYOUT ================= */
                   <InvoiceSheet order={selectedOrder} />
                 )}
               </div>
@@ -829,65 +694,18 @@ export const AdminOrders: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Quick Payment Status Actions in Admin — ONLY visible at Stage 2 Payment Verify to Payment Verify role */}
-                {canVerifyPayment &&
-                  orderService.getOrderPipelineStage(selectedOrder) === 'payment_verification' && (
-                  <div className="pt-3 border-t border-neutral-200">
-                    <span className="text-[10px] uppercase font-bold text-neutral-500 block mb-1.5">
-                      Payment Verification Controls:
-                    </span>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleUpdatePayment('paid')}
-                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                          selectedOrder.paymentStatus === 'paid'
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-emerald-600 hover:text-emerald-700'
-                        }`}
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        Mark as Paid / Verified
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdatePayment('pending')}
-                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                          selectedOrder.paymentStatus === 'pending'
-                            ? 'bg-amber-600 text-white shadow-xs'
-                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-amber-600 hover:text-amber-700'
-                        }`}
-                      >
-                        <Clock className="w-3.5 h-3.5" />
-                        Mark as Pending
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdatePayment('failed')}
-                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                          selectedOrder.paymentStatus === 'failed'
-                            ? 'bg-red-600 text-white shadow-xs'
-                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-red-600 hover:text-red-700'
-                        }`}
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        Mark as Failed
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdatePayment('refunded')}
-                        className={`px-3 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                          selectedOrder.paymentStatus === 'refunded'
-                            ? 'bg-purple-600 text-white shadow-xs'
-                            : 'bg-white border border-neutral-300 text-neutral-700 hover:border-purple-600 hover:text-purple-700'
-                        }`}
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Mark as Refunded
-                      </button>
-                    </div>
-                  </div>
-                )}
+                {/* Live Sequential Payment Verification Summary */}
+                <div className="pt-3 border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="text-neutral-600 font-semibold">
+                    Payment Verification Stage:{' '}
+                    <b className="text-neutral-900">
+                      {selectedOrder.paymentMethod === 'cod' && selectedOrder.paymentStatus !== 'paid'
+                        ? 'Awaiting Cash Collection (COD)'
+                        : selectedOrder.pipeline?.paymentVerification?.statusLabel ||
+                          selectedOrder.paymentStatus.toUpperCase()}
+                    </b>
+                  </span>
+                </div>
               </div>
 
               {/* Staff Approval Attribution Summary */}
@@ -964,125 +782,74 @@ export const AdminOrders: React.FC = () => {
                 </div>
               )}
 
-              {/* Admin Actions Panel (Hidden in print) */}
+              {/* Order Workflow Status & Return/Cancel Dropdown */}
               {(() => {
                 const currentStage = orderService.getOrderPipelineStage(selectedOrder);
+                const wfStatus = getOrderWorkflowStatus(selectedOrder);
                 const isClosed = currentStage === 'returned' || currentStage === 'cancelled';
-                const showStage1 = currentStage === 'order_verification' && canApprove;
-                const showStage2 = currentStage === 'payment_verification' && canVerifyPayment;
-                const showStage3 = currentStage === 'inventory_packing' && canPack;
-                const showStage4 = currentStage === 'delivery_dispatch' && canShip;
-                const showReturn = (currentStage === 'delivery_dispatch' || currentStage === 'completed') && canReturn;
+                const showReturn =
+                  (currentStage === 'delivery_dispatch' ||
+                    currentStage === 'cod_reconciliation' ||
+                    currentStage === 'completed') &&
+                  canReturn;
                 const showCancel = !isClosed && currentStage !== 'completed' && canCancel;
-                const hasStageAction =
-                  showStage1 || showStage2 || showStage3 || showStage4 || showReturn || showCancel;
 
                 return (
-                  <div className="pt-4 border-t border-neutral-200 space-y-4 print:hidden">
+                  <div className="pt-4 border-t border-neutral-200 space-y-3 print:hidden">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <h4 className="font-bold uppercase tracking-wider text-neutral-900">
-                        Order Action Controls (Current Stage Only)
-                      </h4>
+                      <div>
+                        <h4 className="font-bold uppercase tracking-wider text-neutral-900">
+                          Sequential Workflow Status
+                        </h4>
+                        <p className="text-[11px] text-neutral-600 mt-0.5">
+                          Current Action: <b className="text-neutral-900">{wfStatus.currentActionLabel}</b>
+                        </p>
+                      </div>
                       <span className="text-[11px] text-neutral-500">
                         Actor: <b className="text-neutral-800">{actorDisplayName}</b>
                       </span>
                     </div>
 
-                    {/* Strictly Stage + Role Filtered Action Buttons */}
-                    {!hasStageAction ? (
-                      <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-600">
-                        {isClosed
-                          ? `This order is ${currentStage}. No further actions available.`
-                          : 'Waiting for the staff member assigned to this current stage to process the order.'}
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {showStage1 && (
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => handleQuickPipelineAction('payment_verification')}
-                            className="px-3.5 py-2 bg-black text-white hover:bg-neutral-800 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" />
-                            <span>Order Approve → Payment Verify</span>
-                          </button>
-                        )}
-
-                        {showStage2 && (
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => handleQuickPipelineAction('inventory_packing', { markPaid: true })}
-                            className="px-3.5 py-2 bg-emerald-700 text-white hover:bg-emerald-800 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                          >
-                            <CreditCard className="w-3.5 h-3.5" />
-                            <span>Verify Payment → Stock &amp; Audit</span>
-                          </button>
-                        )}
-
-                        {showStage3 && (
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => handleQuickPipelineAction('delivery_dispatch')}
-                            className="px-3.5 py-2 bg-neutral-800 text-white hover:bg-black cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                          >
-                            <Package className="w-3.5 h-3.5" />
-                            <span>
-                              {selectedOrder.pipeline?.stockDeducted === false
-                                ? 'Approve Stock & Cut Inventory → Delivery'
-                                : 'Stock & Packing Approved → Delivery'}
-                            </span>
-                          </button>
-                        )}
-
-                        {showStage4 && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={updating}
-                              onClick={() => handleQuickPipelineAction('delivery_dispatch', { dispatchShipped: true })}
-                              className="px-3.5 py-2 bg-neutral-900 text-white hover:bg-black cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                            >
-                              <Truck className="w-3.5 h-3.5" />
-                              <span>Shipping / Dispatch</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={updating}
-                              onClick={() => handleQuickPipelineAction('completed', { markPaid: true })}
-                              className="px-3.5 py-2 bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                              <span>Delivered</span>
-                            </button>
-                          </>
-                        )}
-
-                        {showReturn && (
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => handleQuickPipelineAction('returned')}
-                            className="px-3.5 py-2 border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>Return</span>
-                          </button>
-                        )}
-
-                        {showCancel && (
-                          <button
-                            type="button"
-                            disabled={updating}
-                            onClick={() => handleQuickPipelineAction('cancelled')}
-                            className="px-3.5 py-2 border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded inline-flex items-center gap-1.5"
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>Cancel</span>
-                          </button>
+                    {(showReturn || showCancel) && (
+                      <div className="relative inline-block">
+                        <button
+                          type="button"
+                          disabled={updating}
+                          onClick={() => setWorkflowActionMenuOpen((v) => !v)}
+                          className="px-4 py-2 bg-black text-white hover:bg-neutral-800 disabled:opacity-50 cursor-pointer text-[11px] font-bold uppercase tracking-wider rounded-lg inline-flex items-center gap-2"
+                        >
+                          <span>{updating ? 'Processing...' : 'Order Exceptions'}</span>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                        {workflowActionMenuOpen && (
+                          <div className="absolute left-0 mt-1.5 w-60 bg-white border border-neutral-200 rounded-xl shadow-xl z-30 py-1 text-xs">
+                            {showReturn && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setWorkflowActionMenuOpen(false);
+                                  handleQuickPipelineAction('returned');
+                                }}
+                                className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-neutral-50 text-amber-800 font-bold cursor-pointer"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>Return Order</span>
+                              </button>
+                            )}
+                            {showCancel && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setWorkflowActionMenuOpen(false);
+                                  handleQuickPipelineAction('cancelled');
+                                }}
+                                className="w-full px-3.5 py-2 text-left flex items-center gap-2 hover:bg-red-50 text-red-700 font-bold cursor-pointer"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Cancel Order</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}

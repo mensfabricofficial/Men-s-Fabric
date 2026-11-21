@@ -55,27 +55,27 @@ const QUICK_ROLE_TEMPLATES: {
   fullAccess?: boolean;
 }[] = [
   {
-    label: 'Order Verifier (Step 1)',
-    designation: 'Order Verification Officer',
-    menus: ['dashboard', 'desk_order_verify', 'orders', 'customers'],
+    label: 'Order Verify (Customer & Initial Pay)',
+    designation: 'Customer & Initial Payment Verification',
+    menus: ['dashboard', 'pipeline'],
     orders: ['order_approve', 'order_cancel'],
   },
   {
-    label: 'Payment Verify (Step 2)',
-    designation: 'Payment Verification & Accounts',
-    menus: ['dashboard', 'desk_payment_verify', 'orders', 'sales_history', 'returns', 'expenses'],
-    orders: ['payment_verify', 'order_cancel', 'order_return'],
+    label: 'Payment Verify (Payment & Finance)',
+    designation: 'Payment & Finance Verification',
+    menus: ['dashboard', 'pipeline', 'sales_history', 'returns', 'expenses'],
+    orders: ['payment_verify', 'order_return'],
   },
   {
-    label: 'Stock, Price & Coupon (Step 3)',
-    designation: 'Stock, Price & Coupon Auditor',
-    menus: ['dashboard', 'desk_stock_packing', 'orders', 'products', 'stock', 'purchases', 'suppliers', 'coupons', 'returns'],
-    orders: ['packaging', 'order_cancel'],
+    label: 'Stock Verify (Stock Verification & Update)',
+    designation: 'Stock Verification & Update',
+    menus: ['dashboard', 'pipeline', 'products', 'stock'],
+    orders: ['packaging'],
   },
   {
-    label: 'Delivery & Dispatch (Step 4)',
-    designation: 'Delivery & Courier Coordinator',
-    menus: ['dashboard', 'desk_delivery_dispatch', 'orders', 'delivery', 'returns'],
+    label: 'Delivery Desk (Packing & Delivery)',
+    designation: 'Packing & Delivery',
+    menus: ['dashboard', 'pipeline', 'delivery', 'returns'],
     orders: ['shipping', 'order_return'],
   },
   {
@@ -105,7 +105,7 @@ export const AdminAdmins: React.FC = () => {
   const [formPhone, setFormPhone] = useState('');
   const [formActive, setFormActive] = useState(true);
   const [formFullAccess, setFormFullAccess] = useState(false);
-  const [formMenuPerms, setFormMenuPerms] = useState<AdminTabId[]>(['dashboard', 'orders']);
+  const [formMenuPerms, setFormMenuPerms] = useState<AdminTabId[]>(['dashboard', 'pipeline']);
   const [formOrderPerms, setFormOrderPerms] = useState<OrderActionPermission[]>(['order_approve']);
 
   const [saving, setSaving] = useState(false);
@@ -146,7 +146,7 @@ export const AdminAdmins: React.FC = () => {
     setFormPhone('');
     setFormActive(true);
     setFormFullAccess(false);
-    setFormMenuPerms(['dashboard', 'orders']);
+    setFormMenuPerms(['dashboard', 'pipeline']);
     setFormOrderPerms(['order_approve']);
     setErrorMsg('');
   };

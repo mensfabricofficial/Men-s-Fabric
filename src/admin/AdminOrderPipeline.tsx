@@ -14,6 +14,7 @@ import {
   Edit3,
   History,
   ArrowLeft,
+  ExternalLink,
 } from 'lucide-react';
 import {
   Order,
@@ -32,11 +33,16 @@ import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
-import { getOrderPaidAndDue } from '../lib/accountingUtils';
+import { getOrderPaidAndDue, getOrderRecognizedSale } from '../lib/accountingUtils';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
 import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { printElementById } from '../lib/printHelper';
 import { AdminPageHeader } from './AdminLayout';
+import {
+  BD_DIVISIONS,
+  BD_DISTRICTS_BY_DIVISION,
+  getThanasForDistrict,
+} from '../data/bdLocations';
 
 type StageTabFilter =
   | 'all'
@@ -87,9 +93,9 @@ const StepActionCell: React.FC<{
           onClick={onEdit}
           title="Edit"
           aria-label="Edit"
-          className="p-1.5 border border-neutral-300 bg-white text-neutral-700 rounded hover:border-black hover:text-black cursor-pointer transition-colors"
+          className="p-1 text-neutral-400 hover:text-black hover:bg-neutral-100 rounded cursor-pointer transition-colors"
         >
-          <Edit3 className="w-3.5 h-3.5" />
+          <Edit3 className="w-3 h-3" />
         </button>
       )}
       <button
@@ -119,6 +125,7 @@ export const AdminOrderPipeline: React.FC = () => {
   const [zoomProofUrl, setZoomProofUrl] = useState<string | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceFormat, setInvoiceFormat] = useState<'thermal' | 'a4'>('thermal');
+  const [invoiceVariant, setInvoiceVariant] = useState<'customer' | 'final_sale'>('customer');
 
   // Inline editors
   const [editingFieldKey, setEditingFieldKey] = useState<CustomerVerificationFieldKey | null>(null);
@@ -129,6 +136,8 @@ export const AdminOrderPipeline: React.FC = () => {
   const [trxIdInput, setTrxIdInput] = useState('');
   const [verifiedPayInput, setVerifiedPayInput] = useState('');
   const [codCollectedInput, setCodCollectedInput] = useState('');
+  const [codChargeInput, setCodChargeInput] = useState('0');
+  const [codChargePctInput, setCodChargePctInput] = useState('0');
 
   // Delivery courier & tracking inputs
   const [courierName, setCourierName] = useState('Steadfast');
@@ -226,8 +235,19 @@ export const AdminOrderPipeline: React.FC = () => {
     const payInfo = getOrderPaidAndDue(ord);
     setVerifiedPayInput(String(payInfo.total));
     setTrxIdInput(ord.paymentDetails?.transactionId || '');
-    setCodCollectedInput(
-      String(ord.pipeline?.codReconciliation?.expectedCash ?? payInfo.due ?? 0)
+    const expectedCodCash = ord.pipeline?.codReconciliation?.expectedCash ?? payInfo.due ?? 0;
+    const initCollected = ord.pipeline?.codReconciliation?.collectedCash ?? expectedCodCash;
+    const initCodCharge =
+      ord.pipeline?.codReconciliation?.codCharge ??
+      ord.codCharge ??
+      ord.pipeline?.financialSnapshot?.codCharge ??
+      0;
+    setCodCollectedInput(String(initCollected));
+    setCodChargeInput(String(initCodCharge));
+    setCodChargePctInput(
+      initCollected > 0 && initCodCharge > 0
+        ? String(Number(((initCodCharge / initCollected) * 100).toFixed(2)))
+        : '0'
     );
     setCancelReasonInput('');
     setStageErrorMsg(null);
@@ -441,9 +461,19 @@ export const AdminOrderPipeline: React.FC = () => {
     }
 
     if (id === 'codrec') {
-      setCodCollectedInput(value);
-      setEditingInlineStep(null);
-      showToastMsg(`Updated collected cash to ৳${value || 0}`);
+      const nextCollected = Math.max(0, Number(codCollectedInput) || 0);
+      const nextCodCharge = Math.max(0, Number(codChargeInput) || 0);
+      runWorkflowTask(async () => {
+        const res = await orderService.updateCodReconciliationValues({
+          orderId: ord.id,
+          collectedCash: nextCollected,
+          codCharge: nextCodCharge,
+          actorName: actorDisplayName,
+          actorEmail: currentEmail || undefined,
+        });
+        setEditingInlineStep(null);
+        return res;
+      }, `Updated COD Reconciliation & Charge (${ord.orderNumber})`);
     }
   };
 
@@ -507,11 +537,13 @@ export const AdminOrderPipeline: React.FC = () => {
 
   const handleVerifyCodReconcile = (ord: Order, resolveDiscrepancy = false) => {
     const enteredCash = Math.max(0, Number(codCollectedInput) || 0);
+    const enteredCodCharge = Math.max(0, Number(codChargeInput) || 0);
     runWorkflowTask(
       () =>
         orderService.recordRoleCCodReconciliation({
           orderId: ord.id,
           collectedAmount: enteredCash,
+          codCharge: enteredCodCharge,
           resolveDiscrepancy,
           note: handoffNote.trim() || undefined,
           actorName: actorDisplayName,
@@ -730,8 +762,19 @@ export const AdminOrderPipeline: React.FC = () => {
                           {ord.customerName}
                         </td>
 
-                        <td className="py-4 px-3 text-neutral-900 font-medium whitespace-nowrap">
-                          ৳{(Number(ord.total) || 0).toLocaleString('en-BD')}
+                        <td
+                          className="py-4 px-3 text-neutral-900 font-medium whitespace-nowrap"
+                          title={
+                            (ord.codCharge || ord.pipeline?.codReconciliation?.codCharge || 0) > 0
+                              ? `Net Sale (Excl. Delivery ৳${(Number(ord.deliveryCharge) || 0).toLocaleString('en-BD')} & COD Charge ৳${(
+                                  ord.codCharge ||
+                                  ord.pipeline?.codReconciliation?.codCharge ||
+                                  0
+                                ).toLocaleString('en-BD')})`
+                              : undefined
+                          }
+                        >
+                          ৳{getOrderRecognizedSale(ord).toLocaleString('en-BD')}
                         </td>
 
                         <td className={`py-4 px-3 font-semibold uppercase tracking-wide whitespace-nowrap ${paymentColor}`}>
@@ -844,11 +887,15 @@ export const AdminOrderPipeline: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowInvoiceModal(true)}
+                    onClick={() => {
+                      setInvoiceVariant('customer');
+                      setInvoiceFormat('thermal');
+                      setShowInvoiceModal(true);
+                    }}
                     className="px-3 py-1.5 bg-black text-white text-xs font-bold rounded-lg hover:bg-neutral-800 cursor-pointer inline-flex items-center gap-1.5"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    <span>Receipt</span>
+                    <span>Customer Invoice</span>
                   </button>
                 </>
               }
@@ -961,12 +1008,55 @@ export const AdminOrderPipeline: React.FC = () => {
 
                             {isEditing && (
                               <div className="flex flex-wrap items-center gap-1.5 pt-1.5 font-sans">
-                                <input
-                                  type="text"
-                                  value={editingFieldValue}
-                                  onChange={(e) => setEditingFieldValue(e.target.value)}
-                                  className="px-2 py-1 border border-neutral-400 rounded text-xs bg-white min-w-[180px]"
-                                />
+                                {field.key === 'district' ? (
+                                  <select
+                                    value={editingFieldValue}
+                                    onChange={(e) => setEditingFieldValue(e.target.value)}
+                                    className="px-2 py-1 border border-neutral-400 rounded text-xs bg-white min-w-[180px]"
+                                  >
+                                    {editingFieldValue &&
+                                      !Object.values(BD_DISTRICTS_BY_DIVISION)
+                                        .flat()
+                                        .includes(editingFieldValue) && (
+                                        <option value={editingFieldValue}>{editingFieldValue}</option>
+                                      )}
+                                    {BD_DIVISIONS.map((div) => (
+                                      <optgroup key={div} label={`${div} Division`}>
+                                        {(BD_DISTRICTS_BY_DIVISION[div] || []).map((dist) => (
+                                          <option key={dist} value={dist}>{dist}</option>
+                                        ))}
+                                      </optgroup>
+                                    ))}
+                                  </select>
+                                ) : field.key === 'thana' ? (
+                                  <select
+                                    value={editingFieldValue}
+                                    onChange={(e) => setEditingFieldValue(e.target.value)}
+                                    className="px-2 py-1 border border-neutral-400 rounded text-xs bg-white min-w-[180px]"
+                                  >
+                                    <option value="">Select Thana / Upazila</option>
+                                    {(() => {
+                                      const list = getThanasForDistrict(
+                                        selectedOrder.shippingAddress?.district,
+                                        selectedOrder.shippingAddress?.division
+                                      );
+                                      const opts =
+                                        editingFieldValue && !list.includes(editingFieldValue)
+                                          ? [editingFieldValue, ...list]
+                                          : list;
+                                      return opts.map((t) => (
+                                        <option key={t} value={t}>{t}</option>
+                                      ));
+                                    })()}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type="text"
+                                    value={editingFieldValue}
+                                    onChange={(e) => setEditingFieldValue(e.target.value)}
+                                    className="px-2 py-1 border border-neutral-400 rounded text-xs bg-white min-w-[180px]"
+                                  />
+                                )}
                                 <button
                                   type="button"
                                   disabled={processing}
@@ -1013,9 +1103,9 @@ export const AdminOrderPipeline: React.FC = () => {
                                   }}
                                   title="Edit"
                                   aria-label="Edit"
-                                  className="p-1.5 border border-neutral-300 bg-white text-neutral-700 rounded hover:border-black hover:text-black cursor-pointer transition-colors"
+                                  className="p-1 text-neutral-400 hover:text-black hover:bg-neutral-100 rounded cursor-pointer transition-colors"
                                 >
-                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <Edit3 className="w-3 h-3" />
                                 </button>
                                 {canClickVerify ? (
                                   <button
@@ -1066,7 +1156,9 @@ export const AdminOrderPipeline: React.FC = () => {
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <span className="text-neutral-400 mr-1.5">07.</span>
+                              <span className="text-neutral-400 mr-1.5">
+                                {String(baseCustomerCount + 1).padStart(2, '0')}.
+                              </span>
                               <span className="font-bold">Payment Amount:</span>{' '}
                               {!isEditingInitAmt && (
                                 <span>৳{(Number(selectedOrder.total) || 0).toLocaleString('en-BD')}</span>
@@ -1129,7 +1221,9 @@ export const AdminOrderPipeline: React.FC = () => {
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <span className="text-neutral-400 mr-1.5">08.</span>
+                              <span className="text-neutral-400 mr-1.5">
+                                {String(baseCustomerCount + 2).padStart(2, '0')}.
+                              </span>
                               <span className="font-bold">Payment Method:</span>{' '}
                               {!isEditingInitMethod && (
                                 <span className="uppercase">
@@ -1675,98 +1769,309 @@ export const AdminOrderPipeline: React.FC = () => {
                   </div>
                 </div>
 
-                {/* SECTION 6: COD CASH COLLECTION / FINANCE RECONCILIATION (22) */}
-                {(wf.isCod || getOrderPaidAndDue(selectedOrder).due > 0 || currentStage === 'cod_reconciliation') && (
-                  <div className="border-t border-dashed border-neutral-400 pt-3">
-                    <div className="flex justify-between items-center border-b border-dashed border-neutral-400 pb-1 mb-1">
-                      <span className="font-bold uppercase tracking-wider">COD RECONCILIATION</span>
-                      {wf.reconciliationRequired && (
-                        <span className="text-red-700 font-bold">Reconciliation Required</span>
-                      )}
-                    </div>
+                {/* SECTION 6: COD CASH COLLECTION & COD CHARGE RECONCILIATION */}
+                {(wf.isCod || getOrderPaidAndDue(selectedOrder).due > 0 || currentStage === 'cod_reconciliation') && (() => {
+                  const recState = selectedOrder.pipeline?.codReconciliation;
+                  const isReconciled = Boolean(recState?.reconciledBy) && !wf.reconciliationRequired;
+                  const expectedCash = Math.max(
+                    0,
+                    recState?.expectedCash ?? getOrderPaidAndDue(selectedOrder).due
+                  );
+                  const orderTotalAmt = Math.max(0, Number(selectedOrder.total) || 0);
+                  const deliveryChargeAmt = Math.max(
+                    0,
+                    Number(
+                      selectedOrder.deliveryCharge ??
+                        selectedOrder.pipeline?.financialSnapshot?.shippingCharge ??
+                        0
+                    ) || 0
+                  );
+                  const preCollectionPaid = Math.max(0, orderTotalAmt - expectedCash);
+                  const productAdvancePaid = Math.max(0, preCollectionPaid - deliveryChargeAmt);
+                  const isEditingCod = editingInlineStep?.id === 'codrec';
+                  const showInputs = (isCodRecActive || isEditingCod) && (!isReconciled || isEditingCod);
 
-                    <div
-                      className={`py-2 flex flex-col gap-2 ${
-                        isCodRecActive ? 'bg-neutral-50 px-2 -mx-2 rounded' : ''
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <span className="text-neutral-400 mr-1.5">
-                            {String(codRecSerial).padStart(2, '0')}.
-                          </span>
-                          <span className="font-bold">COD Cash Collection &amp; Reconciliation</span>
-                          <span className="text-neutral-500 ml-2">
-                            (৳
-                            {(
-                              selectedOrder.pipeline?.codReconciliation?.expectedCash ??
-                              getOrderPaidAndDue(selectedOrder).due
-                            ).toLocaleString('en-BD')}
-                            )
-                          </span>
-                        </div>
+                  const activeCollected = showInputs
+                    ? Math.max(0, Number(codCollectedInput) || 0)
+                    : Math.max(0, Number(recState?.collectedCash ?? expectedCash) || 0);
+                  const activeCodCharge = showInputs
+                    ? Math.max(0, Number(codChargeInput) || 0)
+                    : Math.max(0, Number(recState?.codCharge ?? selectedOrder.codCharge ?? 0) || 0);
+                  const productGrossCollected = Math.max(
+                    0,
+                    preCollectionPaid + activeCollected - deliveryChargeAmt
+                  );
+                  const netFinalSale = Math.max(0, productGrossCollected - activeCodCharge);
 
-                        <StepActionCell
-                          verified={Boolean(selectedOrder.pipeline?.codReconciliation?.reconciledBy) && !wf.reconciliationRequired}
-                          canVerify={isCodRecActive}
-                          processing={processing}
-                          isEditing={editingInlineStep?.id === 'codrec'}
-                          verifyLabel={wf.reconciliationRequired ? 'Resolve & Verify' : 'Verify'}
-                          onEdit={() =>
-                            setEditingInlineStep({
-                              id: 'codrec',
-                              value: codCollectedInput,
-                            })
-                          }
-                          onVerify={() => handleVerifyCodReconcile(selectedOrder, wf.reconciliationRequired)}
-                        />
+                  return (
+                    <div className="border-t border-dashed border-neutral-400 pt-3">
+                      <div className="flex justify-between items-center border-b border-dashed border-neutral-400 pb-1 mb-1">
+                        <span className="font-bold uppercase tracking-wider">COD RECONCILIATION</span>
+                        {wf.reconciliationRequired ? (
+                          <span className="text-red-700 font-bold">Reconciliation Required</span>
+                        ) : isReconciled ? (
+                          <span className="text-emerald-700 font-bold">
+                            Final Sale: ৳{netFinalSale.toLocaleString('en-BD')}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-500 font-semibold">
+                            Expected: ৳{expectedCash.toLocaleString('en-BD')}
+                          </span>
+                        )}
                       </div>
 
-                      {isCodRecActive && editingInlineStep?.id === 'codrec' && (
-                        <div className="pl-5 flex flex-wrap items-center gap-1.5 font-sans">
-                          <span className="text-[11px] font-semibold text-neutral-600">Collected Cash (৳):</span>
-                          <input
-                            type="number"
-                            value={editingInlineStep.value}
-                            onChange={(e) =>
-                              setEditingInlineStep({ id: 'codrec', value: e.target.value })
-                            }
-                            className="px-2.5 py-1 bg-white border border-neutral-400 rounded font-mono text-xs w-32 font-bold"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleSaveInlineEdit(selectedOrder)}
-                            className="px-2.5 py-1 bg-black text-white rounded font-bold text-[11px] cursor-pointer"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingInlineStep(null)}
-                            className="px-2 py-1 border border-neutral-300 rounded text-[11px] cursor-pointer"
-                          >
-                            Cancel
-                          </button>
+                      <div className="divide-y divide-dashed divide-neutral-200">
+                        <div className="py-2 flex items-center justify-between gap-3">
+                          <div>
+                            <span className="text-neutral-400 mr-1.5">
+                              {String(codRecSerial).padStart(2, '0')}.
+                            </span>
+                            <span className="font-bold">Expected COD Cash:</span>{' '}
+                            <span>৳{expectedCash.toLocaleString('en-BD')}</span>
+                            {productAdvancePaid > 0 && (
+                              <span className="text-neutral-500 text-[11px] ml-2">
+                                (+৳{productAdvancePaid.toLocaleString('en-BD')} Product Adv)
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] font-mono text-neutral-400">
+                            {isReconciled ? '✓ Matched' : 'Target'}
+                          </span>
                         </div>
-                      )}
 
-                      {isCodRecActive &&
-                        editingInlineStep?.id !== 'codrec' &&
-                        (selectedOrder.pipeline?.codReconciliation?.expectedCash ??
-                          getOrderPaidAndDue(selectedOrder).due) > 0 && (
-                          <div className="pl-5 flex items-center gap-2 font-sans">
-                            <span className="text-[11px] font-semibold text-neutral-600">Collected Cash (৳):</span>
+                        <div className="py-2 flex items-center justify-between gap-3">
+                          <div>
+                            <span className="text-neutral-400 mr-1.5">
+                              {String(codRecSerial + 1).padStart(2, '0')}.
+                            </span>
+                            <span className="font-bold">Collected Cash:</span>{' '}
+                            {!showInputs && (
+                              <span>৳{activeCollected.toLocaleString('en-BD')}</span>
+                            )}
+                          </div>
+                          {showInputs ? (
                             <input
                               type="number"
+                              min={0}
                               value={codCollectedInput}
-                              onChange={(e) => setCodCollectedInput(e.target.value)}
-                              className="px-2.5 py-1 bg-white border border-neutral-300 rounded font-mono text-xs w-32 font-bold"
+                              onChange={(e) => {
+                                const rawCash = e.target.value;
+                                setCodCollectedInput(rawCash);
+                                const nextCash = Math.max(0, Number(rawCash) || 0);
+                                const currentAmt = Math.max(0, Number(codChargeInput) || 0);
+                                if (currentAmt > 0 && nextCash > 0) {
+                                  setCodChargePctInput(
+                                    String(Number(((currentAmt / nextCash) * 100).toFixed(2)))
+                                  );
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-white border border-neutral-400 rounded font-mono text-xs w-32 text-right font-bold"
                             />
+                          ) : (
+                            <span className="font-mono text-xs text-neutral-700">
+                              ৳{activeCollected.toLocaleString('en-BD')}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="py-2 flex items-center justify-between gap-3">
+                          <div>
+                            <span className="text-neutral-400 mr-1.5">
+                              {String(codRecSerial + 2).padStart(2, '0')}.
+                            </span>
+                            <span className="font-bold">COD Charge (Courier Fee):</span>{' '}
+                            {!showInputs && (
+                              <span className={activeCodCharge > 0 ? 'text-red-700' : 'text-neutral-600'}>
+                                {activeCodCharge > 0
+                                  ? `-৳${activeCodCharge.toLocaleString('en-BD')}${
+                                      activeCollected > 0
+                                        ? ` (${Number(((activeCodCharge / activeCollected) * 100).toFixed(2))}%)`
+                                        : ''
+                                    }`
+                                  : '৳0'}
+                              </span>
+                            )}
                           </div>
-                        )}
+                          {showInputs ? (
+                            <div className="flex items-center gap-1.5 font-sans">
+                              <div className="flex items-center border border-neutral-400 rounded bg-white overflow-hidden">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={codChargePctInput}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    setCodChargePctInput(raw);
+                                    const pct = Math.max(0, Number(raw) || 0);
+                                    const baseCash = Math.max(0, Number(codCollectedInput) || 0);
+                                    const calcAmt = Math.round((baseCash * pct) / 100);
+                                    setCodChargeInput(raw === '' ? '' : String(calcAmt));
+                                  }}
+                                  aria-label="COD Charge Percentage"
+                                  title="Enter COD Charge %"
+                                  className="px-2 py-1 font-mono text-xs w-16 text-right font-bold focus:outline-none"
+                                />
+                                <span className="pr-2 text-[11px] font-mono font-bold text-neutral-500 select-none">
+                                  %
+                                </span>
+                              </div>
+                              <div className="flex items-center border border-neutral-400 rounded bg-white overflow-hidden">
+                                <span className="pl-2 text-[11px] font-mono font-bold text-neutral-500 select-none">
+                                  ৳
+                                </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="1"
+                                  value={codChargeInput}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    setCodChargeInput(raw);
+                                    const amt = Math.max(0, Number(raw) || 0);
+                                    const baseCash = Math.max(0, Number(codCollectedInput) || 0);
+                                    const calcPct =
+                                      baseCash > 0 ? Number(((amt / baseCash) * 100).toFixed(2)) : 0;
+                                    setCodChargePctInput(raw === '' ? '' : String(calcPct));
+                                  }}
+                                  aria-label="COD Charge Amount"
+                                  title="Enter COD Charge Amount"
+                                  className="px-2 py-1 font-mono text-xs w-24 text-right font-bold focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className={`font-mono text-xs ${activeCodCharge > 0 ? 'text-red-700' : 'text-neutral-500'}`}>
+                              {activeCodCharge > 0 ? `-৳${activeCodCharge.toLocaleString('en-BD')}` : '৳0'}
+                            </span>
+                          )}
+                        </div>
+
+                        <div
+                          className={`py-2.5 flex flex-col gap-2 ${
+                            isCodRecActive || isEditingCod ? 'bg-neutral-50 px-2 -mx-2 rounded' : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <span className="text-neutral-400 mr-1.5">
+                                {String(codRecSerial + 3).padStart(2, '0')}.
+                              </span>
+                              <span className="font-bold">Final Sale Amount:</span>{' '}
+                              <span className="font-mono font-bold text-emerald-700">
+                                ৳{netFinalSale.toLocaleString('en-BD')}
+                              </span>
+                              <span className="text-[11px] text-neutral-500 ml-2 font-sans">
+                                (
+                                {productAdvancePaid > 0
+                                  ? `Adv ৳${productAdvancePaid.toLocaleString('en-BD')} + Cash ৳${activeCollected.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`
+                                  : preCollectionPaid === 0 && deliveryChargeAmt > 0
+                                  ? `Cash ৳${activeCollected.toLocaleString('en-BD')} − Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`
+                                  : `Cash ৳${activeCollected.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`}
+                                )
+                              </span>
+                            </div>
+
+                            {isEditingCod ? (
+                              <div className="flex items-center gap-1.5 font-sans shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={processing}
+                                  onClick={() => handleSaveInlineEdit(selectedOrder)}
+                                  className="px-2.5 py-1 bg-black text-white rounded font-bold text-[11px] cursor-pointer"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingInlineStep(null)}
+                                  className="px-2 py-1 border border-neutral-300 rounded text-[11px] cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : isReconciled ? (
+                              <div className="flex items-center gap-1.5 shrink-0 font-sans">
+                                {canVerifyPayment && (
+                                  <button
+                                    type="button"
+                                    disabled={processing}
+                                    onClick={() => {
+                                      setCodCollectedInput(String(activeCollected));
+                                      setCodChargeInput(String(activeCodCharge));
+                                      setCodChargePctInput(
+                                        activeCollected > 0 && activeCodCharge > 0
+                                          ? String(
+                                              Number(((activeCodCharge / activeCollected) * 100).toFixed(2))
+                                            )
+                                          : '0'
+                                      );
+                                      setEditingInlineStep({
+                                        id: 'codrec',
+                                        value: String(activeCollected),
+                                      });
+                                    }}
+                                    title="Edit COD Collection / Charge"
+                                    aria-label="Edit COD Collection / Charge"
+                                    className="p-1 text-neutral-400 hover:text-black hover:bg-neutral-100 rounded cursor-pointer transition-colors"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </button>
+                                )}
+                                <span className="font-mono font-bold text-emerald-700">✓ Verified</span>
+                              </div>
+                            ) : (
+                              <StepActionCell
+                                verified={false}
+                                canVerify={isCodRecActive}
+                                processing={processing}
+                                isEditing={isEditingCod}
+                                verifyLabel={wf.reconciliationRequired ? 'Resolve & Verify' : 'Verify'}
+                                onEdit={() =>
+                                  setEditingInlineStep({
+                                    id: 'codrec',
+                                    value: codCollectedInput,
+                                  })
+                                }
+                                onVerify={() => handleVerifyCodReconcile(selectedOrder, wf.reconciliationRequired)}
+                              />
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="py-2 flex items-center justify-between gap-3">
+                          <div className="flex items-center flex-wrap gap-2">
+                            <span>
+                              <span className="text-neutral-400 mr-1.5">
+                                {String(codRecSerial + 4).padStart(2, '0')}.
+                              </span>
+                              <span className="font-bold">Final Sale Invoice:</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInvoiceVariant('final_sale');
+                                setInvoiceFormat('a4');
+                                setShowInvoiceModal(true);
+                              }}
+                              className="text-blue-600 font-semibold font-sans inline-flex items-center gap-1 hover:underline cursor-pointer"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>View Invoice</span>
+                            </button>
+                          </div>
+                          <span
+                            className={`font-mono text-[11px] shrink-0 ${
+                              isReconciled ? 'font-bold text-emerald-700' : 'text-neutral-400'
+                            }`}
+                          >
+                            {isReconciled ? '✓ Completed' : 'Pending'}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Note & Exception Dropdown */}
                 {(showReturn || showCancel) && (
@@ -1896,69 +2201,128 @@ export const AdminOrderPipeline: React.FC = () => {
       })()}
 
       {/* Receipt / Invoice Overlay */}
-      {showInvoiceModal && selectedOrder && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 overflow-y-auto">
-          <div className="bg-white rounded-xl max-w-3xl w-full p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-3">
-              <span className="font-bold text-sm">
-                {invoiceFormat === 'thermal' ? 'POS Receipt' : 'Invoice'}{' '}
-                {getFormattedInvoiceNumber(selectedOrder.orderNumber, selectedOrder.id)}
-              </span>
-              <div className="flex items-center gap-2">
-                <div className="inline-flex bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px] font-bold">
+      {showInvoiceModal && selectedOrder && (() => {
+        const isEditingCodRec =
+          editingInlineStep?.id === 'codrec' ||
+          (orderService.getOrderPipelineStage(selectedOrder) === 'cod_reconciliation' &&
+            !selectedOrder.pipeline?.codReconciliation?.reconciledBy);
+        const previewOrder: Order =
+          invoiceVariant === 'final_sale' && isEditingCodRec
+            ? (() => {
+                const liveCollected = Math.max(0, Number(codCollectedInput) || 0);
+                const liveCodFee = Math.max(0, Number(codChargeInput) || 0);
+                const ordTotal = Math.max(0, Number(selectedOrder.total) || 0);
+                const deliv = Math.max(0, Number(selectedOrder.deliveryCharge) || 0);
+                const expCash = Math.max(
+                  0,
+                  selectedOrder.pipeline?.codReconciliation?.expectedCash ??
+                    getOrderPaidAndDue(selectedOrder).due
+                );
+                const prePaid = Math.max(0, ordTotal - expCash);
+                const liveFinalSale = Math.max(0, prePaid + liveCollected - deliv - liveCodFee);
+                return {
+                  ...selectedOrder,
+                  codCharge: liveCodFee,
+                  netSaleAmount: liveFinalSale,
+                  pipeline: {
+                    ...(selectedOrder.pipeline || { currentStage: 'cod_reconciliation' }),
+                    codReconciliation: {
+                      ...(selectedOrder.pipeline?.codReconciliation || { expectedCash: expCash }),
+                      expectedCash: expCash,
+                      collectedCash: liveCollected,
+                      codCharge: liveCodFee,
+                      finalSaleAmount: liveFinalSale,
+                      resolved: Boolean(selectedOrder.pipeline?.codReconciliation?.resolved),
+                    },
+                  },
+                };
+              })()
+            : selectedOrder;
+
+        return (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 overflow-y-auto">
+            <div className="bg-white rounded-xl max-w-3xl w-full p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-3">
+                <span className="font-bold text-sm">
+                  {invoiceVariant === 'final_sale' ? 'Final Sale Invoice' : 'Customer Invoice'}{' '}
+                  {getFormattedInvoiceNumber(previewOrder.orderNumber, previewOrder.id)}
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceVariant('customer')}
+                      className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                        invoiceVariant === 'customer' ? 'bg-black text-white' : 'text-neutral-600'
+                      }`}
+                    >
+                      Customer Invoice
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceVariant('final_sale')}
+                      className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                        invoiceVariant === 'final_sale' ? 'bg-black text-white' : 'text-neutral-600'
+                      }`}
+                    >
+                      Final Sale
+                    </button>
+                  </div>
+                  <div className="inline-flex bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceFormat('thermal')}
+                      className={`px-2.5 py-1 rounded-md inline-flex items-center gap-1 cursor-pointer ${
+                        invoiceFormat === 'thermal' ? 'bg-black text-white' : 'text-neutral-600'
+                      }`}
+                    >
+                      <Receipt className="w-3 h-3" /> Thermal POS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceFormat('a4')}
+                      className={`px-2.5 py-1 rounded-md inline-flex items-center gap-1 cursor-pointer ${
+                        invoiceFormat === 'a4' ? 'bg-black text-white' : 'text-neutral-600'
+                      }`}
+                    >
+                      <FileText className="w-3 h-3" /> A4
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setInvoiceFormat('thermal')}
-                    className={`px-2.5 py-1 rounded-md inline-flex items-center gap-1 cursor-pointer ${
-                      invoiceFormat === 'thermal' ? 'bg-black text-white' : 'text-neutral-600'
-                    }`}
+                    onClick={() =>
+                      printElementById('pipeline-printable-invoice', previewOrder.orderNumber, invoiceFormat)
+                    }
+                    className="px-3.5 py-1.5 bg-black text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
                   >
-                    <Receipt className="w-3 h-3" /> Thermal POS
+                    <Printer className="w-3.5 h-3.5" /> Print
                   </button>
                   <button
                     type="button"
-                    onClick={() => setInvoiceFormat('a4')}
-                    className={`px-2.5 py-1 rounded-md inline-flex items-center gap-1 cursor-pointer ${
-                      invoiceFormat === 'a4' ? 'bg-black text-white' : 'text-neutral-600'
-                    }`}
+                    onClick={() => setShowInvoiceModal(false)}
+                    className="p-1 text-neutral-500 hover:text-black cursor-pointer"
                   >
-                    <FileText className="w-3 h-3" /> A4
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    printElementById('pipeline-printable-invoice', selectedOrder.orderNumber, invoiceFormat)
-                  }
-                  className="px-3.5 py-1.5 bg-black text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Print
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowInvoiceModal(false)}
-                  className="p-1 text-neutral-500 hover:text-black cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
               </div>
-            </div>
-            <div
-              className={`max-h-[75vh] overflow-y-auto rounded-lg ${
-                invoiceFormat === 'thermal' ? 'bg-neutral-100 p-4 flex justify-center' : ''
-              }`}
-            >
-              <div id="pipeline-printable-invoice" className={invoiceFormat === 'thermal' ? 'w-fit' : 'w-full'}>
-                {invoiceFormat === 'thermal' ? (
-                  <ThermalPosReceipt order={selectedOrder} />
-                ) : (
-                  <InvoiceSheet order={selectedOrder} />
-                )}
+              <div
+                className={`max-h-[75vh] overflow-y-auto rounded-lg ${
+                  invoiceFormat === 'thermal' ? 'bg-neutral-100 p-4 flex justify-center' : ''
+                }`}
+              >
+                <div id="pipeline-printable-invoice" className={invoiceFormat === 'thermal' ? 'w-fit' : 'w-full'}>
+                  {invoiceFormat === 'thermal' ? (
+                    <ThermalPosReceipt order={previewOrder} variant={invoiceVariant} />
+                  ) : (
+                    <InvoiceSheet order={previewOrder} variant={invoiceVariant} />
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Floating Table Row Actions Dropdown */}
       {!selectedOrder && openRowMenu && (() => {

@@ -227,6 +227,7 @@ export const NotificationProvider: React.FC<{
           seenAdminOrderIdsRef.current = initialIds;
           return;
         }
+        if (snap.metadata.hasPendingWrites) return;
 
         snap.forEach((d) => {
           if (!seenAdminOrderIdsRef.current!.has(d.id)) {
@@ -240,6 +241,10 @@ export const NotificationProvider: React.FC<{
               ? ord.createdAt.seconds * 1000
               : Date.now();
             if (Date.now() - createdMs > 15 * 60 * 1000) return;
+
+            const cleanNo = ord.orderNumber.trim().toUpperCase().replace(/^#/, '').replace(/^MF-/, '');
+            const expectedId = `admin-ord-${cleanNo}`;
+            if (allNotificationsRef.current.some((n) => n.id === expectedId)) return;
 
             const itemCount = Array.isArray(ord.items)
               ? ord.items.reduce((sum, item) => sum + (item.quantity || 1), 0)
@@ -272,6 +277,7 @@ export const NotificationProvider: React.FC<{
       return;
     }
 
+    const pendingTimers: number[] = [];
     const processOrdersSnapshot = (ordersList: Order[]) => {
       const snapshots = orderSnapshotsRef.current;
       let changed = false;
@@ -294,7 +300,7 @@ export const NotificationProvider: React.FC<{
           if (prev.orderStatus !== nextOrderStatus) {
             const cleanNo = ord.orderNumber.trim().toUpperCase().replace(/^#/, '').replace(/^MF-/, '');
             const expectedId = `ord-st-${cleanNo}-${nextOrderStatus}`;
-            window.setTimeout(() => {
+            const t = window.setTimeout(() => {
               if (!allNotificationsRef.current.some((n) => n.id === expectedId)) {
                 notificationService
                   .notifyOrderStatusChanged({
@@ -306,12 +312,13 @@ export const NotificationProvider: React.FC<{
                   })
                   .catch(() => {});
               }
-            }, 900);
+            }, 1400);
+            pendingTimers.push(t);
           }
           if (prev.paymentStatus !== nextPaymentStatus && nextPaymentStatus !== 'pending') {
             const cleanNo = ord.orderNumber.trim().toUpperCase().replace(/^#/, '').replace(/^MF-/, '');
             const expectedId = `ord-pay-${cleanNo}-${nextPaymentStatus}`;
-            window.setTimeout(() => {
+            const t = window.setTimeout(() => {
               if (!allNotificationsRef.current.some((n) => n.id === expectedId)) {
                 notificationService
                   .notifyPaymentStatusChanged({
@@ -323,7 +330,8 @@ export const NotificationProvider: React.FC<{
                   })
                   .catch(() => {});
               }
-            }, 900);
+            }, 1400);
+            pendingTimers.push(t);
           }
         }
       });
@@ -338,13 +346,17 @@ export const NotificationProvider: React.FC<{
       const unsub = onSnapshot(
         q,
         (snap) => {
+          if (snap.metadata.hasPendingWrites) return;
           const list: Order[] = [];
           snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Order, 'id'>) }));
           processOrdersSnapshot(list);
         },
         () => {}
       );
-      return () => unsub();
+      return () => {
+        pendingTimers.forEach((t) => window.clearTimeout(t));
+        unsub();
+      };
     } catch {
       return undefined;
     }

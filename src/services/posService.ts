@@ -10,6 +10,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { safeSetLocalStorage } from '../utils/safeStorage';
 import {
   Supplier,
   PurchaseEntry,
@@ -27,6 +28,7 @@ import {
   Order,
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 import { productService } from './productService';
 
 const LOCAL_SUPPLIERS_KEY = 'mf_pos_suppliers_v1';
@@ -118,7 +120,9 @@ const syncLedgerMirror = (partial: {
   heldSales?: HeldPosSale[];
   crmCustomers?: CustomerProfile[];
 }) => {
+  if (isFirestoreWriteBackedOff()) return Promise.resolve();
   ledgerWriteChain = ledgerWriteChain.then(async () => {
+    if (isFirestoreWriteBackedOff()) return;
     try {
       await setDoc(
         LEDGER_DOC,
@@ -128,8 +132,8 @@ const syncLedgerMirror = (partial: {
         }),
         { merge: true }
       );
-    } catch {
-      // ignore if offline
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
   });
   return ledgerWriteChain;
@@ -166,12 +170,10 @@ let sharedUsersUnsub: Unsubscribe | null = null;
 let targetsDocHasAuthoritativeData = false;
 
 const writeBackupList = <T,>(key: string, list: T[]) => {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(key, JSON.stringify(list));
-  } catch {
-    // ignore
-  }
+  safeSetLocalStorage(key, list.slice(0, 150), {
+    stripInlineData: true,
+    maxChars: 200_000,
+  });
 };
 
 const ensureSharedLedgerListener = () => {
@@ -1035,23 +1037,27 @@ export const posService = {
   },
 
   async saveTargetArchives(records: TargetArchiveRecord[]): Promise<void> {
+    if (liveTargetArchives && JSON.stringify(liveTargetArchives) === JSON.stringify(records)) {
+      return;
+    }
     liveTargetArchives = records;
     targetArchivesListeners.forEach((cb) => cb(records));
     writeBackupList(LOCAL_TARGET_ARCHIVES_KEY, records);
+    if (isFirestoreWriteBackedOff()) return;
     try {
       await withTimeout(
         setDoc(
           TARGET_ARCHIVES_DOC,
           sanitizeForFirestore({
-            records,
+            records: records.slice(0, 60),
             updatedAt: serverTimestamp(),
           }),
           { merge: true }
         ),
         2500
       );
-    } catch {
-      // queued offline
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
   },
 

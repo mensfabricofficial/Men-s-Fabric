@@ -122,7 +122,9 @@ export interface ShippingAddress {
   address: string;
   division: string;
   district: string;
+  thana?: string;
   upazila?: string;
+  postCode?: string;
   notes?: string;
 }
 
@@ -229,6 +231,8 @@ export type CustomerVerificationFieldKey =
   | 'email'
   | 'division'
   | 'district'
+  | 'thana'
+  | 'postCode'
   | 'address';
 
 export type VerificationFieldStatus = 'pending' | 'verified' | 'needs_correction';
@@ -347,6 +351,9 @@ export type DeliveryProgressState = Partial<Record<DeliveryStepKey, DeliveryStep
 export interface CodReconciliationState {
   expectedCash: number;
   collectedCash?: number;
+  codCharge?: number;
+  netCodCollected?: number;
+  finalSaleAmount?: number;
   discrepancyAmount?: number;
   reconciliationRequired?: boolean;
   discrepancyNote?: string;
@@ -550,6 +557,8 @@ export interface Order {
   dueOnDelivery?: number;
   paidAmount?: number;
   dueAmount?: number;
+  codCharge?: number;
+  netSaleAmount?: number;
   paymentHistory?: CustomerPaymentLog[];
   posCancelReason?: string;
   deliveryRequired?: boolean;
@@ -808,6 +817,7 @@ export interface CustomerProfile {
   city?: string;
   district?: string;
   division?: string;
+  thana?: string;
   postalCode?: string;
   createdAt: any;
   disabled?: boolean;

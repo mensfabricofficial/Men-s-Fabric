@@ -94,6 +94,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState<boolean>(false);
   const [staffSession, setStaffSession] = useState<StaffAccount | null>(() => readStoredStaffSession());
+  const staffSessionRef = React.useRef<StaffAccount | null>(staffSession);
+  staffSessionRef.current = staffSession;
   const [isAdmin, setIsAdmin] = useState<boolean>(() => Boolean(readStoredStaffSession()));
   const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(() => {
     const stored = readStoredStaffSession();
@@ -369,13 +371,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!isAdmin) return;
     const interval = setInterval(() => {
-      void staffService.touchCurrentSession();
-    }, 60000);
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void staffService.touchCurrentSession();
+      }
+    }, 600000);
 
     const unsub = staffService.subscribeToStaff((list) => {
-      const targetEmail = (staffSession?.email || currentUser?.email || '').trim().toLowerCase();
+      const activeStaff = staffSessionRef.current;
+      const targetEmail = (activeStaff?.email || currentUser?.email || '').trim().toLowerCase();
       if (!targetEmail || isPrimaryOwner(currentUser)) return;
-      const latest = list.find((s) => s.email.toLowerCase() === targetEmail || s.id === staffSession?.id);
+      const latest = list.find((s) => s.email.toLowerCase() === targetEmail || s.id === activeStaff?.id);
       if (latest) {
         if (latest.active === false) {
           try {
@@ -407,7 +412,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearInterval(interval);
       unsub();
     };
-  }, [isAdmin, staffSession?.id, staffSession?.email, currentUser]);
+  }, [isAdmin, currentUser?.uid, currentUser?.email]);
 
   const resolveEmailFromIdentifier = async (identifier: string): Promise<string> => {
     const trimmed = identifier.trim();

@@ -1,9 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Check, ShieldAlert, FileText, Phone, MessageCircle, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Search,
+  Check,
+  ShieldAlert,
+  FileText,
+  Phone,
+  MessageCircle,
+  ArrowRight,
+  Copy,
+  MapPin,
+} from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Order, OrderStatus, SiteSettings } from '../types';
-import { orderService } from '../services/orderService';
+import { orderService, getOrderWorkflowStatus } from '../services/orderService';
 import { settingsService, defaultSettings } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
@@ -13,15 +23,6 @@ interface TrackOrderPageProps {
   currentRoute: string;
   onNavigate: (route: string) => void;
 }
-
-const ORDER_STEPS: { status: OrderStatus; label: string }[] = [
-  { status: 'pending', label: 'Placed' },
-  { status: 'confirmed', label: 'Confirmed' },
-  { status: 'processing', label: 'Processing' },
-  { status: 'packed', label: 'Packed' },
-  { status: 'shipped', label: 'In Transit' },
-  { status: 'delivered', label: 'Delivered' },
-];
 
 const formatDate = (ts: any): string => {
   if (!ts) return '';
@@ -34,6 +35,38 @@ const formatDate = (ts: any): string => {
   }
 };
 
+const formatDateTimeShort = (ts: any): string => {
+  if (!ts) return '';
+  try {
+    const d = ts?.toDate ? ts.toDate() : ts?.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-US', {
+      day: 'numeric',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+};
+
+interface TrackingStageItem {
+  id: string;
+  index: string;
+  title: string;
+  description: string;
+  timestamp?: string;
+  state: 'completed' | 'current' | 'upcoming';
+}
+
+interface LiveUpdateItem {
+  id: string;
+  title: string;
+  note: string;
+  timestamp: string;
+}
+
 export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, onNavigate }) => {
   const { currentUser } = useAuth();
   const [settings, setSettings] = useState<SiteSettings>(() => settingsService.getInstantSettings() || defaultSettings);
@@ -43,6 +76,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
+  const [copiedTracking, setCopiedTracking] = useState(false);
 
   useEffect(() => {
     const unsub = settingsService.subscribeToSettings(setSettings);
@@ -92,7 +126,6 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
     }
   }, [currentRoute, performTrack]);
 
-  // Load recent orders (for signed-in user or local device history)
   useEffect(() => {
     const loadRecent = async () => {
       if (currentUser) {
@@ -112,7 +145,6 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
     void loadRecent();
   }, [currentUser]);
 
-  // Real-time Firestore + local event listener so tracked order updates live immediately
   useEffect(() => {
     const trackedId = order?.id;
     const trackedNum = order?.orderNumber;
@@ -159,16 +191,19 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
     performTrack(orderNumber);
   };
 
-  const statusOrder: OrderStatus[] = ['pending', 'confirmed', 'processing', 'packed', 'shipped', 'delivered'];
-  const currentStepIndex = order ? statusOrder.indexOf(order.orderStatus) : -1;
+  const handleCopyTracking = (tracking: string) => {
+    navigator.clipboard?.writeText(tracking).catch(() => {});
+    setCopiedTracking(true);
+    setTimeout(() => setCopiedTracking(false), 2000);
+  };
 
   const getStatusLabel = (status: OrderStatus) => {
     const map: Record<string, string> = {
       pending: 'Order Placed',
-      confirmed: 'Confirmed',
-      processing: 'Processing',
-      packed: 'Packed',
-      shipped: 'In Transit',
+      confirmed: 'Order Confirmed',
+      processing: 'Order Processing',
+      packed: 'Packed & Ready',
+      shipped: 'Out for Delivery',
       delivered: 'Delivered',
       cancelled: 'Cancelled',
       returned: 'Returned',
@@ -176,12 +211,341 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
     return map[status] || status;
   };
 
-  const getStatusDotColor = (status: OrderStatus) => {
-    if (status === 'delivered') return 'bg-emerald-500';
-    if (status === 'cancelled' || status === 'returned') return 'bg-red-500';
-    if (status === 'pending') return 'bg-amber-500';
-    return 'bg-neutral-900';
-  };
+  // Derive accurate 8-stage workflow milestones and live updates from order + pipeline state
+  const trackingData = useMemo(() => {
+    if (!order) return null;
+    const wf = getOrderWorkflowStatus(order);
+    const dp = order.pipeline?.deliveryProgress || {};
+    const stage = wf.stage;
+    const isException = stage === 'cancelled' || stage === 'returned';
+
+    const paymentVerifiedDone =
+      wf.roleCVerified ||
+      order.paymentStatus === 'paid' ||
+      stage === 'inventory_packing' ||
+      stage === 'delivery_dispatch' ||
+      stage === 'cod_reconciliation' ||
+      stage === 'completed' ||
+      ['confirmed', 'processing', 'packed', 'shipped', 'delivered'].includes(order.orderStatus);
+
+    const orderConfirmedDone =
+      paymentVerifiedDone ||
+      ['confirmed', 'processing', 'packed', 'shipped', 'delivered'].includes(order.orderStatus);
+
+    const deliveredDone =
+      order.orderStatus === 'delivered' ||
+      Boolean(dp.delivered?.completed) ||
+      stage === 'cod_reconciliation' ||
+      stage === 'completed';
+
+    const outForDeliveryDone = Boolean(dp.outForDelivery?.completed) || deliveredDone;
+
+    const shippedDone =
+      Boolean(dp.shipped?.completed) ||
+      order.orderStatus === 'shipped' ||
+      outForDeliveryDone;
+
+    const courierConfirmedDone =
+      Boolean(dp.courierConfirmed?.completed) ||
+      shippedDone ||
+      Boolean(order.pipeline?.courierName && ['packed', 'shipped', 'delivered'].includes(order.orderStatus));
+
+    const packedDone =
+      Boolean(dp.packed?.completed) ||
+      ['packed', 'shipped', 'delivered'].includes(order.orderStatus) ||
+      courierConfirmedDone ||
+      shippedDone;
+
+    const processingStarted =
+      wf.roleBStockUpdated ||
+      Boolean(dp.packing?.completed) ||
+      order.orderStatus === 'processing' ||
+      packedDone;
+
+    const processingActive =
+      !packedDone &&
+      (stage === 'inventory_packing' ||
+        stage === 'delivery_dispatch' ||
+        order.orderStatus === 'confirmed' ||
+        order.orderStatus === 'processing');
+
+    const paymentActive =
+      !paymentVerifiedDone && (stage === 'order_verification' || stage === 'payment_verification');
+
+    const inTransitActive =
+      !outForDeliveryDone &&
+      (shippedDone || courierConfirmedDone || Boolean(dp.trackingAdded?.completed));
+
+    const courierText = order.pipeline?.courierName
+      ? ` via ${order.pipeline.courierName}`
+      : '';
+    const trackingText = order.pipeline?.trackingNumber
+      ? ` (Tracking: ${order.pipeline.trackingNumber})`
+      : '';
+
+    const stages: TrackingStageItem[] = [
+      {
+        id: 'placed',
+        index: '01',
+        title: 'Order Placed',
+        description: 'We received your order and queued it for review.',
+        timestamp: formatDateTimeShort(order.createdAt),
+        state: 'completed',
+      },
+      {
+        id: 'payment_verified',
+        index: '02',
+        title: 'Payment Verified',
+        description: paymentVerifiedDone
+          ? order.paymentMethod === 'cod'
+            ? order.advanceAmount && order.advanceAmount > 0
+              ? 'Advance fee and COD payment details verified.'
+              : 'Cash on Delivery payment details verified.'
+            : `${order.paymentMethod.toUpperCase()} payment verified.`
+          : paymentActive
+          ? order.paymentMethod === 'cod'
+            ? 'Checking customer & COD advance details.'
+            : 'Verifying your transaction details.'
+          : 'Awaiting payment verification.',
+        timestamp: paymentVerifiedDone
+          ? formatDateTimeShort(order.pipeline?.paymentVerifiedAt || order.pipeline?.verifiedAt)
+          : undefined,
+        state: paymentVerifiedDone ? 'completed' : paymentActive ? 'current' : 'upcoming',
+      },
+      {
+        id: 'confirmed',
+        index: '03',
+        title: 'Order Confirmed',
+        description: orderConfirmedDone
+          ? 'Order approved and scheduled for warehouse preparation.'
+          : 'Confirms immediately after verification checks.',
+        timestamp: orderConfirmedDone
+          ? formatDateTimeShort(order.pipeline?.paymentVerifiedAt || order.pipeline?.verifiedAt)
+          : undefined,
+        state: orderConfirmedDone ? 'completed' : 'upcoming',
+      },
+      {
+        id: 'processing',
+        index: '04',
+        title: 'Order Processing',
+        description: packedDone
+          ? 'Stock verified and garment quality inspection completed.'
+          : dp.packing?.completed
+          ? 'Quality inspection complete; preparing parcel packaging.'
+          : wf.roleBStockUpdated || order.orderStatus === 'processing'
+          ? 'Quality inspection and warehouse preparation underway.'
+          : processingActive
+          ? 'Checking warehouse stock and preparing items.'
+          : 'Warehouse inspection and item preparation.',
+        timestamp: packedDone || wf.roleBStockUpdated
+          ? formatDateTimeShort(
+              order.pipeline?.stockApprovedAt ||
+                dp.packing?.completedAt ||
+                dp.packed?.completedAt ||
+                order.pipeline?.packedAt
+            )
+          : undefined,
+        state: packedDone ? 'completed' : processingActive ? 'current' : 'upcoming',
+      },
+      {
+        id: 'packed',
+        index: '05',
+        title: 'Packed',
+        description: packedDone
+          ? 'Parcel sealed and labeled for courier dispatch.'
+          : dp.packing?.completed
+          ? 'Sealing parcel for courier pickup.'
+          : 'Awaiting final packaging and seal.',
+        timestamp: packedDone
+          ? formatDateTimeShort(dp.packed?.completedAt || order.pipeline?.packedAt)
+          : undefined,
+        state: packedDone ? 'completed' : dp.packing?.completed ? 'current' : 'upcoming',
+      },
+      {
+        id: 'shipped',
+        index: '06',
+        title: 'Shipped',
+        description: outForDeliveryDone
+          ? `Dispatched${courierText}${trackingText} and reached delivery hub.`
+          : shippedDone
+          ? `Parcel shipped and in transit${courierText}${trackingText}.`
+          : courierConfirmedDone
+          ? `Courier confirmed (${order.pipeline?.courierName || 'Courier Partner'})${trackingText}; awaiting dispatch.`
+          : 'Courier pickup and live shipment dispatch.',
+        timestamp:
+          outForDeliveryDone || inTransitActive
+            ? formatDateTimeShort(
+                dp.shipped?.completedAt ||
+                  order.pipeline?.shippedAt ||
+                  dp.trackingAdded?.completedAt ||
+                  dp.courierConfirmed?.completedAt
+              )
+            : undefined,
+        state: outForDeliveryDone ? 'completed' : inTransitActive ? 'current' : 'upcoming',
+      },
+      {
+        id: 'out_for_delivery',
+        index: '07',
+        title: 'Out for Delivery',
+        description: deliveredDone
+          ? `Rider completed delivery${courierText}.`
+          : outForDeliveryDone
+          ? `Rider is on the way to your address${courierText}.`
+          : 'Awaiting local rider dispatch.',
+        timestamp: outForDeliveryDone
+          ? formatDateTimeShort(dp.outForDelivery?.completedAt || dp.delivered?.completedAt)
+          : undefined,
+        state: deliveredDone ? 'completed' : outForDeliveryDone ? 'current' : 'upcoming',
+      },
+      {
+        id: 'delivered',
+        index: '08',
+        title: 'Delivered',
+        description: deliveredDone
+          ? 'Parcel delivered to your shipping address.'
+          : 'Awaiting doorstep delivery completion.',
+        timestamp: deliveredDone
+          ? formatDateTimeShort(dp.delivered?.completedAt || order.pipeline?.deliveredAt || order.updatedAt)
+          : undefined,
+        state: deliveredDone ? 'completed' : 'upcoming',
+      },
+    ];
+
+    const completedCount = stages.filter((s) => s.state === 'completed').length;
+    const activeStage = stages.find((s) => s.state === 'current') || stages[Math.max(0, completedCount - 1)];
+
+    // Build chronological milestone feed (newest displayed first)
+    const milestones: LiveUpdateItem[] = [];
+
+    const addMilestone = (id: string, title: string, note: string, rawTs: any) => {
+      milestones.push({
+        id,
+        title,
+        note,
+        timestamp: formatDateTimeShort(rawTs) || formatDateTimeShort(order.updatedAt),
+      });
+    };
+
+    addMilestone(
+      'order_placed',
+      'Order Placed',
+      `Order ${order.orderNumber} placed and received for verification.`,
+      order.createdAt
+    );
+
+    if (paymentVerifiedDone) {
+      addMilestone(
+        'payment_verified',
+        'Payment Verified',
+        order.paymentMethod === 'cod'
+          ? order.advanceAmount && order.advanceAmount > 0
+            ? 'Advance fee and Cash on Delivery payment details verified.'
+            : 'Cash on Delivery payment details verified.'
+          : `${order.paymentMethod.toUpperCase()} payment transaction verified.`,
+        order.pipeline?.paymentVerifiedAt || order.pipeline?.verifiedAt || order.updatedAt
+      );
+    }
+
+    if (orderConfirmedDone) {
+      addMilestone(
+        'order_confirmed',
+        'Order Confirmed',
+        'Order confirmed and queued for warehouse stock verification.',
+        order.pipeline?.paymentVerifiedAt || order.pipeline?.verifiedAt || order.updatedAt
+      );
+    }
+
+    if (processingStarted) {
+      addMilestone(
+        'order_processing',
+        'Order Processing',
+        'Warehouse stock checked and quality inspection started.',
+        order.pipeline?.stockApprovedAt ||
+          dp.packing?.completedAt ||
+          order.pipeline?.paymentVerifiedAt ||
+          order.updatedAt
+      );
+    }
+
+    if (packedDone) {
+      addMilestone(
+        'packed',
+        'Packed',
+        'Items packed, sealed, and labeled for courier pickup.',
+        dp.packed?.completedAt || order.pipeline?.packedAt || order.updatedAt
+      );
+    }
+
+    if (courierConfirmedDone) {
+      addMilestone(
+        'courier_confirmed',
+        'Courier Confirmed (Rider Assigned)',
+        order.pipeline?.courierName
+          ? `Assigned to courier partner: ${order.pipeline.courierName}.`
+          : 'Courier partner and delivery rider confirmed.',
+        dp.courierConfirmed?.completedAt ||
+          dp.trackingAdded?.completedAt ||
+          dp.shipped?.completedAt ||
+          order.updatedAt
+      );
+    }
+
+    if (shippedDone) {
+      addMilestone(
+        'shipped',
+        'Shipped',
+        `Parcel handed over to courier${courierText}${trackingText}.`,
+        dp.shipped?.completedAt || order.pipeline?.shippedAt || order.updatedAt
+      );
+      addMilestone(
+        'in_transit',
+        'In Transit',
+        `Shipment is in transit to your destination hub${courierText}.`,
+        dp.shipped?.completedAt || order.pipeline?.shippedAt || order.updatedAt
+      );
+    }
+
+    if (outForDeliveryDone) {
+      addMilestone(
+        'out_for_delivery',
+        'Out for Delivery',
+        `Delivery rider is out for doorstep delivery${courierText}.`,
+        dp.outForDelivery?.completedAt || dp.delivered?.completedAt || order.updatedAt
+      );
+    }
+
+    if (deliveredDone) {
+      addMilestone(
+        'delivered',
+        'Delivered',
+        'Order successfully delivered to the customer.',
+        dp.delivered?.completedAt || order.pipeline?.deliveredAt || order.updatedAt
+      );
+    }
+
+    if (isException) {
+      const exceptionEntry = [...(order.timeline || [])]
+        .reverse()
+        .find((t) => t.status === 'cancelled' || t.status === 'returned');
+      addMilestone(
+        'exception',
+        order.orderStatus === 'returned' ? 'Order Returned' : 'Order Cancelled',
+        exceptionEntry?.note || `Order marked as ${order.orderStatus}.`,
+        exceptionEntry?.timestamp || order.updatedAt
+      );
+    }
+
+    const liveUpdates = [...milestones].reverse();
+
+    return {
+      wf,
+      isException,
+      stages,
+      completedCount,
+      activeStage,
+      liveUpdates,
+    };
+  }, [order]);
 
   const paymentMethodLabel = order
     ? order.paymentMethod === 'cod'
@@ -189,21 +553,34 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
       : order.paymentMethod.toUpperCase()
     : '';
 
+  const addressLine = order
+    ? [
+        order.shippingAddress.address,
+        order.shippingAddress.thana || order.shippingAddress.upazila,
+        order.shippingAddress.district,
+        order.shippingAddress.division,
+        order.shippingAddress.postCode ? `Post ${order.shippingAddress.postCode}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : '';
+
   return (
-    <div className="bg-[#f4f4f6] py-10 sm:py-16">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6">
+    <div className="bg-[#FAFAFA] min-h-[75vh] py-10 sm:py-14">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
         {/* Header */}
-        <div className="text-center mb-7 sm:mb-9">
-          <h1 className="text-2xl sm:text-3xl font-semibold text-neutral-900 tracking-tight">
+        <div className="mb-7 sm:mb-9">
+          <p className="text-xs font-medium text-neutral-500">Order &amp; Shipment Status</p>
+          <h1 className="text-2xl sm:text-3xl font-semibold text-neutral-900 tracking-tight mt-1">
             Track Your Order
           </h1>
           <p className="text-xs sm:text-sm text-neutral-500 mt-1.5">
-            Enter your order number to check live delivery progress.
+            Follow live payment verification, warehouse processing, and courier delivery updates.
           </p>
         </div>
 
         {/* Lookup Bar */}
-        <div className="bg-white border border-neutral-200/80 rounded-lg p-4 sm:p-5 mb-6">
+        <div className="bg-white border border-neutral-200/80 rounded-xl p-4 sm:p-6 mb-6">
           <form onSubmit={handleSearch} className="space-y-3">
             <div className="flex flex-col sm:flex-row gap-2.5">
               <div className="flex-1">
@@ -222,112 +599,98 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                 className="h-12 px-7 bg-neutral-900 text-white text-xs font-medium uppercase tracking-wider rounded-[6px] hover:bg-black transition-colors cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-60"
               >
                 <Search className="w-3.5 h-3.5" />
-                <span>{loading ? 'Tracking...' : 'Track'}</span>
+                <span>{loading ? 'Tracking...' : 'Track Order'}</span>
               </button>
             </div>
 
-            {error && (
-              <p className="text-xs text-red-600 pt-1">
-                {error}
-              </p>
-            )}
+            {error && <p className="text-xs text-red-600 pt-1">{error}</p>}
           </form>
 
           {recentOrders.length > 0 && (
             <div className="mt-4 pt-3.5 border-t border-neutral-100 flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-neutral-400 mr-1">Recent orders:</span>
-              {recentOrders.map((ro) => (
-                <button
-                  key={ro.id}
-                  type="button"
-                  onClick={() => {
-                    setOrderNumber(ro.orderNumber);
-                    performTrack(ro.orderNumber, ro.id);
-                  }}
-                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors cursor-pointer border ${
-                    order?.id === ro.id
-                      ? 'border-neutral-900 bg-neutral-900 text-white'
-                      : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-400'
-                  }`}
-                >
-                  {ro.orderNumber}
-                </button>
+              <span className="text-xs text-neutral-400 mr-1">Recent orders:</span>
+              {recentOrders.map((ro, idx) => (
+                <React.Fragment key={ro.id}>
+                  {idx > 0 && <span className="text-neutral-300 text-xs">·</span>}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOrderNumber(ro.orderNumber);
+                      performTrack(ro.orderNumber, ro.id);
+                    }}
+                    className={`text-xs font-mono transition-colors cursor-pointer underline-offset-4 ${
+                      order?.id === ro.id
+                        ? 'text-neutral-900 font-semibold underline'
+                        : 'text-neutral-600 hover:text-neutral-900 hover:underline'
+                    }`}
+                  >
+                    {ro.orderNumber}
+                  </button>
+                </React.Fragment>
               ))}
             </div>
           )}
         </div>
 
-        {/* Pre-Search Guide & Delivery Information (shown when no order is loaded yet) */}
+        {/* Pre-Search Guide */}
         {!order && (
-          <div className="bg-white border border-neutral-200/80 rounded-lg divide-y divide-neutral-100">
-            {/* Delivery Timeline Overview */}
-            <div className="p-5 sm:p-7">
-              <h2 className="text-sm sm:text-[15px] font-semibold text-neutral-900 tracking-tight">
-                How Delivery &amp; Tracking Works
+          <div className="bg-white border border-neutral-200/80 rounded-xl divide-y divide-neutral-100">
+            <div className="p-6 sm:p-8">
+              <h2 className="text-base font-semibold text-neutral-900 tracking-tight">
+                Live Verification &amp; Delivery Stages
               </h2>
-              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                Every Selvee order moves through three checked stages before reaching your doorstep.
+              <p className="text-xs sm:text-sm text-neutral-500 mt-1 leading-relaxed">
+                Every order passes through clear verification and quality checks before nationwide dispatch.
               </p>
 
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-6 pt-5 border-t border-neutral-100">
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 pt-6 border-t border-neutral-100">
                 <div>
-                  <p className="text-xs font-semibold text-neutral-900">
-                    01. Order Confirmation
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-900">01. Order Placed &amp; Payment Verified</p>
                   <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
-                    Once placed, our team verifies your shipping details and prepares the order for dispatch.
+                    Shipping address and payment or COD advance details are verified immediately.
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-neutral-900">
-                    02. Quality Check &amp; Packing
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-900">02. Confirmed &amp; Processing</p>
                   <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
-                    Each garment is inspected, folded, and sealed in protective packaging with your invoice attached.
+                    Your order is confirmed, checked for fabric quality, and carefully packed.
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-neutral-900 tabular-nums">
-                    03. Nationwide Courier
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-900 tabular-nums">03. Courier &amp; Doorstep Delivery</p>
                   <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed tabular-nums">
-                    Delivery takes 1–2 business days inside Dhaka and 2–4 business days across all 64 districts.
+                    Courier tracking updates appear live. Delivery takes 1–2 days in Dhaka and 2–4 days nationwide.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Order Number Help & Direct Support */}
-            <div className="p-5 sm:p-7 grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs">
+            <div className="p-6 sm:p-8 grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs">
               <div>
-                <h3 className="font-semibold text-neutral-900">
-                  Where to find your Order Number
-                </h3>
+                <h3 className="font-semibold text-neutral-900">Where to find your Order Number</h3>
                 <p className="text-neutral-500 mt-1.5 leading-relaxed">
-                  Your order number starts with <span className="font-mono text-neutral-800">MF-</span> and is shown on your checkout confirmation, printed invoice, and Account Order History.
+                  Your order number starts with <span className="font-mono text-neutral-800">MF-</span> and is shown on your checkout receipt and Account Order History.
                 </p>
                 <button
                   type="button"
                   onClick={() => onNavigate('/account')}
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline cursor-pointer whitespace-nowrap shrink-0"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline cursor-pointer"
                 >
-                  <span>{currentUser ? 'View Order History in Account' : 'Sign in to view past orders'}</span>
+                  <span>{currentUser ? 'View Order History' : 'Sign in to view past orders'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
 
               <div>
-                <h3 className="font-semibold text-neutral-900">
-                  Need help with a shipment?
-                </h3>
+                <h3 className="font-semibold text-neutral-900">Need help with delivery?</h3>
                 <p className="text-neutral-500 mt-1.5 leading-relaxed">
-                  If your tracking status has not updated or you need to adjust a delivery address, reach our support desk directly.
+                  Contact our support desk directly for address updates or courier assistance.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-4">
                   {settings.phone && (
                     <a
                       href={`tel:${settings.phone.replace(/[^+\d]/g, '')}`}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline whitespace-nowrap shrink-0 tabular-nums"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline tabular-nums"
                     >
                       <Phone className="w-3.5 h-3.5 text-neutral-500" />
                       <span>{settings.phone}</span>
@@ -338,7 +701,7 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                       href={`https://wa.me/${settings.whatsapp.replace(/[^0-9]/g, '')}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline whitespace-nowrap shrink-0"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-900 hover:underline"
                     >
                       <MessageCircle className="w-3.5 h-3.5 text-neutral-500" />
                       <span>WhatsApp Support</span>
@@ -350,173 +713,258 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
           </div>
         )}
 
-        {/* Order Status Card */}
-        {order && (
-          <div className="bg-white border border-neutral-200/80 rounded-lg divide-y divide-neutral-100 animate-fade-in">
-            {/* Top Summary Row */}
-            <div className="p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Active Tracked Order Card */}
+        {order && trackingData && (
+          <div className="bg-white border border-neutral-200/80 rounded-xl divide-y divide-neutral-100 animate-fade-in">
+            {/* Top Summary Header */}
+            <div className="p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <div className="flex items-center gap-3">
-                  <h2 className="text-lg sm:text-xl font-semibold text-neutral-900 font-mono">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-neutral-500">
+                  <span className="font-mono text-sm font-semibold text-neutral-900">
                     {order.orderNumber}
-                  </h2>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-700">
-                    <span className={`w-2 h-2 rounded-full ${getStatusDotColor(order.orderStatus)}`} />
-                    {getStatusLabel(order.orderStatus)}
                   </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-medium text-neutral-900">
+                    {trackingData.isException
+                      ? getStatusLabel(order.orderStatus)
+                      : trackingData.activeStage.title}
+                  </span>
+                  {formatDate(order.createdAt) && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">Placed {formatDate(order.createdAt)}</span>
+                    </>
+                  )}
                 </div>
-                <p className="text-xs text-neutral-500 mt-1">
-                  {formatDate(order.createdAt) ? `Placed ${formatDate(order.createdAt)} · ` : ''}
-                  {order.customerName}, {order.shippingAddress.district}
+                <p className="text-sm text-neutral-600 mt-1.5">
+                  {order.customerName}
+                  {order.shippingAddress.district ? `, ${order.shippingAddress.district}` : ''}
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 self-start sm:self-auto">
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsInvoiceOpen(true)}
-                  className="px-3.5 py-2 border border-neutral-200 hover:border-neutral-400 text-neutral-800 text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="px-4 py-2 border border-neutral-300 hover:border-neutral-900 text-neutral-900 text-xs font-medium rounded-md flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <FileText className="w-3.5 h-3.5 text-neutral-500" />
-                  <span>Invoice</span>
+                  <span>View Invoice</span>
                 </button>
               </div>
             </div>
 
-            {/* Minimal Progress Stepper */}
-            <div className="p-5 sm:p-7">
-              {order.orderStatus === 'cancelled' || order.orderStatus === 'returned' ? (
-                <div className="p-3.5 bg-red-50/70 border border-red-100 rounded-md text-xs text-red-700 flex items-center gap-2.5">
-                  <ShieldAlert className="w-4 h-4 shrink-0" />
+            {/* 8-Stage Order Progress */}
+            <div className="p-5 sm:px-7 sm:py-6">
+              {trackingData.isException ? (
+                <div className="p-4 bg-red-50/70 border border-red-200 rounded-lg text-xs text-red-800 flex items-center gap-3">
+                  <ShieldAlert className="w-4 h-4 shrink-0 text-red-600" />
                   <span>
-                    This order has been {order.orderStatus}. Please reach out to support for assistance.
+                    This order is currently marked as <strong>{getStatusLabel(order.orderStatus)}</strong>. Please contact support if you need any assistance.
                   </span>
                 </div>
               ) : (
-                <>
-                  {/* Desktop Connected Stepper */}
-                  <div className="hidden sm:block relative py-2">
-                    <div className="absolute top-6 left-[8%] right-[8%] h-[1.5px] bg-neutral-200" />
-                    <div
-                      className="absolute top-6 left-[8%] h-[1.5px] bg-neutral-900 transition-all duration-300"
-                      style={{
-                        width:
-                          currentStepIndex <= 0
-                            ? '0%'
-                            : `${(Math.min(currentStepIndex, ORDER_STEPS.length - 1) / (ORDER_STEPS.length - 1)) * 84}%`,
-                      }}
-                    />
-                    <div className="relative grid grid-cols-6 gap-2">
-                      {ORDER_STEPS.map((step, idx) => {
-                        const isCompleted = idx < currentStepIndex;
-                        const isCurrent = idx === currentStepIndex;
-                        const isUpcoming = idx > currentStepIndex;
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <h2 className="text-sm font-semibold text-neutral-900">
+                      Order Progress
+                    </h2>
+                    <span className="text-xs text-neutral-500 font-mono tabular-nums">
+                      {trackingData.completedCount}/{trackingData.stages.length} Completed
+                    </span>
+                  </div>
 
-                        return (
-                          <div key={step.status} className="flex flex-col items-center text-center">
+                  {/* Clean 8-Stage Progress Rail (Desktop) */}
+                  <div className="hidden md:block">
+                    <div className="relative pt-1 pb-2">
+                      <div className="absolute top-[19px] left-[6.25%] right-[6.25%] h-[1.5px] bg-neutral-200" />
+                      <div
+                        className="absolute top-[19px] left-[6.25%] h-[1.5px] bg-neutral-900 transition-all duration-300"
+                        style={{
+                          width: `${
+                            (Math.max(0, trackingData.completedCount - 1) /
+                              (trackingData.stages.length - 1)) *
+                            87.5
+                          }%`,
+                        }}
+                      />
+                      <div className="relative grid grid-cols-8 gap-1">
+                        {trackingData.stages.map((st) => (
+                          <div key={st.id} className="flex flex-col items-center text-center min-w-0">
                             <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-colors ${
-                                isCompleted || isCurrent
+                              className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-medium transition-colors ${
+                                st.state === 'completed'
                                   ? 'bg-neutral-900 text-white'
+                                  : st.state === 'current'
+                                  ? 'bg-white border-2 border-neutral-900 text-neutral-900 font-semibold ring-4 ring-neutral-900/10'
                                   : 'bg-white border border-neutral-300 text-neutral-400'
-                              } ${isCurrent ? 'ring-4 ring-neutral-900/10' : ''}`}
-                            >
-                              {isCompleted ? <Check className="w-3.5 h-3.5" /> : idx + 1}
-                            </div>
-                            <span
-                              className={`mt-2.5 text-xs ${
-                                isUpcoming
-                                  ? 'text-neutral-400 font-normal'
-                                  : isCurrent
-                                  ? 'text-neutral-900 font-semibold'
-                                  : 'text-neutral-700 font-medium'
                               }`}
                             >
-                              {step.label}
-                            </span>
+                              {st.state === 'completed' ? <Check className="w-4 h-4" /> : st.index}
+                            </div>
+                            <p
+                              className={`mt-2.5 text-[10.5px] lg:text-xs leading-tight whitespace-nowrap ${
+                                st.state === 'upcoming'
+                                  ? 'text-neutral-400 font-normal'
+                                  : 'text-neutral-900 font-semibold'
+                              }`}
+                            >
+                              {st.title}
+                            </p>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Mobile Vertical Stepper */}
-                  <div className="sm:hidden space-y-3">
-                    {ORDER_STEPS.map((step, idx) => {
-                      const isCompleted = idx < currentStepIndex;
-                      const isCurrent = idx === currentStepIndex;
-                      const isUpcoming = idx > currentStepIndex;
-
-                      return (
-                        <div key={step.status} className="flex items-center gap-3">
+                  {/* Detailed Vertical Stage Breakdown */}
+                  <div className="md:pt-4 md:border-t md:border-neutral-100 divide-y divide-neutral-100">
+                    {trackingData.stages.map((st) => (
+                      <div
+                        key={st.id}
+                        className={`py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-4 ${
+                          st.state === 'current' ? 'bg-neutral-50/80 -mx-3 px-3 rounded-lg' : ''
+                        }`}
+                      >
+                        <div className="flex items-start gap-3 min-w-0">
                           <div
-                            className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-medium shrink-0 ${
-                              isCompleted || isCurrent
+                            className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+                              st.state === 'completed'
                                 ? 'bg-neutral-900 text-white'
-                                : 'bg-white border border-neutral-300 text-neutral-400'
+                                : st.state === 'current'
+                                ? 'border-2 border-neutral-900 text-neutral-900 bg-white'
+                                : 'border border-neutral-300 text-neutral-400 bg-white'
                             }`}
                           >
-                            {isCompleted ? <Check className="w-3 h-3" /> : idx + 1}
+                            {st.state === 'completed' ? <Check className="w-3 h-3" /> : st.index}
                           </div>
-                          <span
-                            className={`text-xs ${
-                              isUpcoming
-                                ? 'text-neutral-400'
-                                : isCurrent
-                                ? 'text-neutral-900 font-semibold'
-                                : 'text-neutral-700 font-medium'
-                            }`}
-                          >
-                            {step.label}
-                          </span>
+                          <div className="min-w-0">
+                            <p
+                              className={`text-xs ${
+                                st.state === 'upcoming'
+                                  ? 'text-neutral-400 font-medium'
+                                  : 'text-neutral-900 font-semibold'
+                              }`}
+                            >
+                              {st.title}
+                            </p>
+                            <p
+                              className={`text-xs mt-0.5 ${
+                                st.state === 'upcoming' ? 'text-neutral-400' : 'text-neutral-500'
+                              }`}
+                            >
+                              {st.description}
+                            </p>
+                          </div>
                         </div>
-                      );
-                    })}
+                        <span
+                          className={`text-[11px] shrink-0 font-mono ${
+                            st.state === 'completed'
+                              ? 'text-neutral-700 font-medium'
+                              : st.state === 'current'
+                              ? 'text-neutral-900 font-semibold'
+                              : 'text-neutral-400'
+                          }`}
+                        >
+                          {st.state === 'completed'
+                            ? 'Completed'
+                            : st.state === 'current'
+                            ? 'In Progress'
+                            : 'Pending'}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                </>
+                </div>
               )}
             </div>
 
-            {/* Delivery & Payment Meta */}
-            <div className="p-5 sm:p-7 grid grid-cols-1 sm:grid-cols-3 gap-5 text-xs">
+            {/* Shipping & Payment Details */}
+            <div className="p-6 sm:p-8 grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs">
               <div>
-                <span className="text-neutral-400 block mb-1">Delivery Address</span>
-                <p className="text-neutral-800 leading-relaxed">
-                  {order.shippingAddress.address}, {order.shippingAddress.district}, {order.shippingAddress.division}
-                </p>
+                <span className="text-neutral-400 flex items-center gap-1.5 mb-1.5">
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span>Delivery Address</span>
+                </span>
+                <p className="text-neutral-900 font-medium">{order.shippingAddress.fullName || order.customerName}</p>
+                <p className="text-neutral-600 leading-relaxed mt-0.5">{addressLine}</p>
+                <p className="text-neutral-500 mt-0.5 tabular-nums">{order.customerPhone}</p>
+                {(order.pipeline?.courierName || order.pipeline?.trackingNumber) && (
+                  <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1 text-neutral-600">
+                    {order.pipeline?.courierName && (
+                      <p>
+                        Courier: <span className="font-medium text-neutral-900">{order.pipeline.courierName}</span>
+                      </p>
+                    )}
+                    {order.pipeline?.trackingNumber && (
+                      <div className="flex items-center gap-1.5">
+                        <span>Tracking:</span>
+                        <span className="font-mono font-semibold text-neutral-900">
+                          {order.pipeline.trackingNumber}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyTracking(order.pipeline!.trackingNumber!)}
+                          className="p-0.5 text-neutral-400 hover:text-neutral-900 cursor-pointer"
+                          title="Copy Tracking ID"
+                          aria-label="Copy Tracking ID"
+                        >
+                          {copiedTracking ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+
               <div>
-                <span className="text-neutral-400 block mb-1">Payment</span>
-                <p className="text-neutral-900 font-medium">
-                  {paymentMethodLabel}
+                <span className="text-neutral-400 block mb-1.5">Payment Status</span>
+                <p className="text-neutral-900 font-medium">{paymentMethodLabel}</p>
+                <p className="text-neutral-600 mt-0.5 capitalize">
+                  {order.paymentStatus === 'paid'
+                    ? 'Verified & Paid'
+                    : trackingData.wf.roleCVerified
+                    ? 'Verified (COD Due on Delivery)'
+                    : `Status: ${order.paymentStatus}`}
                 </p>
-                <p className="text-neutral-500 mt-0.5 capitalize">
-                  Status: {order.paymentStatus}
-                  {order.paymentDetails?.transactionId ? ` · ${order.paymentDetails.transactionId}` : ''}
-                </p>
+                {order.paymentDetails?.transactionId && (
+                  <p className="text-neutral-500 mt-0.5 font-mono">
+                    TrxID: {order.paymentDetails.transactionId}
+                  </p>
+                )}
               </div>
+
               <div className="sm:text-right">
-                <span className="text-neutral-400 block mb-1">Order Total</span>
-                <p className="text-sm font-semibold text-neutral-900 tabular-nums">
-                  ৳{order.total.toLocaleString('en-BD')}
+                <span className="text-neutral-400 block mb-1.5">Order Total</span>
+                <p className="text-base font-semibold text-neutral-900 tabular-nums font-mono">
+                  ৳{(Number(order.total) || 0).toLocaleString('en-BD')}
                 </p>
-                {order.paymentMethod === 'cod' && (
+                {order.paymentMethod === 'cod' && order.paymentStatus !== 'paid' && (
                   <p className="text-neutral-500 mt-0.5 tabular-nums">
-                    Due on delivery: ৳{(order.dueOnDelivery ?? Math.max(0, order.subtotal - order.discount)).toLocaleString('en-BD')}
+                    Due on delivery: ৳
+                    {(
+                      order.dueOnDelivery ??
+                      order.dueAmount ??
+                      Math.max(0, (Number(order.total) || 0) - (Number(order.advanceAmount) || 0))
+                    ).toLocaleString('en-BD')}
                   </p>
                 )}
               </div>
             </div>
 
             {/* Ordered Items */}
-            <div className="p-5 sm:p-7">
-              <h3 className="text-xs font-medium text-neutral-500 mb-3">
-                Items ({order.items.length})
+            <div className="p-6 sm:p-8">
+              <h3 className="text-xs font-semibold text-neutral-900 mb-4">
+                Items in Order ({order.items.length})
               </h3>
               <div className="divide-y divide-neutral-100">
                 {order.items.map((item, i) => (
                   <div key={i} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4 text-xs">
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3.5 min-w-0">
                       <img
                         src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={item.productName}
@@ -525,46 +973,37 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                       <div className="min-w-0">
                         <p className="font-medium text-neutral-900 truncate">{item.productName}</p>
                         <p className="text-neutral-500 mt-0.5">
-                          {item.size} · {item.color} · Qty {item.quantity}
+                          Size {item.size} · {item.color} · Qty {item.quantity}
                         </p>
                       </div>
                     </div>
-                    <span className="text-neutral-900 font-medium tabular-nums shrink-0">
-                      ৳{item.totalPrice.toLocaleString('en-BD')}
+                    <span className="text-neutral-900 font-medium tabular-nums font-mono shrink-0">
+                      ৳{(Number(item.totalPrice) || 0).toLocaleString('en-BD')}
                     </span>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Activity Log */}
-            {order.timeline && order.timeline.length > 0 && (
-              <div className="p-5 sm:p-7">
-                <h3 className="text-xs font-medium text-neutral-500 mb-3">Updates</h3>
-                <div className="space-y-2.5">
-                  {order.timeline.map((entry, i) => {
-                    const cleanCustomerNote = entry.note && /partner/i.test(entry.note)
-                      ? `Order status updated to ${getStatusLabel(entry.status)}.`
-                      : entry.note;
-                    return (
-                      <div key={i} className="flex items-start justify-between gap-4 text-xs">
-                        <div className="flex items-start gap-2.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mt-1.5 shrink-0" />
-                          <div>
-                            <span className="font-medium text-neutral-900 capitalize">
-                              {getStatusLabel(entry.status)}
-                            </span>
-                            {cleanCustomerNote && (
-                              <p className="text-neutral-500 mt-0.5">{cleanCustomerNote}</p>
-                            )}
-                          </div>
+            {/* Live Updates Feed */}
+            {trackingData.liveUpdates.length > 0 && (
+              <div className="p-6 sm:p-8">
+                <h3 className="text-xs font-semibold text-neutral-900 mb-4">Live Updates</h3>
+                <div className="divide-y divide-neutral-100">
+                  {trackingData.liveUpdates.map((entry) => (
+                    <div key={entry.id} className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-4 text-xs">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span className="mt-1.5 w-2 h-2 rounded-full bg-neutral-900 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="font-semibold text-neutral-900">{entry.title}</span>
+                          {entry.note && <p className="text-neutral-500 mt-0.5">{entry.note}</p>}
                         </div>
-                        <span className="text-neutral-400 text-[11px] shrink-0 tabular-nums">
-                          {formatDate(entry.timestamp)}
-                        </span>
                       </div>
-                    );
-                  })}
+                      <span className="text-neutral-400 text-[11px] shrink-0 tabular-nums font-mono">
+                        {entry.timestamp}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

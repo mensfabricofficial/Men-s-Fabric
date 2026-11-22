@@ -46,8 +46,29 @@ export const EXPENSE_QUICK_PRESETS: Array<{
   { title: 'Shop Maintenance & Lighting', category: 'maintenance', paymentMethod: 'cash' },
 ];
 
+export function getOrderRecognizedSale(ord: Order): number {
+  if (!ord) return 0;
+  const total = Number(ord.total) || 0;
+  const rec = ord.pipeline?.codReconciliation;
+  const codCharge = Math.max(0, Number(rec?.codCharge ?? ord.codCharge ?? 0) || 0);
+
+  if (rec?.resolved && typeof rec.collectedCash === 'number') {
+    const expectedCash = Math.max(0, Number(rec.expectedCash ?? 0));
+    const preCollectionPaid = Math.max(0, total - expectedCash);
+    const deliv = Math.max(0, Number(ord.deliveryCharge) || 0);
+    return Math.max(0, preCollectionPaid + rec.collectedCash - deliv - codCharge);
+  }
+  if (typeof ord.netSaleAmount === 'number' && !isNaN(ord.netSaleAmount)) {
+    return Math.max(0, ord.netSaleAmount);
+  }
+  if (rec?.resolved && typeof rec.finalSaleAmount === 'number' && !isNaN(rec.finalSaleAmount)) {
+    return Math.max(0, rec.finalSaleAmount);
+  }
+  return Math.max(0, total - codCharge);
+}
+
 export function getOrderPaidAndDue(ord: Order): { total: number; paid: number; due: number } {
-  const total = Math.max(0, Number(ord.total) || 0);
+  const total = getOrderRecognizedSale(ord);
   if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') {
     const refundedPaid = ord.paymentStatus === 'refunded' ? 0 : Math.max(0, Number(ord.paidAmount) || 0);
     return { total, paid: refundedPaid, due: 0 };
@@ -64,6 +85,26 @@ export function getOrderPaidAndDue(ord: Order): { total: number; paid: number; d
   const due =
     typeof ord.dueOnDelivery === 'number'
       ? Math.max(0, ord.dueOnDelivery)
+      : Math.max(0, total - advance);
+  return { total, paid: Math.min(total, advance), due };
+}
+
+export function getOrderCustomerPaidAndDue(ord: Order): { total: number; paid: number; due: number } {
+  const total = Math.max(0, Number(ord.total) || 0);
+  if (ord.orderStatus === 'cancelled' || ord.orderStatus === 'returned') {
+    const adv = Math.max(0, Number(ord.advanceAmount ?? ord.paymentDetails?.advanceAmount) || 0);
+    const refundedPaid = ord.paymentStatus === 'refunded' ? 0 : Math.min(total, adv);
+    return { total, paid: refundedPaid, due: 0 };
+  }
+  if (ord.paymentStatus === 'paid' || ord.orderStatus === 'delivered') {
+    return { total, paid: total, due: 0 };
+  }
+  const advance = Math.max(0, Number(ord.advanceAmount ?? ord.paymentDetails?.advanceAmount) || 0);
+  const due =
+    typeof ord.dueOnDelivery === 'number'
+      ? Math.max(0, ord.dueOnDelivery)
+      : typeof ord.dueAmount === 'number'
+      ? Math.max(0, ord.dueAmount)
       : Math.max(0, total - advance);
   return { total, paid: Math.min(total, advance), due };
 }
@@ -245,9 +286,10 @@ export interface PeriodAccountingSummary {
   totalDiscounts: number; // manual + coupon + online prepayment discounts
   couponDiscounts: number;
   otherDiscounts: number;
-  netMerchandiseSales: number; // subtotal - discounts - partial return adjustments
+  netMerchandiseSales: number; // subtotal - discounts - partial return adjustments - cod charges
   deliveryCollected: number; // shipping charges collected
-  totalBilledRevenue: number; // netMerchandiseSales + deliveryCollected (actual order total net of returns)
+  codChargesTotal: number; // courier COD fees deducted during COD reconciliation
+  totalBilledRevenue: number; // netMerchandiseSales + deliveryCollected (actual recognized net sale)
   // Profitability
   cogs: number;
   missingCostItemsCount: number;
@@ -357,6 +399,7 @@ export function computePeriodAccounting(params: {
   let otherDiscounts = 0;
   let netMerchandiseSales = 0;
   let deliveryCollected = 0;
+  let codChargesTotal = 0;
   let totalBilledRevenue = 0;
   let cogs = 0;
   let missingCostItemsCount = 0;
@@ -408,7 +451,12 @@ export function computePeriodAccounting(params: {
 
   // Sales, Revenue, COGS & Profit are ONLY completed when delivery is completed (orderStatus === 'delivered')
   periodDeliveredSales.forEach((ord) => {
-    const orderTotal = Number(ord.total) || 0;
+    const recognizedSale = getOrderRecognizedSale(ord);
+    const orderCodCharge = Math.max(
+      0,
+      Number(ord.pipeline?.codReconciliation?.codCharge ?? ord.codCharge ?? 0) || 0
+    );
+    const orderTotal = recognizedSale;
     deliveredCount += 1;
     completedOrdersCount += 1;
     deliveredAmount += orderTotal;
@@ -427,13 +475,23 @@ export function computePeriodAccounting(params: {
       otherDiscounts += disc;
     }
     const deliv = Number(ord.deliveryCharge) || 0;
-    const netMerch = Math.max(0, subtotal - disc);
+    const isCodReconciledOrder = Boolean(
+      ord.pipeline?.codReconciliation?.resolved ||
+        (typeof ord.netSaleAmount === 'number' && !isNaN(ord.netSaleAmount))
+    );
+    const netMerch = Math.max(0, subtotal - disc - orderCodCharge);
+    const orderNetMerch = isCodReconciledOrder
+      ? recognizedSale
+      : recognizedSale > 0
+      ? Math.max(0, recognizedSale - deliv)
+      : netMerch;
 
     grossMerchandiseValue += subtotal;
     totalDiscounts += disc;
-    netMerchandiseSales += netMerch;
+    codChargesTotal += orderCodCharge;
+    netMerchandiseSales += orderNetMerch;
     deliveryCollected += deliv;
-    totalBilledRevenue += orderTotal > 0 ? orderTotal : netMerch + deliv;
+    totalBilledRevenue += orderNetMerch + deliv;
 
     const costInfo = getOrderCOGS(ord, costMap);
     cogs += costInfo.cogs;
@@ -576,6 +634,7 @@ export function computePeriodAccounting(params: {
     otherDiscounts,
     netMerchandiseSales,
     deliveryCollected,
+    codChargesTotal,
     totalBilledRevenue,
     cogs,
     missingCostItemsCount,
@@ -658,7 +717,7 @@ export function computeDailySeries(params: {
     const b = buckets.get(dk);
     if (!b) return;
     const costInfo = getOrderCOGS(ord, costMap);
-    b.sales += Number(ord.total) || 0;
+    b.sales += getOrderRecognizedSale(ord);
     b.pcs += costInfo.units;
     b.cogs += costInfo.cogs;
     b.orderCount += 1;
@@ -753,7 +812,7 @@ export function computeMonthlySeries(params: {
     const b = buckets.get(mk);
     if (!b) return;
     const costInfo = getOrderCOGS(ord, costMap);
-    b.sales += Number(ord.total) || 0;
+    b.sales += getOrderRecognizedSale(ord);
     b.pcs += costInfo.units;
     b.cogs += costInfo.cogs;
     b.orderCount += 1;

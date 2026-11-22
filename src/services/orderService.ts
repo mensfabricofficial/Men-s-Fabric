@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
+import { safeSetLocalStorage } from '../utils/safeStorage';
 import {
   CartItem,
   Order,
@@ -40,6 +41,7 @@ import {
   StockUpdateSnapshotItem,
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 import { getLocalDeliveryZones, settingsService } from './settingsService';
 import { productService } from './productService';
 import { notificationService } from './notificationService';
@@ -53,6 +55,8 @@ export const CUSTOMER_VERIFICATION_FIELDS: Array<{
   { key: 'email', label: 'Email' },
   { key: 'division', label: 'Division' },
   { key: 'district', label: 'District' },
+  { key: 'thana', label: 'Thana' },
+  { key: 'postCode', label: 'Post Code' },
   { key: 'address', label: 'Full Address' },
 ];
 
@@ -102,6 +106,10 @@ export const getCustomerFieldValueFromOrder = (
       return (ord.shippingAddress?.division || '').trim();
     case 'district':
       return (ord.shippingAddress?.district || '').trim();
+    case 'thana':
+      return (ord.shippingAddress?.thana || ord.shippingAddress?.upazila || '').trim();
+    case 'postCode':
+      return (ord.shippingAddress?.postCode || '').trim();
     case 'address':
       return (ord.shippingAddress?.address || '').trim();
   }
@@ -630,11 +638,10 @@ const sortOrdersDesc = (list: Order[]): Order[] =>
   [...list].sort((a, b) => getOrderTimeMs(b.createdAt) - getOrderTimeMs(a.createdAt));
 
 const persistOrdersBackup = (list: Order[]) => {
-  try {
-    localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(list.slice(0, 100)));
-  } catch {
-    // ignore quota
-  }
+  safeSetLocalStorage(LOCAL_ORDERS_KEY, list.slice(0, 25), {
+    stripInlineData: true,
+    maxChars: 350_000,
+  });
 };
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number, label = 'Request timed out'): Promise<T> =>
@@ -1955,7 +1962,7 @@ export const orderService = {
             const canvas = document.createElement('canvas');
             let width = img.width;
             let height = img.height;
-            const maxWidth = 900;
+            const maxWidth = 720;
             if (width > maxWidth) {
               height = Math.round((height * maxWidth) / width);
               width = maxWidth;
@@ -1968,7 +1975,7 @@ export const orderService = {
               return;
             }
             ctx.drawImage(img, 0, 0, width, height);
-            const compressed = canvas.toDataURL('image/jpeg', 0.8);
+            const compressed = canvas.toDataURL('image/jpeg', 0.72);
             resolve(compressed);
           } catch {
             resolve(result);
@@ -2031,6 +2038,9 @@ export const orderService = {
     firestorePatch: Record<string, any>
   ): Promise<Order> {
     this.saveLocalOrder(updatedOrder);
+    if (isFirestoreWriteBackedOff()) {
+      return updatedOrder;
+    }
     try {
       const orderRef = doc(db, 'orders', orderId);
       const upd = setDoc(
@@ -2041,10 +2051,12 @@ export const orderService = {
         }),
         { merge: true }
       );
-      upd.catch(() => {});
+      upd.catch((err) => {
+        markFirestoreWriteError(err);
+      });
       await withTimeout(upd, 2500, 'Workflow sync queued');
-    } catch {
-      // queued offline
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
     return updatedOrder;
   },
@@ -2204,6 +2216,11 @@ export const orderService = {
         nextShippingAddress.division = cleanVal;
       } else if (fieldKey === 'district') {
         nextShippingAddress.district = cleanVal;
+      } else if (fieldKey === 'thana') {
+        nextShippingAddress.thana = cleanVal;
+        nextShippingAddress.upazila = cleanVal;
+      } else if (fieldKey === 'postCode') {
+        nextShippingAddress.postCode = cleanVal;
       } else if (fieldKey === 'address') {
         nextShippingAddress.address = cleanVal;
       }
@@ -3901,16 +3918,27 @@ export const orderService = {
       ],
     };
 
+    const nextTimeline = [
+      ...(baseOrder.timeline || []),
+      {
+        status: 'processing' as OrderStatus,
+        timestamp,
+        note: 'Order processing: stock verified and warehouse preparation started.',
+      },
+    ];
+
     const updatedOrder: Order = {
       ...baseOrder,
       orderStatus: 'processing',
       pipeline: updatedPipeline,
+      timeline: nextTimeline,
       updatedAt: timestamp,
     };
 
     return this._persistOrderMutation(orderId, updatedOrder, {
       orderStatus: 'processing',
       pipeline: updatedPipeline,
+      timeline: nextTimeline,
     });
   },
 
@@ -4002,7 +4030,19 @@ export const orderService = {
       nextTimeline.push({
         status: 'packed',
         timestamp,
-        note: 'Order packed and ready for courier dispatch.',
+        note: 'Order packed and sealed for courier dispatch.',
+      });
+    } else if (stepKey === 'courierConfirmed') {
+      nextTimeline.push({
+        status: 'packed',
+        timestamp,
+        note: `Courier confirmed (Rider assigned: ${resolvedCourier}).`,
+      });
+    } else if (stepKey === 'trackingAdded') {
+      nextTimeline.push({
+        status: 'packed',
+        timestamp,
+        note: `Courier tracking ID assigned (${resolvedTracking}).`,
       });
     } else if (stepKey === 'shipped') {
       nextOrderStatus = 'shipped';
@@ -4010,15 +4050,17 @@ export const orderService = {
         status: 'shipped',
         timestamp,
         note: resolvedCourier
-          ? `Parcel shipped via ${resolvedCourier}${resolvedTracking ? ` (Tracking: ${resolvedTracking})` : ''}.`
-          : 'Parcel shipped to courier.',
+          ? `Parcel shipped & in transit via ${resolvedCourier}${resolvedTracking ? ` (Tracking: ${resolvedTracking})` : ''}.`
+          : 'Parcel shipped & in transit.',
       });
     } else if (stepKey === 'outForDelivery') {
       nextOrderStatus = 'shipped';
       nextTimeline.push({
         status: 'shipped',
         timestamp,
-        note: 'Parcel is out for delivery.',
+        note: resolvedCourier
+          ? `Out for delivery with ${resolvedCourier}.`
+          : 'Parcel is out for delivery.',
       });
     } else if (stepKey === 'delivered') {
       nextOrderStatus = 'delivered';
@@ -4153,6 +4195,7 @@ export const orderService = {
   async recordRoleCCodReconciliation(params: {
     orderId: string;
     collectedAmount?: number;
+    codCharge?: number;
     resolveDiscrepancy?: boolean;
     note?: string;
     actorName: string;
@@ -4162,6 +4205,7 @@ export const orderService = {
     const {
       orderId,
       collectedAmount,
+      codCharge,
       resolveDiscrepancy = false,
       note,
       actorName,
@@ -4199,6 +4243,22 @@ export const orderService = {
       typeof collectedAmount === 'number' && !isNaN(collectedAmount)
         ? Math.max(0, collectedAmount)
         : expectedCash;
+    const safeCodCharge =
+      typeof codCharge === 'number' && !isNaN(codCharge)
+        ? Math.max(0, codCharge)
+        : Math.max(
+            0,
+            Number(baseOrder.pipeline?.codReconciliation?.codCharge ?? snapshot.codCharge ?? 0) || 0
+          );
+
+    const deliveryChargeAmt = Math.max(
+      0,
+      Number(baseOrder.deliveryCharge ?? snapshot.shippingCharge ?? 0) || 0
+    );
+    const netCodCollected = Math.max(0, enteredCash - safeCodCharge);
+    const grossCollectedTotal = Math.max(0, currentPaid + enteredCash);
+    const productGrossCollected = Math.max(0, grossCollectedTotal - deliveryChargeAmt);
+    const finalSaleAmount = Math.max(0, productGrossCollected - safeCodCharge);
 
     const discrepancy = enteredCash - expectedCash;
     const hasMismatch = expectedCash > 0 && Math.abs(discrepancy) > 0;
@@ -4212,7 +4272,7 @@ export const orderService = {
         actorName: safeActor,
         actorEmail,
         roleLabel,
-        note: `Expected: ৳${expectedCash.toLocaleString('en-BD')} · Collected: ৳${enteredCash.toLocaleString('en-BD')} · Diff: ৳${discrepancy.toLocaleString('en-BD')}${note ? ` (${note})` : ''}`,
+        note: `Expected: ৳${expectedCash.toLocaleString('en-BD')} · Collected: ৳${enteredCash.toLocaleString('en-BD')} · COD Charge: ৳${safeCodCharge.toLocaleString('en-BD')} · Diff: ৳${discrepancy.toLocaleString('en-BD')}${note ? ` (${note})` : ''}`,
         timestamp,
       };
 
@@ -4224,6 +4284,9 @@ export const orderService = {
         codReconciliation: {
           expectedCash,
           collectedCash: enteredCash,
+          codCharge: safeCodCharge,
+          netCodCollected,
+          finalSaleAmount,
           discrepancyAmount: discrepancy,
           reconciliationRequired: true,
           discrepancyNote: note?.trim() || `Expected ৳${expectedCash}, Collected ৳${enteredCash}`,
@@ -4246,7 +4309,7 @@ export const orderService = {
     }
 
     // Complete & finalize finance reconciliation
-    if (expectedCash > 0) {
+    if (expectedCash > 0 || enteredCash > 0) {
       nextPaymentHistory.push({
         id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
         amount: enteredCash,
@@ -4255,14 +4318,13 @@ export const orderService = {
         note:
           note ||
           (resolveDiscrepancy
-            ? `COD Cash Collected & Discrepancy Resolved (Expected ৳${expectedCash}, Collected ৳${enteredCash})`
-            : 'COD Cash Collected on Delivery'),
+            ? `COD Cash Collected (৳${enteredCash}) − COD Charge (৳${safeCodCharge}) = Net ৳${finalSaleAmount} · Discrepancy Resolved`
+            : `COD Cash Collected (৳${enteredCash})${safeCodCharge > 0 ? ` − COD Charge (৳${safeCodCharge}) = Net Sale ৳${finalSaleAmount}` : ''}`),
         date: timestamp.slice(0, 10),
         timestamp,
       });
     }
 
-    const finalPaid = resolveDiscrepancy ? Math.min(orderTotal, currentPaid + enteredCash) : orderTotal;
     const logEntry: OrderActivityLogEntry = {
       id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       stepKey: 'cod_reconciliation_completed',
@@ -4272,8 +4334,12 @@ export const orderService = {
       actorEmail,
       roleLabel,
       note:
-        expectedCash > 0
-          ? `Settled ৳${enteredCash.toLocaleString('en-BD')}${resolveDiscrepancy ? ' (Discrepancy Resolved)' : ''}${note ? ` · ${note}` : ''}`
+        expectedCash > 0 || enteredCash > 0
+          ? `${
+              deliveryChargeAmt > 0
+                ? `Product Sale ৳${productGrossCollected.toLocaleString('en-BD')} (Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} excl.)`
+                : `Collected ৳${enteredCash.toLocaleString('en-BD')}`
+            } − COD Charge ৳${safeCodCharge.toLocaleString('en-BD')} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}${resolveDiscrepancy ? ' (Discrepancy Resolved)' : ''}${note ? ` · ${note}` : ''}`
           : note || 'Prepaid order finance reconciled',
       timestamp,
     };
@@ -4283,6 +4349,7 @@ export const orderService = {
       currentStage: 'completed',
       subStatus: 'COMPLETED',
       currentActionLabel: 'Completed',
+      financialSnapshot: snapshot,
       paymentVerification: {
         ...(baseOrder.pipeline?.paymentVerification || {}),
         codAwaitingCollection: false,
@@ -4292,6 +4359,9 @@ export const orderService = {
         ...(baseOrder.pipeline?.codReconciliation || {}),
         expectedCash,
         collectedCash: enteredCash,
+        codCharge: safeCodCharge,
+        netCodCollected,
+        finalSaleAmount,
         discrepancyAmount: discrepancy,
         reconciliationRequired: false,
         resolved: true,
@@ -4310,7 +4380,7 @@ export const orderService = {
           subStatus: 'COMPLETED',
           handlerName: safeActor,
           handlerEmail: actorEmail,
-          action: `Finance Reconciliation Completed by ${safeActor}`,
+          action: `Finance Reconciliation Completed by ${safeActor} (Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')})`,
           note,
           timestamp,
         },
@@ -4321,9 +4391,11 @@ export const orderService = {
       ...baseOrder,
       orderStatus: 'delivered',
       paymentStatus: 'paid',
-      paidAmount: finalPaid,
+      paidAmount: finalSaleAmount,
       dueAmount: 0,
       dueOnDelivery: 0,
+      codCharge: safeCodCharge,
+      netSaleAmount: finalSaleAmount,
       paymentHistory: nextPaymentHistory,
       pipeline: updatedPipeline,
       updatedAt: timestamp,
@@ -4332,10 +4404,105 @@ export const orderService = {
     return this._persistOrderMutation(orderId, updatedOrder, {
       orderStatus: 'delivered',
       paymentStatus: 'paid',
-      paidAmount: finalPaid,
+      paidAmount: finalSaleAmount,
       dueAmount: 0,
       dueOnDelivery: 0,
+      codCharge: safeCodCharge,
+      netSaleAmount: finalSaleAmount,
       paymentHistory: nextPaymentHistory,
+      pipeline: updatedPipeline,
+    });
+  },
+
+  async updateCodReconciliationValues(params: {
+    orderId: string;
+    collectedCash: number;
+    codCharge: number;
+    actorName: string;
+    actorEmail?: string;
+  }): Promise<Order> {
+    const { orderId, collectedCash, codCharge, actorName, actorEmail } = params;
+    const baseOrder = await this._loadOrderForMutation(orderId);
+    if (!baseOrder) throw new Error('Order not found.');
+
+    const timestamp = new Date().toISOString();
+    const safeActor = actorName.trim() || 'Authorized Staff';
+    const snapshot = buildOrderFinancialSnapshot(baseOrder, safeActor);
+    const orderTotal = snapshot.finalPayable;
+
+    const advancePaid = Math.max(
+      0,
+      Number(baseOrder.advanceAmount ?? baseOrder.paymentDetails?.advanceAmount) || 0
+    );
+    const prevExpected = Math.max(
+      0,
+      baseOrder.pipeline?.codReconciliation?.expectedCash ?? Math.max(0, orderTotal - advancePaid)
+    );
+    const preCollectionPaid = Math.max(0, orderTotal - prevExpected);
+    const deliveryChargeAmt = Math.max(
+      0,
+      Number(baseOrder.deliveryCharge ?? snapshot.shippingCharge ?? 0) || 0
+    );
+    const safeCollected = Math.max(0, Number(collectedCash) || 0);
+    const safeCodCharge = Math.max(0, Number(codCharge) || 0);
+    const netCodCollected = Math.max(0, safeCollected - safeCodCharge);
+    const productGrossCollected = Math.max(0, preCollectionPaid + safeCollected - deliveryChargeAmt);
+    const finalSaleAmount = Math.max(0, productGrossCollected - safeCodCharge);
+    const discrepancy = safeCollected - prevExpected;
+    const isAlreadyResolved = Boolean(baseOrder.pipeline?.codReconciliation?.resolved);
+
+    const updatedPipeline: OrderPipelineData = {
+      ...(baseOrder.pipeline || { currentStage: 'cod_reconciliation' }),
+      codReconciliation: {
+        ...(baseOrder.pipeline?.codReconciliation || { expectedCash: prevExpected }),
+        expectedCash: prevExpected,
+        collectedCash: safeCollected,
+        codCharge: safeCodCharge,
+        netCodCollected,
+        finalSaleAmount,
+        discrepancyAmount: discrepancy,
+      },
+      activityLog: [
+        ...(baseOrder.pipeline?.activityLog || []),
+        {
+          id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          stepKey: 'cod_reconciliation_edited',
+          label: 'COD Reconciliation & Charge Updated',
+          category: 'reconciliation',
+          actorName: safeActor,
+          actorEmail,
+          roleLabel: 'Payment Verify',
+          note: `${
+            deliveryChargeAmt > 0
+              ? `Product Sale ৳${productGrossCollected.toLocaleString('en-BD')} (Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} excl.)`
+              : `Collected ৳${safeCollected.toLocaleString('en-BD')}`
+          } − COD Charge ৳${safeCodCharge.toLocaleString('en-BD')} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}`,
+          timestamp,
+        },
+      ],
+    };
+
+    const updatedOrder: Order = {
+      ...baseOrder,
+      codCharge: safeCodCharge,
+      ...(isAlreadyResolved
+        ? {
+            netSaleAmount: finalSaleAmount,
+            paidAmount: finalSaleAmount,
+          }
+        : {}),
+      pipeline: updatedPipeline,
+      updatedAt: timestamp,
+    };
+
+    return this._persistOrderMutation(orderId, updatedOrder, {
+      codCharge: safeCodCharge,
+      ...(isAlreadyResolved
+        ? {
+            netSaleAmount: finalSaleAmount,
+            paidAmount: finalSaleAmount,
+          }
+        : {}),
       pipeline: updatedPipeline,
     });
   },
@@ -4750,28 +4917,32 @@ export const orderService = {
 
     this.saveLocalOrder(updatedOrder);
 
-    try {
-      const orderRef = doc(db, 'orders', orderId);
-      const upd = setDoc(
-        orderRef,
-        sanitizeForFirestore({
-          orderStatus: targetOrderStatus,
-          paymentStatus: targetPaymentStatus,
-          paidAmount: updatedOrder.paidAmount,
-          dueAmount: updatedOrder.dueAmount,
-          advanceAmount: updatedOrder.advanceAmount,
-          dueOnDelivery: updatedOrder.dueOnDelivery,
-          paymentHistory: nextPaymentHistory,
-          pipeline: updatedPipeline,
-          timeline: updatedTimeline,
-          updatedAt: serverTimestamp(),
-        }),
-        { merge: true }
-      );
-      upd.catch(() => {});
-      await withTimeout(upd, 2500, 'Pipeline sync queued');
-    } catch {
-      // background queued
+    if (!isFirestoreWriteBackedOff()) {
+      try {
+        const orderRef = doc(db, 'orders', orderId);
+        const upd = setDoc(
+          orderRef,
+          sanitizeForFirestore({
+            orderStatus: targetOrderStatus,
+            paymentStatus: targetPaymentStatus,
+            paidAmount: updatedOrder.paidAmount,
+            dueAmount: updatedOrder.dueAmount,
+            advanceAmount: updatedOrder.advanceAmount,
+            dueOnDelivery: updatedOrder.dueOnDelivery,
+            paymentHistory: nextPaymentHistory,
+            pipeline: updatedPipeline,
+            timeline: updatedTimeline,
+            updatedAt: serverTimestamp(),
+          }),
+          { merge: true }
+        );
+        upd.catch((err) => {
+          markFirestoreWriteError(err);
+        });
+        await withTimeout(upd, 2500, 'Pipeline sync queued');
+      } catch (err) {
+        markFirestoreWriteError(err);
+      }
     }
 
     if (baseOrder.orderNumber && targetOrderStatus !== baseOrder.orderStatus) {

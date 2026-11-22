@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { firebaseConfig } from '../lib/firebaseConfig';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 
 export type DeviceStatus = 'approved' | 'pending' | 'rejected';
 
@@ -251,24 +252,35 @@ export const adminDeviceService = {
     // 1. Existing device record found
     if (existing) {
       if (existing.status === 'approved') {
-        // Update lastActiveAt non-blockingly
-        setDoc(
-          docRef,
-          {
-            devices: {
-              [deviceId]: {
-                ...existing,
-                deviceName: info.deviceName,
-                browser: info.browser,
-                os: info.os,
-                deviceType: info.deviceType,
-                lastActiveAt: nowIso,
+        const lastActiveMs = existing.lastActiveAt ? Date.parse(existing.lastActiveAt) || 0 : 0;
+        const metadataChanged =
+          existing.deviceName !== info.deviceName ||
+          existing.browser !== info.browser ||
+          existing.os !== info.os ||
+          existing.deviceType !== info.deviceType;
+        const staleTouch = Date.now() - lastActiveMs > 30 * 60 * 1000;
+
+        if ((staleTouch || metadataChanged) && !isFirestoreWriteBackedOff()) {
+          setDoc(
+            docRef,
+            {
+              devices: {
+                [deviceId]: {
+                  ...existing,
+                  deviceName: info.deviceName,
+                  browser: info.browser,
+                  os: info.os,
+                  deviceType: info.deviceType,
+                  lastActiveAt: nowIso,
+                },
               },
+              updatedAt: serverTimestamp(),
             },
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        ).catch(() => {});
+            { merge: true }
+          ).catch((err) => {
+            markFirestoreWriteError(err);
+          });
+        }
         return 'approved';
       }
 

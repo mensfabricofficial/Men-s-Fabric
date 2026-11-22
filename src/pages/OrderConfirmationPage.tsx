@@ -134,7 +134,16 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 </span>
                 <p className="font-semibold text-neutral-900">{order.customerName}</p>
                 <p>{order.shippingAddress.address}</p>
-                <p>{order.shippingAddress.district}, {order.shippingAddress.division}</p>
+                <p>
+                  {[
+                    order.shippingAddress.thana || order.shippingAddress.upazila,
+                    order.shippingAddress.district,
+                    order.shippingAddress.division,
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}
+                  {order.shippingAddress.postCode ? ` - ${order.shippingAddress.postCode}` : ''}
+                </p>
                 <p className="text-neutral-700 font-medium">📞 {order.customerPhone}</p>
               </div>
 

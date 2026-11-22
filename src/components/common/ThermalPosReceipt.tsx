@@ -4,16 +4,18 @@ import { BrandLogo } from './BrandLogo';
 import { settingsService, defaultSettings } from '../../services/settingsService';
 import { getFormattedInvoiceNumber } from './InvoiceSheet';
 import { formatDateTime } from '../../lib/dateFormat';
-import { getOrderPaidAndDue } from '../../lib/accountingUtils';
+import { getOrderCustomerPaidAndDue, getOrderRecognizedSale } from '../../lib/accountingUtils';
 
 interface ThermalPosReceiptProps {
   order: Order;
   receiptTitle?: string;
+  variant?: 'customer' | 'final_sale';
 }
 
 export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
   order,
   receiptTitle,
+  variant = 'customer',
 }) => {
   const [settings, setSettings] = useState<SiteSettings>(
     () => settingsService.getInstantSettings() || defaultSettings
@@ -27,9 +29,26 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
   const cleanOrderNum = (order.orderNumber || order.id || '').replace(/^#/, '').trim();
   const displayOrderNumber = cleanOrderNum ? `#${cleanOrderNum}` : '#N/A';
 
+  const isFinalSale = variant === 'final_sale';
   const isCod = order.paymentMethod === 'cod';
   const advancePaid = Boolean(order.advanceDeliveryPaid) && (order.advanceAmount || 0) > 0;
-  const { paid, due } = getOrderPaidAndDue(order);
+  const { paid, due } = getOrderCustomerPaidAndDue(order);
+  const deliveryAmt = Math.max(0, Number(order.deliveryCharge) || 0);
+  const rec = order.pipeline?.codReconciliation;
+  const courierCodCharge = Math.max(0, Number(rec?.codCharge ?? order.codCharge ?? 0) || 0);
+  const expectedNetProducts = Math.max(
+    0,
+    (Number(order.subtotal) || 0) - (Number(order.discount) || 0) - (Number(order.onlineDiscount) || 0)
+  );
+  const customerCodCharge = Math.max(
+    0,
+    (Number(order.total) || 0) - (expectedNetProducts + deliveryAmt)
+  );
+  const finalSaleTotal =
+    rec?.resolved || typeof order.netSaleAmount === 'number'
+      ? getOrderRecognizedSale(order)
+      : Math.max(0, expectedNetProducts - courierCodCharge);
+
   const showCustomerId =
     Boolean(order.customerId) &&
     order.customerId !== 'guest' &&
@@ -49,13 +68,10 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
       {/* Header */}
       <div className="text-center pb-2 border-b border-dashed border-neutral-400 space-y-1">
         <BrandLogo variant="dark" imgClassName="h-6 mx-auto" />
-        {receiptTitle ? (
-          <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-700">
-            {receiptTitle}
-          </p>
-        ) : (
-          <p className="text-[10px] text-neutral-600">{storeAddress}</p>
-        )}
+        <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-700">
+          {receiptTitle || (isFinalSale ? 'Final Sale Invoice' : 'Customer Invoice')}
+        </p>
+        <p className="text-[10px] text-neutral-600">{storeAddress}</p>
         <p className="text-[10px] text-neutral-600">Hotline: {storePhone}</p>
       </div>
 
@@ -147,38 +163,71 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
             <span>-৳{order.onlineDiscount.toLocaleString('en-BD')}</span>
           </div>
         ) : null}
-        {(order.deliveryCharge > 0 || order.freeDeliveryApplied) && (
-          <div className="flex justify-between">
-            <span>Delivery{order.deliveryZone ? ` (${order.deliveryZone})` : ''}:</span>
-            <span>
-              {order.deliveryCharge === 0
-                ? 'FREE (৳0)'
-                : `+৳${order.deliveryCharge.toLocaleString('en-BD')}`}
-            </span>
-          </div>
+        {isFinalSale ? (
+          <>
+            {deliveryAmt > 0 && (
+              <div className="flex justify-between text-neutral-500">
+                <span>Delivery (Separate):</span>
+                <span>৳{deliveryAmt.toLocaleString('en-BD')}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-red-700 font-bold">
+              <span>COD Charge:</span>
+              <span>{courierCodCharge > 0 ? `-৳${courierCodCharge.toLocaleString('en-BD')}` : '৳0'}</span>
+            </div>
+            <div className="flex justify-between font-extrabold text-xs pt-1 border-t border-neutral-300 text-emerald-800">
+              <span>FINAL SALE AMOUNT:</span>
+              <span>৳{finalSaleTotal.toLocaleString('en-BD')}</span>
+            </div>
+            {typeof rec?.collectedCash === 'number' && (
+              <div className="flex justify-between text-[10px] text-neutral-600 pt-0.5">
+                <span>Collected Cash:</span>
+                <span>৳{rec.collectedCash.toLocaleString('en-BD')}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {(order.deliveryCharge > 0 || order.freeDeliveryApplied) && (
+              <div className="flex justify-between">
+                <span>Delivery{order.deliveryZone ? ` (${order.deliveryZone})` : ''}:</span>
+                <span>
+                  {order.deliveryCharge === 0
+                    ? 'FREE (৳0)'
+                    : `+৳${order.deliveryCharge.toLocaleString('en-BD')}`}
+                </span>
+              </div>
+            )}
+            {customerCodCharge > 0 && (
+              <div className="flex justify-between">
+                <span>COD Charge:</span>
+                <span>+৳{customerCodCharge.toLocaleString('en-BD')}</span>
+              </div>
+            )}
+            {advancePaid && due > 0 && (
+              <div className="flex justify-between text-emerald-800 font-bold">
+                <span>Adv. Delivery Paid ({order.advanceGateway?.toUpperCase() || 'MFS'}):</span>
+                <span>-৳{(order.advanceAmount || order.deliveryCharge).toLocaleString('en-BD')}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-extrabold text-xs pt-1 border-t border-neutral-300">
+              <span>GRAND TOTAL:</span>
+              <span>৳{(order.total || 0).toLocaleString('en-BD')}</span>
+            </div>
+            <div className="flex justify-between font-bold text-emerald-800 pt-0.5">
+              <span>PAID:</span>
+              <span>৳{paid.toLocaleString('en-BD')}</span>
+            </div>
+            <div
+              className={`flex justify-between font-black pt-0.5 ${
+                due > 0 ? 'text-red-700' : 'text-neutral-700'
+              }`}
+            >
+              <span>{isCod ? 'DUE ON DELIVERY:' : 'REMAINING DUE:'}</span>
+              <span>৳{due.toLocaleString('en-BD')}</span>
+            </div>
+          </>
         )}
-        {advancePaid && (
-          <div className="flex justify-between text-emerald-800 font-bold">
-            <span>Adv. Delivery Paid ({order.advanceGateway?.toUpperCase() || 'MFS'}):</span>
-            <span>-৳{(order.advanceAmount || order.deliveryCharge).toLocaleString('en-BD')}</span>
-          </div>
-        )}
-        <div className="flex justify-between font-extrabold text-xs pt-1 border-t border-neutral-300">
-          <span>GRAND TOTAL:</span>
-          <span>৳{(order.total || 0).toLocaleString('en-BD')}</span>
-        </div>
-        <div className="flex justify-between font-bold text-emerald-800 pt-0.5">
-          <span>PAID:</span>
-          <span>৳{paid.toLocaleString('en-BD')}</span>
-        </div>
-        <div
-          className={`flex justify-between font-black pt-0.5 ${
-            due > 0 ? 'text-red-700' : 'text-neutral-700'
-          }`}
-        >
-          <span>{isCod ? 'DUE ON DELIVERY:' : 'REMAINING DUE:'}</span>
-          <span>৳{due.toLocaleString('en-BD')}</span>
-        </div>
       </div>
 
       {/* Payment Meta */}

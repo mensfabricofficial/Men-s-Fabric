@@ -23,6 +23,7 @@ import {
   isDateKeyInRange,
   buildProductCostMap,
   getOrderCOGS,
+  getOrderRecognizedSale,
 } from '../lib/accountingUtils';
 import { formatDatePart, formatTimePart } from '../lib/dateFormat';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
@@ -45,8 +46,10 @@ export const AdminSalesHistory: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'delivered_only' | 'in_progress' | 'returned' | 'cancelled' | 'all'>('delivered_only');
   const [search, setSearch] = useState('');
 
-  const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
+  const [invoiceOrderId, setInvoiceOrderId] = useState<string | null>(null);
   const [invoiceFormat, setInvoiceFormat] = useState<'thermal' | 'a4'>('a4');
+  const [invoiceVariant, setInvoiceVariant] = useState<'customer' | 'final_sale'>('final_sale');
+  const invoiceOrder = invoiceOrderId ? orders.find((o) => o.id === invoiceOrderId) || null : null;
 
   useEffect(() => {
     const unsubOrders = orderService.subscribeToAllOrdersAdmin(setOrders);
@@ -131,7 +134,7 @@ export const AdminSalesHistory: React.FC = () => {
     let cogs = 0;
     filteredSales.forEach((ord) => {
       const info = getOrderCOGS(ord, costMap);
-      billed += Number(ord.total) || 0;
+      billed += getOrderRecognizedSale(ord);
       pcs += info.units;
       cogs += info.cogs;
     });
@@ -301,7 +304,12 @@ export const AdminSalesHistory: React.FC = () => {
               <tbody className="divide-y divide-neutral-100 font-medium tabular-nums">
                 {filteredSales.map((ord) => {
                   const costInfo = getOrderCOGS(ord, costMap);
-                  const saleProfit = (Number(ord.total) || 0) - costInfo.cogs;
+                  const recognizedSale = getOrderRecognizedSale(ord);
+                  const codFee = Math.max(
+                    0,
+                    Number(ord.pipeline?.codReconciliation?.codCharge ?? ord.codCharge ?? 0) || 0
+                  );
+                  const saleProfit = recognizedSale - costInfo.cogs;
                   return (
                     <tr key={ord.id} className="hover:bg-neutral-50/50">
                       <td className="p-3.5 whitespace-nowrap">
@@ -340,10 +348,15 @@ export const AdminSalesHistory: React.FC = () => {
 
                       <td className="p-3.5 text-right whitespace-nowrap">
                         <span className="font-mono font-bold text-neutral-900 block">
-                          ৳{(Number(ord.total) || 0).toLocaleString('en-BD')}
+                          ৳{recognizedSale.toLocaleString('en-BD')}
                         </span>
+                        {codFee > 0 && (
+                          <span className="text-[10px] text-red-700 font-mono block">
+                            COD Fee −৳{codFee.toLocaleString('en-BD')}
+                          </span>
+                        )}
                         {(ord.discount > 0 || (ord.onlineDiscount || 0) > 0) && (
-                          <span className="text-[10px] text-amber-700 font-mono">
+                          <span className="text-[10px] text-amber-700 font-mono block">
                             Disc −৳{((ord.discount || 0) + (ord.onlineDiscount || 0)).toLocaleString('en-BD')}
                           </span>
                         )}
@@ -377,7 +390,10 @@ export const AdminSalesHistory: React.FC = () => {
                       <td className="p-3.5 text-right whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => setInvoiceOrder(ord)}
+                          onClick={() => {
+                            setInvoiceVariant('final_sale');
+                            setInvoiceOrderId(ord.id);
+                          }}
                           className="px-3 py-1.5 border border-neutral-300 bg-white text-neutral-800 text-[11px] font-bold rounded-lg hover:border-black cursor-pointer inline-flex items-center gap-1"
                         >
                           <Printer className="w-3.5 h-3.5" /> Invoice
@@ -398,9 +414,30 @@ export const AdminSalesHistory: React.FC = () => {
           <div className={`bg-white rounded-xl w-full p-5 space-y-4 ${invoiceFormat === 'thermal' ? 'max-w-md' : 'max-w-3xl'}`}>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-3">
               <span className="font-bold text-sm">
-                Receipt {getFormattedInvoiceNumber(invoiceOrder.orderNumber, invoiceOrder.id)}
+                {invoiceVariant === 'final_sale' ? 'Final Sale Invoice' : 'Customer Invoice'}{' '}
+                {getFormattedInvoiceNumber(invoiceOrder.orderNumber, invoiceOrder.id)}
               </span>
               <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceVariant('customer')}
+                    className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                      invoiceVariant === 'customer' ? 'bg-white text-black font-bold shadow-xs' : 'text-neutral-600'
+                    }`}
+                  >
+                    Customer Invoice
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceVariant('final_sale')}
+                    className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                      invoiceVariant === 'final_sale' ? 'bg-white text-black font-bold shadow-xs' : 'text-neutral-600'
+                    }`}
+                  >
+                    Final Sale
+                  </button>
+                </div>
                 <div className="flex items-center bg-neutral-100 p-0.5 rounded-lg border border-neutral-200 text-[11px]">
                   <button
                     type="button"
@@ -432,7 +469,7 @@ export const AdminSalesHistory: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setInvoiceOrder(null)}
+                  onClick={() => setInvoiceOrderId(null)}
                   className="p-1 text-neutral-500 hover:text-black cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -441,9 +478,9 @@ export const AdminSalesHistory: React.FC = () => {
             </div>
             <div id="sales-history-printable-invoice" className="max-h-[75vh] overflow-y-auto">
               {invoiceFormat === 'thermal' ? (
-                <ThermalPosReceipt order={invoiceOrder} />
+                <ThermalPosReceipt order={invoiceOrder} variant={invoiceVariant} />
               ) : (
-                <InvoiceSheet order={invoiceOrder} />
+                <InvoiceSheet order={invoiceOrder} variant={invoiceVariant} />
               )}
             </div>
           </div>

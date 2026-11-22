@@ -65,6 +65,8 @@ export const AdminDeviceGate: React.FC<AdminDeviceGateProps> = ({
     }
   }, [keyVerified, email]);
 
+  const unregisteredRetryAtRef = React.useRef<number>(0);
+
   // Run device check + live Firestore listener once Access Key is verified
   useEffect(() => {
     if (!keyVerified) return;
@@ -73,7 +75,11 @@ export const AdminDeviceGate: React.FC<AdminDeviceGateProps> = ({
 
     const unsub = adminDeviceService.subscribeToDeviceStatus(deviceId, (liveStatus) => {
       if (liveStatus === 'unregistered') {
-        void verifyCurrentDevice();
+        const now = Date.now();
+        if (now - unregisteredRetryAtRef.current > 30000) {
+          unregisteredRetryAtRef.current = now;
+          void verifyCurrentDevice();
+        }
       } else {
         setDeviceStatus(liveStatus);
       }

@@ -16,11 +16,15 @@ import {
   StaffLoginLog,
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 import { adminDeviceService } from './adminDeviceService';
 
 const LOCAL_STAFF_KEY = 'mf_staff_directory_v1';
 const LOCAL_LOGS_KEY = 'mf_staff_activity_logs_v1';
 const ACTIVE_LOG_ID_KEY = 'mf_active_staff_log_id_v1';
+const MAX_STORED_STAFF_LOGS = 20;
+const MIN_TOUCH_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+let lastRemoteTouchSyncMs = 0;
 
 const ADMINS_DOC = doc(db, 'settings', 'adminsList');
 const LOGS_DOC = doc(db, 'settings', 'staff_activity_logs');
@@ -512,17 +516,20 @@ export const staffService = {
       // use local
     }
 
-    const next = [entry, ...baseLogs].slice(0, 80);
+    const next = [entry, ...baseLogs].slice(0, MAX_STORED_STAFF_LOGS);
     emitLogs(next);
+    lastRemoteTouchSyncMs = Date.now();
 
-    try {
-      await setDoc(
-        LOGS_DOC,
-        sanitizeForFirestore({ logs: next, updatedAt: serverTimestamp() }),
-        { merge: true }
-      );
-    } catch {
-      // offline
+    if (!isFirestoreWriteBackedOff()) {
+      try {
+        await setDoc(
+          LOGS_DOC,
+          sanitizeForFirestore({ logs: next, updatedAt: serverTimestamp() }),
+          { merge: true }
+        );
+      } catch (err) {
+        markFirestoreWriteError(err);
+      }
     }
 
     return logId;
@@ -539,7 +546,7 @@ export const staffService = {
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const logs = liveStaffLogs ?? readLocalLogs();
+    const logs = (liveStaffLogs ?? readLocalLogs()).slice(0, MAX_STORED_STAFF_LOGS);
     const target = logs.find((l) => l.id === logId);
     if (!target || target.status !== 'online') return;
 
@@ -549,14 +556,19 @@ export const staffService = {
     );
     emitLogs(next);
 
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (isFirestoreWriteBackedOff()) return;
+    if (nowMs - lastRemoteTouchSyncMs < MIN_TOUCH_SYNC_INTERVAL_MS) return;
+
+    lastRemoteTouchSyncMs = nowMs;
     try {
       await setDoc(
         LOGS_DOC,
         sanitizeForFirestore({ logs: next, updatedAt: serverTimestamp() }),
         { merge: true }
       );
-    } catch {
-      // ignore
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
   },
 
@@ -582,7 +594,7 @@ export const staffService = {
       // use local
     }
 
-    const next = baseLogs.map((l) => {
+    const next = baseLogs.slice(0, MAX_STORED_STAFF_LOGS).map((l) => {
       if (l.id !== logId) return l;
       const durationMs = Math.max(0, nowMs - new Date(l.loginTime).getTime());
       return {
@@ -595,14 +607,16 @@ export const staffService = {
     });
     emitLogs(next);
 
-    try {
-      await setDoc(
-        LOGS_DOC,
-        sanitizeForFirestore({ logs: next, updatedAt: serverTimestamp() }),
-        { merge: true }
-      );
-    } catch {
-      // ignore
+    if (!isFirestoreWriteBackedOff()) {
+      try {
+        await setDoc(
+          LOGS_DOC,
+          sanitizeForFirestore({ logs: next, updatedAt: serverTimestamp() }),
+          { merge: true }
+        );
+      } catch (err) {
+        markFirestoreWriteError(err);
+      }
     }
   },
 
@@ -615,8 +629,8 @@ export const staffService = {
         sanitizeForFirestore({ logs: activeOnly, updatedAt: serverTimestamp() }),
         { merge: true }
       );
-    } catch {
-      // ignore
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
   },
 };

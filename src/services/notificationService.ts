@@ -13,6 +13,7 @@ import {
 import { db } from '../lib/firebase';
 import { AppNotification, NotificationType, OrderStatus, PaymentStatus } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 
 const LOCAL_NOTIFS_KEY = 'selvee_notifications_cache_v1';
 const LOCAL_READ_KEY = 'selvee_read_notifs_v1';
@@ -20,13 +21,40 @@ const LOCAL_PUSHED_KEY = 'selvee_pushed_notifs_v1';
 const LOCAL_MUTED_KEY = 'selvee_notif_muted_v1';
 const LOCAL_ORDERS_KEY = 'mf_placed_orders_v2';
 const LOCAL_PUSHED_SIGS_KEY = 'selvee_pushed_sigs_v1';
+const LOCAL_PUBLISHED_IDS_KEY = 'selvee_published_notif_ids_v1';
 const CUSTOMER_DEVICE_KEY = 'selvee_customer_device_id_v1';
 const FEED_DOC_PATH = doc(db, 'settings', 'notifications_feed');
-const MAX_FEED_ITEMS = 60;
+const MAX_FEED_ITEMS = 25;
 let feedWriteQueue: Promise<void> = Promise.resolve();
 const pushedInMemory = new Set<string>();
 const publishedIdsLock = new Set<string>();
 const recentPublishedSigs = new Map<string, number>();
+
+const hasRecentlyPublishedId = (id: string): boolean => {
+  if (publishedIdsLock.has(id)) return true;
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(LOCAL_PUBLISHED_IDS_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(id);
+  } catch {
+    return false;
+  }
+};
+
+const rememberPublishedId = (id: string) => {
+  publishedIdsLock.add(id);
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(LOCAL_PUBLISHED_IDS_KEY);
+    const prev: string[] = raw ? JSON.parse(raw) : [];
+    const next = [id, ...(Array.isArray(prev) ? prev.filter((x) => x !== id) : [])].slice(0, 60);
+    localStorage.setItem(LOCAL_PUBLISHED_IDS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+};
 
 // Shared singleton live notifications state (prevents stale localStorage flash on load)
 let liveNotifications: AppNotification[] | null = null;
@@ -508,7 +536,7 @@ export const notificationService = {
     const existingLive = liveNotifications ?? [];
     if (input.id) {
       const alreadyLive = existingLive.find((n) => n.id === id);
-      if (publishedIdsLock.has(id) || alreadyLive) {
+      if (hasRecentlyPublishedId(id) || alreadyLive) {
         return alreadyLive || {
           id,
           type: input.type,
@@ -523,11 +551,11 @@ export const notificationService = {
 
     const contentSig = `${input.type}|${input.title.trim()}|${input.message.trim()}|${input.targetOrderNumber || ''}`;
     const lastPub = recentPublishedSigs.get(contentSig);
-    if (lastPub && now - lastPub < 15000) {
+    if (lastPub && now - lastPub < 30000) {
       const existingMatch = existingLive.find((n) => n.title === input.title.trim() && n.message === input.message.trim());
       if (existingMatch) return existingMatch;
     }
-    publishedIdsLock.add(id);
+    rememberPublishedId(id);
     recentPublishedSigs.set(contentSig, now);
 
     const notif: AppNotification = {
@@ -557,9 +585,14 @@ export const notificationService = {
       emitNotificationsState();
     }
 
+    if (isFirestoreWriteBackedOff()) {
+      return notif;
+    }
+
     // 2. Sequentially queue write to settings/notifications_feed to avoid concurrent overwrite races
     let alreadyInRemote = false;
     const writeFeed = async () => {
+      if (isFirestoreWriteBackedOff()) return;
       try {
         const feedSnap = await getDoc(FEED_DOC_PATH);
         const remoteItems: AppNotification[] =
@@ -585,7 +618,7 @@ export const notificationService = {
           { merge: true }
         );
       } catch (err) {
-        console.warn('Feed notification sync notice:', err);
+        markFirestoreWriteError(err);
       }
     };
 
@@ -593,7 +626,7 @@ export const notificationService = {
     await feedWriteQueue;
 
     // 3. Also attempt writing to /notifications collection if not already present remotely
-    if (!alreadyInRemote) {
+    if (!alreadyInRemote && !isFirestoreWriteBackedOff()) {
       try {
         await setDoc(
           doc(db, 'notifications', id),
@@ -602,8 +635,8 @@ export const notificationService = {
             createdAt: serverTimestamp(),
           })
         );
-      } catch {
-        // Non-blocking fallback handled by settings/notifications_feed
+      } catch (err) {
+        markFirestoreWriteError(err);
       }
     }
 

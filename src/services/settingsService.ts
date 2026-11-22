@@ -19,6 +19,8 @@ import {
 import { db } from '../lib/firebase';
 import { Banner, Coupon, DeliveryZone, Review, SiteSettings, AuditLog, PaymentSettings } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { safeSetLocalStorage } from '../utils/safeStorage';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 
 export const defaultPaymentSettings: PaymentSettings = {
   codEnabled: true,
@@ -175,11 +177,7 @@ export const saveLocalDeliveryZones = (zones: DeliveryZone[]) => {
   const sorted = sortDeliveryZones(zones);
   liveDeliveryZones = sorted;
   deliveryZonesListeners.forEach((cb) => cb(sorted));
-  try {
-    localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(sorted));
-  } catch {
-    // ignore
-  }
+  safeSetLocalStorage(LOCAL_DELIVERY_ZONES_KEY, sorted, { maxChars: 120_000 });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('mf_delivery_zones_updated', { detail: sorted }));
   }
@@ -214,11 +212,10 @@ export const getLocalSettings = (): SiteSettings => {
 export const saveLocalSettings = (settings: SiteSettings) => {
   liveSettings = settings;
   settingsListeners.forEach((cb) => cb(settings));
-  try {
-    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(settings));
-  } catch {
-    // ignore
-  }
+  safeSetLocalStorage(LOCAL_SETTINGS_KEY, settings, {
+    stripInlineData: true,
+    maxChars: 200_000,
+  });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('mf_settings_updated', { detail: settings }));
   }
@@ -232,19 +229,6 @@ export const settingsService = {
       const snap = await getDoc(doc(db, 'settings', 'general'));
       if (snap.exists()) {
         const data = snap.data();
-        const localTimestamp = (local as any)._lastUpdated || 0;
-        const remoteTimestamp = data?.updatedAt?.toMillis ? data.updatedAt.toMillis() : (typeof data?.updatedAt === 'number' ? data.updatedAt : 0);
-
-        // If local was updated more recently than remote, keep local values and push update
-        if (localTimestamp > remoteTimestamp && localTimestamp > 0) {
-          try {
-            await setDoc(doc(db, 'settings', 'general'), sanitizeForFirestore({ ...local, updatedAt: serverTimestamp() }), { merge: true });
-          } catch {
-            // ignore
-          }
-          return local;
-        }
-
         const currentPay = local.paymentSettings || defaultPaymentSettings;
         const merged = {
           ...local,
@@ -349,11 +333,10 @@ export const settingsService = {
                 },
               } as SiteSettings;
               liveSettings = merged;
-              try {
-                localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(merged));
-              } catch {
-                // ignore
-              }
+              safeSetLocalStorage(LOCAL_SETTINGS_KEY, merged, {
+                stripInlineData: true,
+                maxChars: 200_000,
+              });
               settingsListeners.forEach((cb) => cb(merged));
             } else if (liveSettings === null) {
               liveSettings = defaultSettings;
@@ -396,11 +379,10 @@ export const settingsService = {
             snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
             list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
             liveAllBanners = list;
-            try {
-              localStorage.setItem(LOCAL_BANNERS_KEY, JSON.stringify(list));
-            } catch {
-              // ignore
-            }
+            safeSetLocalStorage(LOCAL_BANNERS_KEY, list, {
+              stripInlineData: true,
+              maxChars: 200_000,
+            });
             bannersListeners.forEach((cb) => cb(list));
           },
           (err) => {
@@ -439,11 +421,10 @@ export const settingsService = {
   saveLocalBanners(list: Banner[]) {
     liveAllBanners = list;
     bannersListeners.forEach((cb) => cb(list));
-    try {
-      localStorage.setItem(LOCAL_BANNERS_KEY, JSON.stringify(list));
-    } catch {
-      // ignore
-    }
+    safeSetLocalStorage(LOCAL_BANNERS_KEY, list, {
+      stripInlineData: true,
+      maxChars: 200_000,
+    });
   },
 
   // Banners
@@ -557,11 +538,7 @@ export const settingsService = {
     const normalized = list.map((c) => this.normalizeCouponState(c, consumed));
     liveCoupons = normalized;
     couponsListeners.forEach((cb) => cb(normalized));
-    try {
-      localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(normalized));
-    } catch {
-      // ignore
-    }
+    safeSetLocalStorage(LOCAL_COUPONS_KEY, normalized, { maxChars: 150_000 });
   },
 
   subscribeToCoupons(callback: (coupons: Coupon[]) => void): Unsubscribe {
@@ -581,11 +558,7 @@ export const settingsService = {
               remoteList.push(this.normalizeCouponState({ id: d.id, ...d.data() } as Coupon, consumed))
             );
             liveCoupons = remoteList;
-            try {
-              localStorage.setItem(LOCAL_COUPONS_KEY, JSON.stringify(remoteList));
-            } catch {
-              // ignore
-            }
+            safeSetLocalStorage(LOCAL_COUPONS_KEY, remoteList, { maxChars: 150_000 });
             couponsListeners.forEach((cb) => cb(remoteList));
           },
           () => {
@@ -967,11 +940,7 @@ export const settingsService = {
               remoteList.length > 0 ? remoteList : DEFAULT_DELIVERY_ZONES
             );
             liveDeliveryZones = sorted;
-            try {
-              localStorage.setItem(LOCAL_DELIVERY_ZONES_KEY, JSON.stringify(sorted));
-            } catch {
-              // ignore
-            }
+            safeSetLocalStorage(LOCAL_DELIVERY_ZONES_KEY, sorted, { maxChars: 120_000 });
             deliveryZonesListeners.forEach((cb) => cb(sorted));
           },
           () => {
@@ -1208,6 +1177,7 @@ export const settingsService = {
     details?: string,
     meta?: { entityType?: string; beforeValue?: string; afterValue?: string }
   ) {
+    if (isFirestoreWriteBackedOff()) return;
     try {
       await addDoc(
         collection(db, 'auditLogs'),
@@ -1223,8 +1193,8 @@ export const settingsService = {
           timestamp: serverTimestamp(),
         })
       );
-    } catch {
-      // Non-blocking
+    } catch (err) {
+      markFirestoreWriteError(err);
     }
   },
 

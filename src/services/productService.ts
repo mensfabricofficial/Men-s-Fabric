@@ -21,6 +21,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { Product, Category, StockMovementEntry, StockMovementType } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
+import { safeSetLocalStorage } from '../utils/safeStorage';
+import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
 
 // Pure empty database catalog by default (NO demo products, strictly user/admin created items)
 export const DEFAULT_PRODUCTS: Product[] = [];
@@ -131,18 +133,17 @@ export const cacheProductRecord = (prod: Product) => {
 };
 
 const persistProductsBackup = (list: Product[]) => {
-  try {
-    const compact = list.map((p) => ({
-      ...p,
-      images:
-        p.thumbnail && Array.isArray(p.images) && p.images.length === 1 && p.images[0] === p.thumbnail
-          ? []
-          : p.images,
-    }));
-    localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(compact));
-  } catch {
-    // ignore quota limits (IndexedDB persistentLocalCache handles large catalogs)
-  }
+  const compact = list.slice(0, 200).map((p) => ({
+    ...p,
+    images:
+      p.thumbnail && Array.isArray(p.images) && p.images.length === 1 && p.images[0] === p.thumbnail
+        ? []
+        : p.images,
+  }));
+  safeSetLocalStorage(LOCAL_PRODUCTS_KEY, compact, {
+    stripInlineData: true,
+    maxChars: 350_000,
+  });
   list.forEach(cacheProductRecord);
 };
 
@@ -322,11 +323,10 @@ export const productService = {
           const list: Category[] = [];
           snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
           liveCategories = list;
-          try {
-            localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(list));
-          } catch {
-            // ignore
-          }
+          safeSetLocalStorage(LOCAL_CATEGORIES_KEY, list, {
+            stripInlineData: true,
+            maxChars: 200_000,
+          });
           categoryListeners.forEach((cb) => cb(list));
         },
         (err) => {
@@ -415,11 +415,10 @@ export const productService = {
   saveLocalCategories(list: Category[]) {
     liveCategories = list;
     categoryListeners.forEach((cb) => cb(list));
-    try {
-      localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(list));
-    } catch {
-      // ignore
-    }
+    safeSetLocalStorage(LOCAL_CATEGORIES_KEY, list, {
+      stripInlineData: true,
+      maxChars: 200_000,
+    });
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(CATEGORY_UPDATE_EVENT, { detail: list }));
     }
@@ -709,11 +708,9 @@ export const productService = {
     const trimmed = list.slice(0, 350);
     liveStockMovements = trimmed;
     stockMovementListeners.forEach((cb) => cb(trimmed));
-    try {
-      localStorage.setItem(LOCAL_STOCK_MOVEMENTS_KEY, JSON.stringify(trimmed));
-    } catch {
-      // ignore
-    }
+    safeSetLocalStorage(LOCAL_STOCK_MOVEMENTS_KEY, trimmed.slice(0, 100), {
+      maxChars: 150_000,
+    });
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(STOCK_MOVEMENT_EVENT, { detail: trimmed }));
     }
@@ -722,33 +719,43 @@ export const productService = {
   async recordStockMovement(
     entry: Omit<StockMovementEntry, 'id' | 'date' | 'timestamp'> & { date?: string; timestamp?: string }
   ): Promise<StockMovementEntry> {
+    const saved = await this.recordStockMovementsBatch([entry]);
+    return saved[0];
+  },
+
+  async recordStockMovementsBatch(
+    entries: Array<Omit<StockMovementEntry, 'id' | 'date' | 'timestamp'> & { date?: string; timestamp?: string }>
+  ): Promise<StockMovementEntry[]> {
+    if (!entries || entries.length === 0) return [];
     const now = new Date();
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
-    const record: StockMovementEntry = {
+    const records: StockMovementEntry[] = entries.map((entry, idx) => ({
       ...entry,
-      id: `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `stk_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
       date: entry.date || `${yyyy}-${mm}-${dd}`,
       timestamp: entry.timestamp || now.toISOString(),
-    };
+    }));
 
-    const next = [record, ...this.getLocalStockMovements()].slice(0, 350);
+    const next = [...records, ...this.getLocalStockMovements()].slice(0, 350);
     this.saveLocalStockMovements(next);
 
-    try {
-      await setDoc(
-        STOCK_MOVEMENTS_DOC,
-        sanitizeForFirestore({
-          items: next.slice(0, 250),
-          updatedAt: serverTimestamp(),
-        }),
-        { merge: true }
-      );
-    } catch {
-      // non-blocking offline backup
+    if (!isFirestoreWriteBackedOff()) {
+      try {
+        await setDoc(
+          STOCK_MOVEMENTS_DOC,
+          sanitizeForFirestore({
+            items: next.slice(0, 100),
+            updatedAt: serverTimestamp(),
+          }),
+          { merge: true }
+        );
+      } catch (err) {
+        markFirestoreWriteError(err);
+      }
     }
-    return record;
+    return records;
   },
 
   subscribeToStockMovements(cb: (list: StockMovementEntry[]) => void): Unsubscribe {
@@ -768,11 +775,9 @@ export const productService = {
                 .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))
                 .slice(0, 350);
               liveStockMovements = sorted;
-              try {
-                localStorage.setItem(LOCAL_STOCK_MOVEMENTS_KEY, JSON.stringify(sorted));
-              } catch {
-                // ignore
-              }
+              safeSetLocalStorage(LOCAL_STOCK_MOVEMENTS_KEY, sorted.slice(0, 100), {
+                maxChars: 150_000,
+              });
               stockMovementListeners.forEach((listener) => listener(sorted));
             } else if (liveStockMovements === null) {
               liveStockMovements = [];
@@ -977,14 +982,17 @@ export const productService = {
 
     // 1. Immediately update persistent local catalog and dispatch event for instant UI update
     this.saveLocalProducts(updatedProducts);
-    for (const mv of movementsToLog) {
-      this.recordStockMovement(mv).catch(() => {});
+    if (movementsToLog.length > 0) {
+      this.recordStockMovementsBatch(movementsToLog).catch(() => {});
     }
 
-    if (syncLocalOnly) return;
+    if (syncLocalOnly || isFirestoreWriteBackedOff()) return;
 
-    // 2. Persist to Firestore for all affected products
+    // 2. Persist to Firestore once per affected product ID
+    const writtenIds = new Set<string>();
     for (const it of items) {
+      if (writtenIds.has(it.productId)) continue;
+      writtenIds.add(it.productId);
       const updatedP = updatedProducts.find((p) => p.id === it.productId);
       if (updatedP) {
         try {
@@ -995,6 +1003,7 @@ export const productService = {
           });
           await setDoc(doc(db, 'products', updatedP.id), payload, { merge: true });
         } catch (err) {
+          markFirestoreWriteError(err);
           console.warn(`Remote stock decrement notice for ${updatedP.id}:`, err);
         }
       }
@@ -1066,11 +1075,16 @@ export const productService = {
     });
 
     this.saveLocalProducts(updatedProducts);
-    for (const mv of movementsToLog) {
-      this.recordStockMovement(mv).catch(() => {});
+    if (movementsToLog.length > 0) {
+      this.recordStockMovementsBatch(movementsToLog).catch(() => {});
     }
 
+    if (isFirestoreWriteBackedOff()) return;
+
+    const writtenIds = new Set<string>();
     for (const it of items) {
+      if (writtenIds.has(it.productId)) continue;
+      writtenIds.add(it.productId);
       const updatedP = updatedProducts.find((p) => p.id === it.productId);
       if (updatedP) {
         try {
@@ -1081,6 +1095,7 @@ export const productService = {
           });
           await setDoc(doc(db, 'products', updatedP.id), payload, { merge: true });
         } catch (err) {
+          markFirestoreWriteError(err);
           console.warn(`Remote stock restore notice for ${updatedP.id}:`, err);
         }
       }

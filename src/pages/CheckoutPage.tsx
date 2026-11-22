@@ -28,116 +28,22 @@ import { orderService } from '../services/orderService';
 import { settingsService, defaultPaymentSettings } from '../services/settingsService';
 import { ShippingAddress, PaymentMethod, PaymentSettings, PaymentDetails } from '../types';
 import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
+import {
+  BD_DIVISIONS,
+  BD_DISTRICTS_BY_DIVISION,
+  getThanasForDistrict,
+  normalizeDivisionName,
+  normalizeDistrictName,
+} from '../data/bdLocations';
 
 interface CheckoutPageProps {
   onNavigate: (route: string) => void;
 }
 
-const BD_DIVISIONS = [
-  'Dhaka',
-  'Chattogram',
-  'Rajshahi',
-  'Khulna',
-  'Barishal',
-  'Sylhet',
-  'Rangpur',
-  'Mymensingh',
-];
-
-const BD_DISTRICTS_BY_DIVISION: Record<string, string[]> = {
-  Dhaka: [
-    'Dhaka',
-    'Faridpur',
-    'Gazipur',
-    'Gopalganj',
-    'Kishoreganj',
-    'Madaripur',
-    'Manikganj',
-    'Munshiganj',
-    'Narayanganj',
-    'Narsingdi',
-    'Rajbari',
-    'Shariatpur',
-    'Tangail',
-  ],
-  Chattogram: [
-    'Chattogram',
-    'Bandarban',
-    'Brahmanbaria',
-    'Chandpur',
-    "Cox's Bazar",
-    'Cumilla',
-    'Feni',
-    'Khagrachhari',
-    'Lakshmipur',
-    'Noakhali',
-    'Rangamati',
-  ],
-  Rajshahi: [
-    'Rajshahi',
-    'Bogura',
-    'Chapainawabganj',
-    'Joypurhat',
-    'Naogaon',
-    'Natore',
-    'Pabna',
-    'Sirajganj',
-  ],
-  Khulna: [
-    'Khulna',
-    'Bagerhat',
-    'Chuadanga',
-    'Jashore',
-    'Jhenaidah',
-    'Kushtia',
-    'Magura',
-    'Meherpur',
-    'Narail',
-    'Satkhira',
-  ],
-  Barishal: [
-    'Barishal',
-    'Barguna',
-    'Bhola',
-    'Jhalokati',
-    'Patuakhali',
-    'Pirojpur',
-  ],
-  Sylhet: [
-    'Sylhet',
-    'Habiganj',
-    'Moulvibazar',
-    'Sunamganj',
-  ],
-  Rangpur: [
-    'Rangpur',
-    'Dinajpur',
-    'Gaibandha',
-    'Kurigram',
-    'Lalmonirhat',
-    'Nilphamari',
-    'Panchagarh',
-    'Thakurgaon',
-  ],
-  Mymensingh: [
-    'Mymensingh',
-    'Jamalpur',
-    'Netrokona',
-    'Sherpur',
-  ],
-};
-
 const MFS_LOGOS: Record<'bkash' | 'nagad' | 'rocket', string> = {
   bkash: '/assets/aistudio/bkash_739d0e9e.png',
   nagad: '/assets/aistudio/nagad2_9f19b07d.jfif',
   rocket: '/assets/aistudio/DBBL-Mobile-Banking-Becomes-Rocket_a4583d30.jpg',
-};
-
-const normalizeDivisionName = (raw?: string) => {
-  if (!raw) return 'Dhaka';
-  if (raw === 'Chittagong') return 'Chattogram';
-  if (raw === 'Barisal') return 'Barishal';
-  return BD_DIVISIONS.includes(raw) ? raw : 'Dhaka';
 };
 
 export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
@@ -165,7 +71,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   // Form Fields
   const initialDivision = normalizeDivisionName(customerProfile?.division);
   const initialDistrictList = BD_DISTRICTS_BY_DIVISION[initialDivision] || BD_DISTRICTS_BY_DIVISION.Dhaka;
-  const savedDistrict = customerProfile?.district || customerProfile?.city || '';
+  const savedDistrict = normalizeDistrictName(customerProfile?.district || customerProfile?.city || '');
   const initialDistrict = initialDistrictList.includes(savedDistrict)
     ? savedDistrict
     : initialDistrictList[0];
@@ -176,7 +82,17 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const [address, setAddress] = useState(customerProfile?.address || '');
   const [division, setDivision] = useState(initialDivision);
   const [district, setDistrict] = useState(initialDistrict);
+  const [thana, setThana] = useState(customerProfile?.thana || '');
+  const [postCode, setPostCode] = useState(customerProfile?.postalCode || '');
   const [notes, setNotes] = useState('');
+
+  const availableThanas = React.useMemo(() => {
+    const base = getThanasForDistrict(district, division);
+    if (thana && !base.includes(thana)) {
+      return [thana, ...base];
+    }
+    return base;
+  }, [district, division, thana]);
   
   // Payment State: 'cod' or 'online'
   const [paymentMode, setPaymentMode] = useState<'cod' | 'online'>('cod');
@@ -215,6 +131,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     }
     if (customerProfile?.address) {
       setAddress((prev) => prev || customerProfile.address || '');
+    }
+    if (customerProfile?.thana) {
+      setThana((prev) => prev || customerProfile.thana || '');
+    }
+    if (customerProfile?.postalCode) {
+      setPostCode((prev) => prev || customerProfile.postalCode || '');
     }
   }, [customerProfile, currentUser]);
 
@@ -375,6 +297,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
       return;
     }
 
+    if (!thana.trim()) {
+      setErrorMessage('Please select your Thana / Upazila.');
+      return;
+    }
+
+    if (!postCode.trim()) {
+      setErrorMessage('Please enter your Post Code.');
+      return;
+    }
+
     if (!address.trim()) {
       setErrorMessage('Please enter your full street delivery address.');
       return;
@@ -418,6 +350,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
         address: address.trim(),
         division,
         district: district.trim(),
+        thana: thana.trim(),
+        upazila: thana.trim(),
+        postCode: postCode.trim(),
       };
       if (email.trim()) shippingAddress.email = email.trim();
       if (notes.trim()) shippingAddress.notes = notes.trim();
@@ -579,6 +514,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     const divDistricts = BD_DISTRICTS_BY_DIVISION[nextDiv] || [];
                     const defaultDistrict = divDistricts[0] || nextDiv;
                     setDistrict(defaultDistrict);
+                    const nextThanas = getThanasForDistrict(defaultDistrict, nextDiv);
+                    setThana((prev) => (nextThanas.includes(prev) ? prev : ''));
                     if (nextDiv === 'Dhaka' && defaultDistrict === 'Dhaka') {
                       const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
                       if (dhakaZone) setSelectedZone(dhakaZone);
@@ -599,6 +536,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   onChange={(e) => {
                     const nextDist = e.target.value;
                     setDistrict(nextDist);
+                    const nextThanas = getThanasForDistrict(nextDist, division);
+                    setThana((prev) => (nextThanas.includes(prev) ? prev : ''));
                     if (division === 'Dhaka' && nextDist === 'Dhaka') {
                       const dhakaZone = deliveryZones.find((z) => z.id === 'dhaka') || deliveryZones[0];
                       if (dhakaZone) setSelectedZone(dhakaZone);
@@ -612,6 +551,29 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                     <option key={dist} value={dist}>{dist}</option>
                   ))}
                 </FloatingSelect>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FloatingSelect
+                  label="Thana / Upazila *"
+                  required
+                  value={thana}
+                  onChange={(e) => setThana(e.target.value)}
+                >
+                  <option value="">Select Thana / Upazila</option>
+                  {availableThanas.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </FloatingSelect>
+
+                <FloatingInput
+                  label="Post Code *"
+                  type="text"
+                  required
+                  value={postCode}
+                  onChange={(e) => setPostCode(e.target.value)}
+                  placeholder="e.g. 1213"
+                />
               </div>
 
               <FloatingTextarea

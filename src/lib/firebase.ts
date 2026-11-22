@@ -3,13 +3,12 @@ import { getAuth, Auth } from 'firebase/auth';
 import {
   getFirestore,
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
   memoryLocalCache,
   Firestore,
 } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import { firebaseConfig } from './firebaseConfig';
+import { cleanupFirestoreAndBloatStorage } from '../utils/safeStorage';
 
 let app: FirebaseApp;
 let auth: Auth;
@@ -17,22 +16,15 @@ let db: Firestore;
 let storage: FirebaseStorage;
 
 function createFirestoreInstance(firebaseApp: FirebaseApp): Firestore {
+  cleanupFirestoreAndBloatStorage();
   try {
     return initializeFirestore(firebaseApp, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      localCache: memoryLocalCache(),
       experimentalForceLongPolling: true,
       ignoreUndefinedProperties: true,
     });
   } catch {
-    try {
-      return initializeFirestore(firebaseApp, {
-        localCache: memoryLocalCache(),
-        experimentalForceLongPolling: true,
-        ignoreUndefinedProperties: true,
-      });
-    } catch {
-      return getFirestore(firebaseApp);
-    }
+    return getFirestore(firebaseApp);
   }
 }
 

@@ -3,10 +3,11 @@ import { Order, SiteSettings } from '../../types';
 import { BrandLogo } from './BrandLogo';
 import { settingsService, defaultSettings } from '../../services/settingsService';
 import { formatDatePart, formatTimePart } from '../../lib/dateFormat';
-import { getOrderPaidAndDue } from '../../lib/accountingUtils';
+import { getOrderPaidAndDue, getOrderCustomerPaidAndDue, getOrderRecognizedSale } from '../../lib/accountingUtils';
 
 interface InvoiceSheetProps {
   order: Order;
+  variant?: 'customer' | 'final_sale';
 }
 
 export const getFormattedInvoiceNumber = (orderNumber?: string, fallbackId?: string): string => {
@@ -16,7 +17,7 @@ export const getFormattedInvoiceNumber = (orderNumber?: string, fallbackId?: str
   return `INV-${clean}`;
 };
 
-export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
+export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'customer' }) => {
   const [settings, setSettings] = useState<SiteSettings>(() => settingsService.getInstantSettings() || defaultSettings);
 
   useEffect(() => {
@@ -26,12 +27,36 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
   const displayOrderNumber = cleanOrderNum ? `#${cleanOrderNum}` : '#N/A';
   const invoiceNumber = getFormattedInvoiceNumber(order.orderNumber, order.id);
 
+  const isFinalSale = variant === 'final_sale';
   const isCod = order.paymentMethod === 'cod';
-  const isFreeDelivery = order.deliveryCharge === 0 || Boolean(order.freeDeliveryApplied);
+  const deliveryAmt = Math.max(0, Number(order.deliveryCharge) || 0);
+  const isFreeDelivery = deliveryAmt === 0 || Boolean(order.freeDeliveryApplied);
   const advancePaid = Boolean(order.advanceDeliveryPaid) && (order.advanceAmount || 0) > 0;
-  const { paid: resolvedPaidAmount, due: resolvedDueAmount } = getOrderPaidAndDue(order);
-  const advanceAmount = advancePaid ? (order.advanceAmount ?? order.deliveryCharge) : 0;
-  const dueOnDelivery = resolvedDueAmount;
+
+  const customerAmounts = getOrderCustomerPaidAndDue(order);
+  const netAmounts = getOrderPaidAndDue(order);
+  const resolvedPaidAmount = isFinalSale ? netAmounts.paid : customerAmounts.paid;
+  const dueOnDelivery = isFinalSale ? netAmounts.due : customerAmounts.due;
+
+  const rec = order.pipeline?.codReconciliation;
+  const courierCodCharge = Math.max(0, Number(rec?.codCharge ?? order.codCharge ?? 0) || 0);
+  const expectedNetProducts = Math.max(
+    0,
+    (Number(order.subtotal) || 0) - (Number(order.discount) || 0) - (Number(order.onlineDiscount) || 0)
+  );
+  const computedCustomerCodCharge = Math.max(
+    0,
+    (Number(order.total) || 0) - (expectedNetProducts + deliveryAmt)
+  );
+  const customerCodCharge =
+    computedCustomerCodCharge > 0
+      ? computedCustomerCodCharge
+      : 0;
+  const finalSaleTotal =
+    rec?.resolved || typeof order.netSaleAmount === 'number'
+      ? getOrderRecognizedSale(order)
+      : Math.max(0, expectedNetProducts - courierCodCharge);
+
   const showCustomerId =
     Boolean(order.customerId) &&
     order.customerId !== 'guest' &&
@@ -74,10 +99,18 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
         <div className="sm:text-right space-y-0.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-200">
           <div className="flex sm:justify-end items-center gap-2">
             <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-neutral-500">
-              Invoice
+              {isFinalSale ? 'Final Sale Invoice' : 'Customer Invoice'}
             </span>
             <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 border border-neutral-300 rounded text-neutral-800">
-              {order.paymentStatus === 'paid' || dueOnDelivery === 0 ? 'Paid' : isCod ? 'COD' : 'Pending'}
+              {isFinalSale
+                ? rec?.resolved
+                  ? 'Completed'
+                  : 'COD Settlement'
+                : order.paymentStatus === 'paid' || dueOnDelivery === 0
+                ? 'Paid'
+                : isCod
+                ? 'COD'
+                : 'Pending'}
             </span>
           </div>
           <p className="text-lg sm:text-xl font-extrabold font-mono tracking-tight text-neutral-900 tabular-nums">
@@ -151,10 +184,18 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
           )}
           <p className="text-neutral-700 text-[11px] leading-relaxed pt-0.5 break-words">
             {order.shippingAddress?.address}
-            {(order.shippingAddress?.upazila || order.shippingAddress?.district || order.shippingAddress?.division) &&
-              `, ${[order.shippingAddress?.upazila, order.shippingAddress?.district, order.shippingAddress?.division]
+            {(order.shippingAddress?.thana ||
+              order.shippingAddress?.upazila ||
+              order.shippingAddress?.district ||
+              order.shippingAddress?.division ||
+              order.shippingAddress?.postCode) &&
+              `, ${[
+                order.shippingAddress?.thana || order.shippingAddress?.upazila,
+                order.shippingAddress?.district,
+                order.shippingAddress?.division,
+              ]
                 .filter(Boolean)
-                .join(', ')}`}
+                .join(', ')}${order.shippingAddress?.postCode ? ` - ${order.shippingAddress.postCode}` : ''}`}
           </p>
           {order.shippingAddress?.notes && (
             <p className="text-[10px] text-neutral-500 italic pt-0.5 break-words">
@@ -198,28 +239,57 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
               </span>
             </div>
           )}
-          {resolvedPaidAmount > 0 && (
-            <div className="flex justify-between gap-3 text-emerald-700 font-semibold">
-              <span>
-                {isCod && advancePaid ? `Advance Paid${order.advanceGateway ? ` (${order.advanceGateway.toUpperCase()})` : ''}` : 'Paid Amount'}
-              </span>
-              <span className="font-mono tabular-nums">
-                ৳{resolvedPaidAmount.toLocaleString('en-BD')}
-              </span>
-            </div>
+          {isFinalSale ? (
+            <>
+              {typeof rec?.collectedCash === 'number' && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-neutral-500">Collected Cash</span>
+                  <span className="font-mono font-semibold text-neutral-900 tabular-nums">
+                    ৳{rec.collectedCash.toLocaleString('en-BD')}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between gap-3 text-red-700 font-medium">
+                <span>COD Charge</span>
+                <span className="font-mono tabular-nums">
+                  {courierCodCharge > 0 ? `-৳${courierCodCharge.toLocaleString('en-BD')}` : '৳0'}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3 pt-1 border-t border-dashed border-neutral-200 font-bold text-emerald-700">
+                <span>Final Sale Amount</span>
+                <span className="font-mono tabular-nums">
+                  ৳{finalSaleTotal.toLocaleString('en-BD')}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              {resolvedPaidAmount > 0 && (
+                <div className="flex justify-between gap-3 text-emerald-700 font-semibold">
+                  <span>
+                    {isCod && advancePaid && dueOnDelivery > 0
+                      ? `Advance Paid${order.advanceGateway ? ` (${order.advanceGateway.toUpperCase()})` : ''}`
+                      : 'Paid Amount'}
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    ৳{resolvedPaidAmount.toLocaleString('en-BD')}
+                  </span>
+                </div>
+              )}
+              {isFreeDelivery && (
+                <div className="flex justify-between gap-3 text-emerald-700 font-semibold">
+                  <span>Delivery Benefit</span>
+                  <span>Free Delivery Applied</span>
+                </div>
+              )}
+              <div className="flex justify-between gap-3 pt-1 border-t border-dashed border-neutral-200 font-bold text-neutral-900">
+                <span>{isCod ? 'Due on Delivery' : 'Balance Due'}</span>
+                <span className={`font-mono tabular-nums ${dueOnDelivery === 0 ? 'text-emerald-700' : 'text-neutral-900'}`}>
+                  ৳{dueOnDelivery.toLocaleString('en-BD')}
+                </span>
+              </div>
+            </>
           )}
-          {isFreeDelivery && (
-            <div className="flex justify-between gap-3 text-emerald-700 font-semibold">
-              <span>Delivery Benefit</span>
-              <span>Free Delivery Applied</span>
-            </div>
-          )}
-          <div className="flex justify-between gap-3 pt-1 border-t border-dashed border-neutral-200 font-bold text-neutral-900">
-            <span>{isCod ? 'Due on Delivery' : 'Balance Due'}</span>
-            <span className={`font-mono tabular-nums ${dueOnDelivery === 0 ? 'text-emerald-700' : 'text-neutral-900'}`}>
-              ৳{dueOnDelivery.toLocaleString('en-BD')}
-            </span>
-          </div>
         </div>
       </div>
 
@@ -337,31 +407,63 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order }) => {
             </div>
           ) : null}
 
-          <div className="flex justify-between text-neutral-600">
-            <span>Delivery Charge</span>
-            <span className="font-mono tabular-nums">
-              {isFreeDelivery ? 'FREE (৳0)' : `৳${(order.deliveryCharge || 0).toLocaleString('en-BD')}`}
-            </span>
-          </div>
+          {isFinalSale ? (
+            <>
+              {deliveryAmt > 0 && (
+                <div className="flex justify-between text-neutral-500">
+                  <span>Delivery Charge (Separate)</span>
+                  <span className="font-mono tabular-nums">৳{deliveryAmt.toLocaleString('en-BD')}</span>
+                </div>
+              )}
 
-          <div className="flex justify-between text-sm font-extrabold text-neutral-900 pt-2 border-t border-neutral-900">
-            <span>Total</span>
-            <span className="font-mono tabular-nums">৳{(order.total || 0).toLocaleString('en-BD')}</span>
-          </div>
+              <div className="flex justify-between text-red-700 font-medium">
+                <span>COD Charge (Courier Fee)</span>
+                <span className="font-mono tabular-nums">
+                  {courierCodCharge > 0 ? `-৳${courierCodCharge.toLocaleString('en-BD')}` : '৳0'}
+                </span>
+              </div>
 
-          {resolvedPaidAmount > 0 && (
-            <div className="flex justify-between text-emerald-700 font-medium">
-              <span>{isCod && advancePaid ? 'Advance Paid' : 'Paid Amount'}</span>
-              <span className="font-mono tabular-nums">-৳{resolvedPaidAmount.toLocaleString('en-BD')}</span>
-            </div>
+              <div className="flex justify-between text-sm font-extrabold text-emerald-700 pt-2 border-t border-neutral-900">
+                <span>Final Sale Amount</span>
+                <span className="font-mono tabular-nums">৳{finalSaleTotal.toLocaleString('en-BD')}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between text-neutral-600">
+                <span>Delivery Charge</span>
+                <span className="font-mono tabular-nums">
+                  {isFreeDelivery ? 'FREE (৳0)' : `৳${deliveryAmt.toLocaleString('en-BD')}`}
+                </span>
+              </div>
+
+              {customerCodCharge > 0 && (
+                <div className="flex justify-between text-neutral-600">
+                  <span>COD Charge</span>
+                  <span className="font-mono tabular-nums">+৳{customerCodCharge.toLocaleString('en-BD')}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between text-sm font-extrabold text-neutral-900 pt-2 border-t border-neutral-900">
+                <span>Total</span>
+                <span className="font-mono tabular-nums">৳{(order.total || 0).toLocaleString('en-BD')}</span>
+              </div>
+
+              {resolvedPaidAmount > 0 && (
+                <div className="flex justify-between text-emerald-700 font-medium">
+                  <span>{isCod && advancePaid && dueOnDelivery > 0 ? 'Advance Paid' : 'Paid Amount'}</span>
+                  <span className="font-mono tabular-nums">-৳{resolvedPaidAmount.toLocaleString('en-BD')}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-1.5 border-t border-dashed border-neutral-300 font-bold text-neutral-900">
+                <span>{isCod ? 'Cash Due on Delivery' : 'Balance Due'}</span>
+                <span className={`font-mono text-sm tabular-nums ${dueOnDelivery === 0 ? 'text-emerald-700' : 'text-neutral-900'}`}>
+                  ৳{dueOnDelivery.toLocaleString('en-BD')}
+                </span>
+              </div>
+            </>
           )}
-
-          <div className="flex justify-between items-center pt-1.5 border-t border-dashed border-neutral-300 font-bold text-neutral-900">
-            <span>{isCod ? 'Cash Due on Delivery' : 'Balance Due'}</span>
-            <span className={`font-mono text-sm tabular-nums ${dueOnDelivery === 0 ? 'text-emerald-700' : 'text-neutral-900'}`}>
-              ৳{dueOnDelivery.toLocaleString('en-BD')}
-            </span>
-          </div>
         </div>
       </div>
 

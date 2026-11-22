@@ -34,21 +34,17 @@ import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
 import { getCleanAuthErrorMessage } from '../lib/authErrorHelper';
+import {
+  BD_DIVISIONS,
+  BD_DISTRICTS_BY_DIVISION,
+  getThanasForDistrict,
+  normalizeDivisionName,
+  normalizeDistrictName,
+} from '../data/bdLocations';
 
 interface AccountPageProps {
   onNavigate: (route: string) => void;
 }
-
-const BD_DIVISIONS = [
-  'Dhaka',
-  'Chattogram',
-  'Rajshahi',
-  'Khulna',
-  'Barishal',
-  'Sylhet',
-  'Rangpur',
-  'Mymensingh',
-];
 
 export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const { 
@@ -117,6 +113,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   const [profileAddress, setProfileAddress] = useState('');
   const [profileDivision, setProfileDivision] = useState('Dhaka');
   const [profileDistrict, setProfileDistrict] = useState('');
+  const [profileThana, setProfileThana] = useState('');
   const [profilePostalCode, setProfilePostalCode] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileStatus, setProfileStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -134,11 +131,16 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
   // Sync profile data into form inputs
   useEffect(() => {
     if (customerProfile || currentUser) {
+      const normDiv = normalizeDivisionName(customerProfile?.division);
+      const divDistricts = BD_DISTRICTS_BY_DIVISION[normDiv] || BD_DISTRICTS_BY_DIVISION.Dhaka;
+      const savedDist = normalizeDistrictName(customerProfile?.district || customerProfile?.city || '');
+      const resolvedDist = divDistricts.includes(savedDist) ? savedDist : divDistricts[0];
       setProfileName(customerProfile?.name || currentUser?.displayName || '');
       setProfilePhone(customerProfile?.phone || '');
       setProfileAddress(customerProfile?.address || '');
-      setProfileDivision(customerProfile?.division || 'Dhaka');
-      setProfileDistrict(customerProfile?.district || customerProfile?.city || '');
+      setProfileDivision(normDiv);
+      setProfileDistrict(resolvedDist);
+      setProfileThana(customerProfile?.thana || '');
       setProfilePostalCode(customerProfile?.postalCode || '');
     }
   }, [customerProfile, currentUser]);
@@ -339,6 +341,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
         division: profileDivision,
         district: profileDistrict.trim(),
         city: profileDistrict.trim(),
+        thana: profileThana.trim(),
         postalCode: profilePostalCode.trim()
       });
       setIsEditingPersonal(false);
@@ -1369,9 +1372,15 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                       <span className="text-neutral-600">Division: </span>
                       <span className="text-neutral-900">{profileDivision}</span>
                     </p>
+                    {profileThana && (
+                      <p>
+                        <span className="text-neutral-600">Thana: </span>
+                        <span className="text-neutral-900">{profileThana}</span>
+                      </p>
+                    )}
                     {profilePostalCode && (
                       <p>
-                        <span className="text-neutral-600">Postal Code: </span>
+                        <span className="text-neutral-600">Post Code: </span>
                         <span className="text-neutral-900">{profilePostalCode}</span>
                       </p>
                     )}
@@ -1405,27 +1414,62 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                     placeholder="e.g. House 24, Road 7, Block B, Banani"
                   />
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FloatingSelect
                       label="Division"
                       value={profileDivision}
-                      onChange={(e) => setProfileDivision(e.target.value)}
+                      onChange={(e) => {
+                        const nextDiv = e.target.value;
+                        setProfileDivision(nextDiv);
+                        const divDistricts = BD_DISTRICTS_BY_DIVISION[nextDiv] || [];
+                        const nextDist = divDistricts[0] || nextDiv;
+                        setProfileDistrict(nextDist);
+                        const nextThanas = getThanasForDistrict(nextDist, nextDiv);
+                        setProfileThana((prev) => (nextThanas.includes(prev) ? prev : ''));
+                      }}
                     >
                       {BD_DIVISIONS.map((div) => (
                         <option key={div} value={div}>{div}</option>
                       ))}
                     </FloatingSelect>
 
-                    <FloatingInput
+                    <FloatingSelect
                       label="District / City"
-                      type="text"
                       value={profileDistrict}
-                      onChange={(e) => setProfileDistrict(e.target.value)}
-                      placeholder="e.g. Dhaka"
-                    />
+                      onChange={(e) => {
+                        const nextDist = e.target.value;
+                        setProfileDistrict(nextDist);
+                        const nextThanas = getThanasForDistrict(nextDist, profileDivision);
+                        setProfileThana((prev) => (nextThanas.includes(prev) ? prev : ''));
+                      }}
+                    >
+                      {(BD_DISTRICTS_BY_DIVISION[normalizeDivisionName(profileDivision)] || [profileDistrict]).map(
+                        (dist) => (
+                          <option key={dist} value={dist}>{dist}</option>
+                        )
+                      )}
+                    </FloatingSelect>
+
+                    <FloatingSelect
+                      label="Thana"
+                      value={profileThana}
+                      onChange={(e) => setProfileThana(e.target.value)}
+                    >
+                      <option value="">Select Thana / Upazila</option>
+                      {(() => {
+                        const list = getThanasForDistrict(profileDistrict, profileDivision);
+                        const opts =
+                          profileThana && !list.includes(profileThana)
+                            ? [profileThana, ...list]
+                            : list;
+                        return opts.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ));
+                      })()}
+                    </FloatingSelect>
 
                     <FloatingInput
-                      label="Postal Code"
+                      label="Post Code"
                       type="text"
                       value={profilePostalCode}
                       onChange={(e) => setProfilePostalCode(e.target.value)}

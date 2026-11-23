@@ -66,7 +66,7 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
           <div className="sm:text-right">
             <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Payment Method</span>
             <p className="text-xs font-bold text-neutral-900 uppercase">
-              {order ? (order.paymentMethod === 'cod' ? 'Cash on Delivery (COD)' : `${order.paymentMethod.toUpperCase()} Online Payment`) : 'Cash on Delivery (COD)'}
+              {order ? ((order.paymentMethod || 'cod') === 'cod' ? 'Cash on Delivery (COD)' : `${(order.paymentMethod || 'Online').toUpperCase()} Online Payment`) : 'Cash on Delivery (COD)'}
             </p>
             {order?.paymentDetails?.transactionId && (
               <p className="text-[11px] text-neutral-600 font-mono mt-0.5">
@@ -84,11 +84,11 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 <div>
                   <p className="font-bold">
                     {order.paymentMethod === 'cod' 
-                      ? `Advance Delivery Charge Paid (৳${order.deliveryCharge}) via ${order.paymentDetails?.advanceGateway?.toUpperCase() || 'MFS'}`
-                      : `Online Payment Submitted via ${order.paymentMethod.toUpperCase()}`}
+                      ? `Advance Delivery Charge Paid (৳${Number(order.deliveryCharge) || 0}) via ${order.paymentDetails?.advanceGateway?.toUpperCase() || 'MFS'}`
+                      : `Online Payment Submitted via ${(order.paymentMethod || 'Online').toUpperCase()}`}
                   </p>
                   <p className="text-[11px] text-emerald-700">
-                    Sender: <span className="font-mono">{order.paymentDetails?.senderNumber || order.customerPhone}</span> • TrxID: <span className="font-mono font-bold">{order.paymentDetails?.transactionId}</span>
+                    Sender: <span className="font-mono">{order.paymentDetails?.senderNumber || order.customerPhone || ''}</span> • TrxID: <span className="font-mono font-bold">{order.paymentDetails?.transactionId}</span>
                   </p>
                 </div>
                 <span className="text-[10px] font-bold uppercase px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded">
@@ -100,26 +100,26 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
             {/* Items summary */}
             <div className="space-y-3">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-900 block">
-                Ordered Items ({order.items.length})
+                Ordered Items ({(order.items || []).length})
               </span>
               <div className="divide-y divide-neutral-200">
-                {order.items.map((item, i) => (
+                {(order.items || []).map((item, i) => (
                   <div key={i} className="py-2.5 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-3">
                       <img
                         src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
-                        alt={item.productName}
+                        alt={item.productName || 'Item'}
                         className="w-12 h-12 aspect-square object-cover object-center rounded-md bg-white border border-neutral-200/80 shrink-0"
                       />
                       <div>
-                        <p className="font-semibold text-neutral-900">{item.productName}</p>
+                        <p className="font-semibold text-neutral-900">{item.productName || 'Item'}</p>
                         <p className="text-[11px] text-neutral-500">
-                          Size: {item.size} • Color: {item.color} • Qty: {item.quantity}
+                          Size: {item.size || 'Std'} • Color: {item.color || 'Default'} • Qty: {item.quantity || 1}
                         </p>
                       </div>
                     </div>
                     <span className="font-bold text-neutral-900">
-                      ৳{item.totalPrice.toLocaleString('en-BD')}
+                      ৳{(Number(item.totalPrice) || 0).toLocaleString('en-BD')}
                     </span>
                   </div>
                 ))}
@@ -132,19 +132,19 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 <span className="font-bold uppercase tracking-wider text-neutral-400 text-[10px] block">
                   Delivery Destination
                 </span>
-                <p className="font-semibold text-neutral-900">{order.customerName}</p>
-                <p>{order.shippingAddress.address}</p>
+                <p className="font-semibold text-neutral-900">{order.customerName || 'Customer'}</p>
+                <p>{order.shippingAddress?.address || ''}</p>
                 <p>
                   {[
-                    order.shippingAddress.thana || order.shippingAddress.upazila,
-                    order.shippingAddress.district,
-                    order.shippingAddress.division,
+                    order.shippingAddress?.thana || order.shippingAddress?.upazila,
+                    order.shippingAddress?.district,
+                    order.shippingAddress?.division,
                   ]
                     .filter(Boolean)
                     .join(', ')}
-                  {order.shippingAddress.postCode ? ` - ${order.shippingAddress.postCode}` : ''}
+                  {order.shippingAddress?.postCode ? ` - ${order.shippingAddress.postCode}` : ''}
                 </p>
-                <p className="text-neutral-700 font-medium">📞 {order.customerPhone}</p>
+                <p className="text-neutral-700 font-medium">📞 {order.customerPhone || ''}</p>
               </div>
 
               <div className="space-y-1.5 sm:text-right">
@@ -153,39 +153,39 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 </span>
                 <div className="flex justify-between sm:justify-end gap-4">
                   <span>Subtotal:</span>
-                  <span className="font-medium text-neutral-900">৳{order.subtotal.toLocaleString('en-BD')}</span>
+                  <span className="font-medium text-neutral-900">৳{(Number(order.subtotal) || 0).toLocaleString('en-BD')}</span>
                 </div>
-                {order.discount > 0 && (
+                {(Number(order.discount) || 0) > 0 && (
                   <div className="flex justify-between sm:justify-end gap-4 text-emerald-700">
                     <span>Coupon Discount:</span>
-                    <span className="font-medium">-৳{order.discount.toLocaleString('en-BD')}</span>
+                    <span className="font-medium">-৳{(Number(order.discount) || 0).toLocaleString('en-BD')}</span>
                   </div>
                 )}
-                {order.onlineDiscount && order.onlineDiscount > 0 ? (
+                {(Number(order.onlineDiscount) || 0) > 0 ? (
                   <div className="flex justify-between sm:justify-end gap-4 text-emerald-700 font-semibold">
                     <span>Online Prepayment Discount:</span>
-                    <span>-৳{order.onlineDiscount.toLocaleString('en-BD')}</span>
+                    <span>-৳{(Number(order.onlineDiscount) || 0).toLocaleString('en-BD')}</span>
                   </div>
                 ) : null}
                 <div className="flex justify-between sm:justify-end gap-4">
-                  <span>Delivery ({order.deliveryZone}):</span>
-                  <span className="font-medium text-neutral-900">৳{order.deliveryCharge.toLocaleString('en-BD')}</span>
+                  <span>Delivery ({order.deliveryZone || 'Standard'}):</span>
+                  <span className="font-medium text-neutral-900">৳{(Number(order.deliveryCharge) || 0).toLocaleString('en-BD')}</span>
                 </div>
                 {order.paymentMethod === 'cod' ? (
                   <>
                     <div className="flex justify-between sm:justify-end gap-4 text-emerald-700 font-semibold">
                       <span>Advance Delivery Fee:</span>
-                      <span>-৳{order.deliveryCharge.toLocaleString('en-BD')}</span>
+                      <span>-৳{(Number(order.deliveryCharge) || 0).toLocaleString('en-BD')}</span>
                     </div>
                     <div className="flex justify-between sm:justify-end gap-4 text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-200">
                       <span>Due on Delivery (Cash to Courier):</span>
-                      <span className="text-black font-extrabold">৳{(order.dueOnDelivery ?? Math.max(0, order.subtotal - order.discount)).toLocaleString('en-BD')}</span>
+                      <span className="text-black font-extrabold">৳{(Number(order.dueOnDelivery ?? Math.max(0, (Number(order.subtotal) || 0) - (Number(order.discount) || 0))) || 0).toLocaleString('en-BD')}</span>
                     </div>
                   </>
                 ) : (
                   <div className="flex justify-between sm:justify-end gap-4 text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-200">
                     <span>Total Paid in Full:</span>
-                    <span>৳{order.total.toLocaleString('en-BD')}</span>
+                    <span>৳{(Number(order.total) || 0).toLocaleString('en-BD')}</span>
                   </div>
                 )}
               </div>

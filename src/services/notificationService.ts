@@ -48,8 +48,9 @@ const rememberPublishedId = (id: string) => {
   if (typeof window === 'undefined') return;
   try {
     const raw = localStorage.getItem(LOCAL_PUBLISHED_IDS_KEY);
-    const prev: string[] = raw ? JSON.parse(raw) : [];
-    const next = [id, ...(Array.isArray(prev) ? prev.filter((x) => x !== id) : [])].slice(0, 60);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const prev: string[] = Array.isArray(parsed) ? parsed : [];
+    const next = [id, ...prev.filter((x) => x !== id)].slice(0, 60);
     localStorage.setItem(LOCAL_PUBLISHED_IDS_KEY, JSON.stringify(next));
   } catch {
     // ignore

@@ -59,9 +59,10 @@ export const saveLocalCustomer = (profile: CustomerProfile) => {
   if (!profile || !profile.uid) return;
   try {
     const raw = localStorage.getItem(LOCAL_CUSTOMERS_KEY);
-    const list: CustomerProfile[] = raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    const list: CustomerProfile[] = Array.isArray(parsed) ? parsed : [];
     const idx = list.findIndex(
-      (c) => c.uid === profile.uid || (c.email && c.email.toLowerCase() === profile.email?.toLowerCase())
+      (c) => c && (c.uid === profile.uid || (c.email && c.email.toLowerCase() === profile.email?.toLowerCase()))
     );
     if (idx >= 0) {
       list[idx] = { ...list[idx], ...profile };
@@ -81,7 +82,9 @@ const readStoredStaffSession = (): StaffAccount | null => {
     const raw = localStorage.getItem(STAFF_SESSION_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as StaffAccount;
-      if (parsed && parsed.id && parsed.active !== false) return parsed;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.id && parsed.active !== false) {
+        return parsed;
+      }
     }
   } catch {
     // ignore
@@ -429,9 +432,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const raw = localStorage.getItem(LOCAL_CUSTOMERS_KEY);
       if (raw) {
-        const list: CustomerProfile[] = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        const list: CustomerProfile[] = Array.isArray(parsed) ? parsed : [];
         const match = list.find(
           (c) =>
+            c &&
             c.email &&
             c.phone &&
             c.phone.replace(/[^\d]/g, '').replace(/^88/, '') === cleanPhone

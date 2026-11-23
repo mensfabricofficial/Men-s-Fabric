@@ -112,7 +112,10 @@ export const sizeGuideService = {
 
     try {
       const local = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (local) return JSON.parse(local);
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch {
       // ignore
     }

@@ -117,9 +117,9 @@ export const AdminPurchases: React.FC = () => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
-      p.purchaseNumber.toLowerCase().includes(q) ||
-      p.supplierName.toLowerCase().includes(q) ||
-      p.items.some((i) => i.productName.toLowerCase().includes(q))
+      (p.purchaseNumber || '').toLowerCase().includes(q) ||
+      (p.supplierName || '').toLowerCase().includes(q) ||
+      (p.items || []).some((i) => (i.productName || '').toLowerCase().includes(q))
     );
   });
 

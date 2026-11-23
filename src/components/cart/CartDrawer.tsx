@@ -48,7 +48,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
     try {
       const allCoupons = await settingsService.getCoupons();
       const match = allCoupons.find(
-        (c) => c.code.toUpperCase() === couponInput.trim().toUpperCase()
+        (c) => (c.code || '').toUpperCase() === couponInput.trim().toUpperCase()
       );
       if (!match) {
         setCouponError('Invalid coupon code.');
@@ -113,7 +113,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
               />
             ) : (
               items.map((item, idx) => {
-                const itemPrice = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : item.price;
+                const regPrice = Number(item.price) || 0;
+                const salePrice = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : 0;
+                const itemPrice = salePrice > 0 ? salePrice : regPrice;
+                const itemQty = Math.max(1, Number(item.quantity) || 1);
                 return (
                   <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-4 flex gap-4 first:pt-0">
                     <img
@@ -172,11 +175,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                         {/* Price */}
                         <div className="text-right">
                           <span className="text-xs font-bold text-neutral-900">
-                            ৳{(itemPrice * item.quantity).toLocaleString('en-BD')}
+                            ৳{(itemPrice * itemQty).toLocaleString('en-BD')}
                           </span>
-                          {item.salePrice && item.salePrice < item.price && (
+                          {salePrice > 0 && salePrice < regPrice && (
                             <span className="block text-[10px] text-neutral-400 line-through">
-                              ৳{(item.price * item.quantity).toLocaleString('en-BD')}
+                              ৳{(regPrice * itemQty).toLocaleString('en-BD')}
                             </span>
                           )}
                         </div>

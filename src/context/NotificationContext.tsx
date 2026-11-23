@@ -44,7 +44,13 @@ const STATUS_SNAPSHOT_KEY = 'selvee_order_status_snapshot_v1';
 const getStoredOrderSnapshots = (): Record<string, { orderStatus: OrderStatus; paymentStatus: PaymentStatus }> => {
   try {
     const raw = localStorage.getItem(STATUS_SNAPSHOT_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+      localStorage.removeItem(STATUS_SNAPSHOT_KEY);
+    }
   } catch {
     // ignore
   }

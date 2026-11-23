@@ -378,12 +378,12 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             {/* Price section with Red Discount Badge beside prices */}
             <div className="flex items-center flex-wrap gap-3 pt-1">
               <span className="text-2xl sm:text-3xl font-bold text-neutral-900 tabular-nums">
-                BDT {currentPrice.toLocaleString('en-BD')}
+                BDT {(Number(currentPrice) || 0).toLocaleString('en-BD')}
               </span>
               {isSale && (
                 <>
                   <span className="text-base text-neutral-400 line-through font-normal tabular-nums">
-                    BDT {product.price.toLocaleString('en-BD')}
+                    BDT {(Number(product.price) || 0).toLocaleString('en-BD')}
                   </span>
                   <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
                     -{discountPercent}% OFF
@@ -743,7 +743,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                         : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
                     }`}
                   >
-                    {guide.name.split(' ')[0]}
+                    {(guide.name || 'Size').split(' ')[0]}
                   </button>
                 ))}
               </div>

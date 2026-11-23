@@ -10,6 +10,7 @@ import { CartDrawer } from './components/cart/CartDrawer';
 import { OfflineIndicator } from './components/common/PWAInstallButton';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { BrandLogo } from './components/common/BrandLogo';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 import { HomePage } from './pages/HomePage';
 import { ShopPage } from './pages/ShopPage';
@@ -167,31 +168,33 @@ const AppContent: React.FC = () => {
           onSelectTab={handleSelectAdminTab}
           onNavigateHome={() => navigate('/')}
         >
-          {effectiveAdminTab === 'dashboard' && <AdminDashboard onNavigateTab={handleSelectAdminTab} />}
-          {effectiveAdminTab === 'pos' && <AdminPosTerminal />}
-          {(effectiveAdminTab === 'pipeline' ||
-            effectiveAdminTab === 'desk_order_verify' ||
-            effectiveAdminTab === 'desk_payment_verify' ||
-            effectiveAdminTab === 'desk_stock_packing' ||
-            effectiveAdminTab === 'desk_delivery_dispatch') && <AdminOrderPipeline />}
-          {effectiveAdminTab === 'sales_history' && <AdminSalesHistory />}
-          {effectiveAdminTab === 'returns' && <AdminReturns />}
-          {effectiveAdminTab === 'products' && <AdminProducts />}
-          {effectiveAdminTab === 'stock' && <AdminStock />}
-          {effectiveAdminTab === 'categories' && <AdminCategories />}
-          {effectiveAdminTab === 'purchases' && <AdminPurchases />}
-          {effectiveAdminTab === 'suppliers' && <AdminSuppliers />}
-          {effectiveAdminTab === 'expenses' && <AdminExpenses />}
-          {effectiveAdminTab === 'pnl' && <AdminProfitLoss onNavigateTab={handleSelectAdminTab} />}
-          {effectiveAdminTab === 'customers' && <AdminCustomers />}
-          {effectiveAdminTab === 'coupons' && <AdminCoupons />}
-          {effectiveAdminTab === 'delivery' && <AdminDelivery />}
-          {effectiveAdminTab === 'reviews' && <AdminReviews />}
-          {effectiveAdminTab === 'banners' && <AdminBanners />}
-          {effectiveAdminTab === 'notifications' && <AdminNotifications />}
-          {effectiveAdminTab === 'admins' && <AdminAdmins />}
-          {effectiveAdminTab === 'audit' && <AdminAudit />}
-          {effectiveAdminTab === 'settings' && <AdminSettings />}
+          <ErrorBoundary inline label="Admin Section" resetKeys={[effectiveAdminTab]}>
+            {effectiveAdminTab === 'dashboard' && <AdminDashboard onNavigateTab={handleSelectAdminTab} />}
+            {effectiveAdminTab === 'pos' && <AdminPosTerminal />}
+            {(effectiveAdminTab === 'pipeline' ||
+              effectiveAdminTab === 'desk_order_verify' ||
+              effectiveAdminTab === 'desk_payment_verify' ||
+              effectiveAdminTab === 'desk_stock_packing' ||
+              effectiveAdminTab === 'desk_delivery_dispatch') && <AdminOrderPipeline />}
+            {effectiveAdminTab === 'sales_history' && <AdminSalesHistory />}
+            {effectiveAdminTab === 'returns' && <AdminReturns />}
+            {effectiveAdminTab === 'products' && <AdminProducts />}
+            {effectiveAdminTab === 'stock' && <AdminStock />}
+            {effectiveAdminTab === 'categories' && <AdminCategories />}
+            {effectiveAdminTab === 'purchases' && <AdminPurchases />}
+            {effectiveAdminTab === 'suppliers' && <AdminSuppliers />}
+            {effectiveAdminTab === 'expenses' && <AdminExpenses />}
+            {effectiveAdminTab === 'pnl' && <AdminProfitLoss onNavigateTab={handleSelectAdminTab} />}
+            {effectiveAdminTab === 'customers' && <AdminCustomers />}
+            {effectiveAdminTab === 'coupons' && <AdminCoupons />}
+            {effectiveAdminTab === 'delivery' && <AdminDelivery />}
+            {effectiveAdminTab === 'reviews' && <AdminReviews />}
+            {effectiveAdminTab === 'banners' && <AdminBanners />}
+            {effectiveAdminTab === 'notifications' && <AdminNotifications />}
+            {effectiveAdminTab === 'admins' && <AdminAdmins />}
+            {effectiveAdminTab === 'audit' && <AdminAudit />}
+            {effectiveAdminTab === 'settings' && <AdminSettings />}
+          </ErrorBoundary>
         </AdminLayout>
       </AdminDeviceGate>
     );
@@ -285,7 +288,9 @@ const AppContent: React.FC = () => {
       <CartDrawer onNavigate={navigate} />
       <OfflineIndicator />
       <main className="flex-1">
-        {PageComponent}
+        <ErrorBoundary inline label="Page" resetKeys={[currentRoute]}>
+          {PageComponent}
+        </ErrorBoundary>
       </main>
       <Footer onNavigate={navigate} />
       <MobileBottomNav currentRoute={currentRoute} onNavigate={navigate} />
@@ -295,14 +300,18 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <CartProvider>
-        <WishlistProvider>
-          <NotificationProvider>
-            <AppContent />
-          </NotificationProvider>
-        </WishlistProvider>
-      </CartProvider>
-    </AuthProvider>
+    <ErrorBoundary label="Storefront">
+      <AuthProvider>
+        <CartProvider>
+          <WishlistProvider>
+            <NotificationProvider>
+              <ErrorBoundary label="Application">
+                <AppContent />
+              </ErrorBoundary>
+            </NotificationProvider>
+          </WishlistProvider>
+        </CartProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

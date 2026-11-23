@@ -19,10 +19,20 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [wishlistProducts, setWishlistProducts] = useState<Product[]>(() => {
     try {
       const saved = localStorage.getItem('mf_wishlist');
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((p): p is Product => Boolean(p && typeof p === 'object' && typeof p.id === 'string'));
+      }
+      localStorage.removeItem('mf_wishlist');
     } catch {
-      return [];
+      try {
+        localStorage.removeItem('mf_wishlist');
+      } catch {
+        // ignore
+      }
     }
+    return [];
   });
 
   const wishlistIds = wishlistProducts.map((p) => p.id);
@@ -35,7 +45,10 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const ref = doc(db, 'wishlists', currentUser.uid);
         const snap = await getDoc(ref);
         if (snap.exists()) {
-          const remoteList = (snap.data().products as Product[]) || [];
+          const rawRemote = snap.data()?.products;
+          const remoteList = Array.isArray(rawRemote)
+            ? rawRemote.filter((p): p is Product => Boolean(p && typeof p === 'object' && typeof p.id === 'string'))
+            : [];
           setWishlistProducts(remoteList);
         }
       } catch (err) {

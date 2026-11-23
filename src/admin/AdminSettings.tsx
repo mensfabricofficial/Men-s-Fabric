@@ -69,13 +69,7 @@ export const AdminSettings: React.FC = () => {
 
   // Cloud API & Firebase Credentials state
   const [apiCredentials, setApiCredentials] = useState(() => {
-    try {
-      const saved = localStorage.getItem('mf_custom_api_config');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return {
+    const defaults = {
       apiKey: firebaseConfig.apiKey || '',
       authDomain: firebaseConfig.authDomain || '',
       projectId: firebaseConfig.projectId || '',
@@ -85,6 +79,18 @@ export const AdminSettings: React.FC = () => {
       primaryAdminEmail: ADMIN_CONFIG.ADMIN_EMAIL,
       primaryAdminUid: ADMIN_CONFIG.PRIMARY_ADMIN_UID,
     };
+    try {
+      const saved = localStorage.getItem('mf_custom_api_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { ...defaults, ...parsed };
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return defaults;
   });
   const [apiSaving, setApiSaving] = useState(false);
   const [apiSuccess, setApiSuccess] = useState(false);

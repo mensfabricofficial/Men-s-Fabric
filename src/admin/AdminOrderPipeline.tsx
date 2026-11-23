@@ -721,7 +721,7 @@ export const AdminOrderPipeline: React.FC = () => {
                     const paymentLabel =
                       ord.paymentMethod === 'cod' && ord.paymentStatus !== 'paid'
                         ? 'PENDING (COD)'
-                        : ord.paymentStatus.toUpperCase();
+                        : (ord.paymentStatus || 'pending').toUpperCase();
 
                     const orderStatusColor =
                       st === 'completed'
@@ -1139,7 +1139,7 @@ export const AdminOrderPipeline: React.FC = () => {
                     <span className={selectedOrder.paymentStatus === 'paid' ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'}>
                       {wf.isCod && selectedOrder.paymentStatus !== 'paid'
                         ? 'Awaiting Cash Collection'
-                        : selectedOrder.paymentStatus.toUpperCase()}
+                        : (selectedOrder.paymentStatus || 'pending').toUpperCase()}
                     </span>
                   </div>
 

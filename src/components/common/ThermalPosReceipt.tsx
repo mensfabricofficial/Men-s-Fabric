@@ -151,16 +151,16 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
           <span>Subtotal:</span>
           <span>৳{(order.subtotal || 0).toLocaleString('en-BD')}</span>
         </div>
-        {order.discount > 0 && (
+        {(Number(order.discount) || 0) > 0 && (
           <div className="flex justify-between text-emerald-800">
             <span>Discount{order.couponCode ? ` (${order.couponCode})` : ''}:</span>
-            <span>-৳{order.discount.toLocaleString('en-BD')}</span>
+            <span>-৳{(Number(order.discount) || 0).toLocaleString('en-BD')}</span>
           </div>
         )}
-        {order.onlineDiscount && order.onlineDiscount > 0 ? (
+        {(Number(order.onlineDiscount) || 0) > 0 ? (
           <div className="flex justify-between text-emerald-800 font-bold">
             <span>Online Discount:</span>
-            <span>-৳{order.onlineDiscount.toLocaleString('en-BD')}</span>
+            <span>-৳{(Number(order.onlineDiscount) || 0).toLocaleString('en-BD')}</span>
           </div>
         ) : null}
         {isFinalSale ? (
@@ -188,13 +188,13 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
           </>
         ) : (
           <>
-            {(order.deliveryCharge > 0 || order.freeDeliveryApplied) && (
+            {(deliveryAmt > 0 || order.freeDeliveryApplied) && (
               <div className="flex justify-between">
                 <span>Delivery{order.deliveryZone ? ` (${order.deliveryZone})` : ''}:</span>
                 <span>
-                  {order.deliveryCharge === 0
+                  {deliveryAmt === 0
                     ? 'FREE (৳0)'
-                    : `+৳${order.deliveryCharge.toLocaleString('en-BD')}`}
+                    : `+৳${deliveryAmt.toLocaleString('en-BD')}`}
                 </span>
               </div>
             )}
@@ -207,12 +207,12 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
             {advancePaid && due > 0 && (
               <div className="flex justify-between text-emerald-800 font-bold">
                 <span>Adv. Delivery Paid ({order.advanceGateway?.toUpperCase() || 'MFS'}):</span>
-                <span>-৳{(order.advanceAmount || order.deliveryCharge).toLocaleString('en-BD')}</span>
+                <span>-৳{(Number(order.advanceAmount ?? deliveryAmt) || 0).toLocaleString('en-BD')}</span>
               </div>
             )}
             <div className="flex justify-between font-extrabold text-xs pt-1 border-t border-neutral-300">
               <span>GRAND TOTAL:</span>
-              <span>৳{(order.total || 0).toLocaleString('en-BD')}</span>
+              <span>৳{(Number(order.total) || 0).toLocaleString('en-BD')}</span>
             </div>
             <div className="flex justify-between font-bold text-emerald-800 pt-0.5">
               <span>PAID:</span>
@@ -237,8 +237,8 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
           <span className="font-extrabold uppercase">
             {order.paymentMethod === 'cod' && order.orderChannel === 'pos'
               ? 'CASH'
-              : order.paymentMethod}{' '}
-            ({order.paymentStatus.toUpperCase()})
+              : order.paymentMethod || 'cod'}{' '}
+            ({(order.paymentStatus || 'pending').toUpperCase()})
           </span>
         </div>
         {order.paymentDetails?.transactionId && (

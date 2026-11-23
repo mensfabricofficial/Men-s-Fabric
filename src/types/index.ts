@@ -19,12 +19,15 @@ export interface Product {
   name: string;
   slug: string;
   sku: string;
+  barcode?: string;
   description: string;
   shortDescription?: string;
   category: string;
   categoryName?: string;
   subcategory?: string;
   brand?: string;
+  supplierId?: string;
+  supplierName?: string;
   gender: 'men' | 'women' | 'unisex' | 'kids';
   fabric: string;
   images: string[];

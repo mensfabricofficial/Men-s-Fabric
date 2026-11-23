@@ -16,10 +16,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const { addItem } = useCart();
 
-  const isSale = typeof product.salePrice === 'number' && product.salePrice > 0 && product.salePrice < product.price;
-  const currentPrice = isSale ? product.salePrice! : product.price;
-  const discountPercent = isSale ? Math.round(((product.price - product.salePrice!) / product.price) * 100) : 0;
-  const isOutOfStock = product.totalStock <= 0;
+  const regularPrice = Math.max(0, Number(product.price) || 0);
+  const saleVal = typeof product.salePrice === 'number' && product.salePrice > 0 ? product.salePrice : 0;
+  const isSale = saleVal > 0 && saleVal < regularPrice;
+  const currentPrice = isSale ? saleVal : regularPrice;
+  const discountPercent = isSale && regularPrice > 0 ? Math.round(((regularPrice - saleVal) / regularPrice) * 100) : 0;
+  const isOutOfStock = (Number(product.totalStock) || 0) <= 0;
 
   const primaryImage = product.thumbnail || product.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
 
@@ -166,7 +168,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           {isSale && (
             <>
               <span className="text-[11px] sm:text-xs text-neutral-400 line-through font-normal">
-                BDT {product.price.toLocaleString('en-BD')}
+                BDT {regularPrice.toLocaleString('en-BD')}
               </span>
               <span className="text-[11px] sm:text-xs font-bold text-red-600">
                 -{discountPercent}%

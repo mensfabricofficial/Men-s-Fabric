@@ -393,17 +393,17 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'cu
             <span className="font-mono tabular-nums">৳{(order.subtotal || 0).toLocaleString('en-BD')}</span>
           </div>
 
-          {order.discount > 0 && (
+          {(Number(order.discount) || 0) > 0 && (
             <div className="flex justify-between text-emerald-700 font-medium">
               <span>Discount{order.couponCode ? ` (${order.couponCode})` : ''}</span>
-              <span className="font-mono tabular-nums">-৳{order.discount.toLocaleString('en-BD')}</span>
+              <span className="font-mono tabular-nums">-৳{(Number(order.discount) || 0).toLocaleString('en-BD')}</span>
             </div>
           )}
 
-          {order.onlineDiscount && order.onlineDiscount > 0 ? (
+          {(Number(order.onlineDiscount) || 0) > 0 ? (
             <div className="flex justify-between text-emerald-700 font-medium">
               <span>Online Prepayment Discount</span>
-              <span className="font-mono tabular-nums">-৳{order.onlineDiscount.toLocaleString('en-BD')}</span>
+              <span className="font-mono tabular-nums">-৳{(Number(order.onlineDiscount) || 0).toLocaleString('en-BD')}</span>
             </div>
           ) : null}
 

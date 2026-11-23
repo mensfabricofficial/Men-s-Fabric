@@ -189,7 +189,7 @@ export const getLocalSettings = (): SiteSettings => {
     const raw = localStorage.getItem(LOCAL_SETTINGS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return {
           ...defaultSettings,
           ...parsed,

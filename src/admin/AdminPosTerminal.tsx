@@ -240,10 +240,11 @@ export const AdminPosTerminal: React.FC = () => {
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       return (
-        p.name.toLowerCase().includes(q) ||
-        p.sku?.toLowerCase().includes(q) ||
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q) ||
+        (p.barcode || '').toLowerCase().includes(q) ||
         p.id.toLowerCase().includes(q) ||
-        p.fabric?.toLowerCase().includes(q)
+        (p.fabric || '').toLowerCase().includes(q)
       );
     }
     return true;
@@ -307,7 +308,9 @@ export const AdminPosTerminal: React.FC = () => {
     if (e.key !== 'Enter') return;
     const q = search.trim().toLowerCase();
     if (!q) return;
-    const exactSku = filteredProducts.find((p) => p.sku?.toLowerCase() === q);
+    const exactSku = filteredProducts.find(
+      (p) => p.sku?.toLowerCase() === q || p.barcode?.toLowerCase() === q
+    );
     if (exactSku) {
       e.preventDefault();
       handleProductTileClick(exactSku);

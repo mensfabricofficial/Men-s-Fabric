@@ -487,17 +487,17 @@ export const productService = {
         const lower = params.searchQuery.toLowerCase();
         filtered = filtered.filter(
           (p) =>
-            p.name.toLowerCase().includes(lower) ||
-            p.description?.toLowerCase().includes(lower) ||
-            p.sku?.toLowerCase().includes(lower) ||
-            p.tags?.some((t) => t.toLowerCase().includes(lower))
+            (p.name || '').toLowerCase().includes(lower) ||
+            (p.description || '').toLowerCase().includes(lower) ||
+            (p.sku || '').toLowerCase().includes(lower) ||
+            (p.tags || []).some((t) => (t || '').toLowerCase().includes(lower))
         );
       }
       if (params?.minPrice !== undefined) {
-        filtered = filtered.filter((p) => (p.salePrice || p.price) >= params.minPrice!);
+        filtered = filtered.filter((p) => (Number(p.salePrice) || Number(p.price) || 0) >= params.minPrice!);
       }
       if (params?.maxPrice !== undefined) {
-        filtered = filtered.filter((p) => (p.salePrice || p.price) <= params.maxPrice!);
+        filtered = filtered.filter((p) => (Number(p.salePrice) || Number(p.price) || 0) <= params.maxPrice!);
       }
 
       const limitNum = params?.limitCount || filtered.length;
@@ -629,9 +629,18 @@ export const productService = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      await setDoc(doc(db, 'products', newId), payload, { merge: true });
-      markPendingSyncId(newId, false);
-      lastFirestoreSyncStatus = { ok: true };
+      const writePromise = setDoc(doc(db, 'products', newId), payload, { merge: true })
+        .then(() => {
+          markPendingSyncId(newId, false);
+          lastFirestoreSyncStatus = { ok: true };
+        })
+        .catch((err) => {
+          console.warn('Background product write notice:', err);
+        });
+      await Promise.race([
+        writePromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 1800)),
+      ]);
     } catch (e: any) {
       console.warn('Remote product save notice (saved to local catalog):', e);
       lastFirestoreSyncStatus = {
@@ -676,8 +685,17 @@ export const productService = {
         ...(totalStock !== undefined ? { totalStock } : {}),
         updatedAt: serverTimestamp(),
       });
-      await setDoc(doc(db, 'products', id), payload, { merge: true });
-      lastFirestoreSyncStatus = { ok: true };
+      const writePromise = setDoc(doc(db, 'products', id), payload, { merge: true })
+        .then(() => {
+          lastFirestoreSyncStatus = { ok: true };
+        })
+        .catch((err) => {
+          console.warn('Background product update notice:', err);
+        });
+      await Promise.race([
+        writePromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 1800)),
+      ]);
     } catch (e: any) {
       console.warn('Remote product update notice (saved to local catalog):', e);
       lastFirestoreSyncStatus = {
@@ -1183,7 +1201,7 @@ export const productService = {
     this.saveLocalCategories([...current, newCat]);
 
     try {
-      await setDoc(
+      const writePromise = setDoc(
         doc(db, 'categories', newId),
         {
           ...cat,
@@ -1192,7 +1210,13 @@ export const productService = {
           updatedAt: serverTimestamp(),
         },
         { merge: true }
-      );
+      ).catch((e) => {
+        console.warn('Remote category save notice:', e);
+      });
+      await Promise.race([
+        writePromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 1800)),
+      ]);
     } catch (e) {
       console.warn('Remote category save notice:', e);
     }
@@ -1205,14 +1229,20 @@ export const productService = {
     this.saveLocalCategories(updated);
 
     try {
-      await setDoc(
+      const writePromise = setDoc(
         doc(db, 'categories', id),
         {
           ...cat,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
-      );
+      ).catch((e) => {
+        console.warn('Remote category update notice:', e);
+      });
+      await Promise.race([
+        writePromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 1800)),
+      ]);
     } catch (e) {
       console.warn('Remote category update notice:', e);
     }
@@ -1223,7 +1253,13 @@ export const productService = {
     this.saveLocalCategories(current.filter((c) => c.id !== id));
 
     try {
-      await deleteDoc(doc(db, 'categories', id));
+      const delPromise = deleteDoc(doc(db, 'categories', id)).catch((e) => {
+        console.warn('Remote category delete notice:', e);
+      });
+      await Promise.race([
+        delPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 1800)),
+      ]);
     } catch (e) {
       console.warn('Remote category delete notice:', e);
     }

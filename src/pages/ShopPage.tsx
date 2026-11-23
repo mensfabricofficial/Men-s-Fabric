@@ -104,21 +104,24 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
           if (!hasSize) return false;
         }
         // Stock
-        if (inStockOnly && product.totalStock <= 0) {
+        if (inStockOnly && (Number(product.totalStock) || 0) <= 0) {
           return false;
         }
         // Price Max
-        const price = typeof product.salePrice === 'number' && product.salePrice > 0 ? product.salePrice : product.price;
+        const price =
+          typeof product.salePrice === 'number' && product.salePrice > 0
+            ? product.salePrice
+            : Number(product.price) || 0;
         if (price > priceMax) {
           return false;
         }
         // Search query
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
-          const matchName = product.name.toLowerCase().includes(q);
-          const matchSku = product.sku?.toLowerCase().includes(q);
-          const matchFabric = product.fabric?.toLowerCase().includes(q);
-          const matchDesc = product.description?.toLowerCase().includes(q);
+          const matchName = (product.name || '').toLowerCase().includes(q);
+          const matchSku = (product.sku || '').toLowerCase().includes(q);
+          const matchFabric = (product.fabric || '').toLowerCase().includes(q);
+          const matchDesc = (product.description || '').toLowerCase().includes(q);
           if (!matchName && !matchSku && !matchFabric && !matchDesc) {
             return false;
           }
@@ -126,14 +129,21 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         return true;
       })
       .sort((a, b) => {
-        const priceA = a.salePrice || a.price;
-        const priceB = b.salePrice || b.price;
+        const priceA = Number(a.salePrice) || Number(a.price) || 0;
+        const priceB = Number(b.salePrice) || Number(b.price) || 0;
         if (sortBy === 'price-asc') return priceA - priceB;
         if (sortBy === 'price-desc') return priceB - priceA;
         if (sortBy === 'popular') return (b.bestSeller ? 1 : 0) - (a.bestSeller ? 1 : 0);
         // Default newest
-        return new Date(b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt || 0).getTime() -
-               new Date(a.createdAt?.toDate ? a.createdAt.toDate() : a.createdAt || 0).getTime();
+        const toMs = (val: any): number => {
+          if (!val) return 0;
+          if (typeof val?.toMillis === 'function') return val.toMillis();
+          if (typeof val?.toDate === 'function') return val.toDate().getTime() || 0;
+          if (typeof val?.seconds === 'number') return val.seconds * 1000;
+          const ms = new Date(val).getTime();
+          return isNaN(ms) ? 0 : ms;
+        };
+        return toMs(b.createdAt) - toMs(a.createdAt);
       });
   }, [allProducts, selectedCategory, selectedGender, selectedSize, inStockOnly, priceMax, searchQuery, sortBy, categories]);
 

@@ -146,13 +146,19 @@ export const adminDeviceService = {
 
   getCurrentDeviceId(): string {
     if (typeof window === 'undefined') return 'SERVER';
-    let id = localStorage.getItem(DEVICE_STORAGE_KEY);
-    if (!id) {
-      id = generateDeviceId();
-      localStorage.setItem(DEVICE_STORAGE_KEY, id);
-      window.dispatchEvent(new Event('selvee_admin_device_id_changed'));
+    try {
+      let id = localStorage.getItem(DEVICE_STORAGE_KEY);
+      if (!id) {
+        id = generateDeviceId();
+        localStorage.setItem(DEVICE_STORAGE_KEY, id);
+        queueMicrotask(() => {
+          window.dispatchEvent(new Event('selvee_admin_device_id_changed'));
+        });
+      }
+      return id;
+    } catch {
+      return generateDeviceId();
     }
-    return id;
   },
 
   getDeviceInfo() {

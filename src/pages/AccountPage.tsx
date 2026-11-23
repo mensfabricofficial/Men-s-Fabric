@@ -1256,7 +1256,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({ onNavigate }) => {
                                 {formatOrderDate(o.createdAt)}
                               </td>
                               <td className="py-4 px-3 text-neutral-900 font-medium whitespace-nowrap">
-                                ৳{o.total.toLocaleString('en-BD')}
+                                ৳{(Number(o.total) || 0).toLocaleString('en-BD')}
                               </td>
                               <td className={`py-4 px-3 font-semibold uppercase tracking-wide whitespace-nowrap ${paymentColor}`}>
                                 {o.paymentStatus}

@@ -538,7 +538,10 @@ export const posService = {
     writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
-      setDoc(doc(db, 'suppliers', id), sanitizeForFirestore(record), { merge: true }).catch(() => {}),
+      withTimeout(
+        setDoc(doc(db, 'suppliers', id), sanitizeForFirestore(record), { merge: true }).catch(() => {}),
+        2500
+      ),
     ]);
     return record;
   },
@@ -550,7 +553,7 @@ export const posService = {
     writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
-      deleteDoc(doc(db, 'suppliers', supplierId)).catch(() => {}),
+      withTimeout(deleteDoc(doc(db, 'suppliers', supplierId)).catch(() => {}), 2500),
     ]);
   },
 
@@ -572,7 +575,10 @@ export const posService = {
     writeBackupList(LOCAL_SUPPLIERS_KEY, next);
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ suppliers: next }), 2500),
-      setDoc(doc(db, 'suppliers', supplierId), sanitizeForFirestore(updated), { merge: true }).catch(() => {}),
+      withTimeout(
+        setDoc(doc(db, 'suppliers', supplierId), sanitizeForFirestore(updated), { merge: true }).catch(() => {}),
+        2500
+      ),
     ]);
     return updated;
   },

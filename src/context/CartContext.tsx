@@ -37,19 +37,42 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [items, setItems] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem('mf_cart');
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (it): it is CartItem =>
+            Boolean(it && typeof it === 'object' && typeof it.productId === 'string')
+        );
+      }
+      localStorage.removeItem('mf_cart');
     } catch {
-      return [];
+      try {
+        localStorage.removeItem('mf_cart');
+      } catch {
+        // ignore
+      }
     }
+    return [];
   });
 
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(() => {
     try {
       const saved = localStorage.getItem('mf_coupon');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.code === 'string') {
+        return parsed as Coupon;
+      }
+      localStorage.removeItem('mf_coupon');
     } catch {
-      return null;
+      try {
+        localStorage.removeItem('mf_coupon');
+      } catch {
+        // ignore
+      }
     }
+    return null;
   });
 
   const [coupons, setCoupons] = useState<Coupon[]>(() => settingsService.getInstantCoupons());
@@ -235,8 +258,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const subtotal = items.reduce((sum, item) => {
-    const itemPrice = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : item.price;
-    return sum + itemPrice * item.quantity;
+    const saleVal = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : 0;
+    const regVal = Number(item.price) || 0;
+    const itemPrice = saleVal > 0 ? saleVal : regVal;
+    const qty = Math.max(1, Number(item.quantity) || 1);
+    return sum + itemPrice * qty;
   }, 0);
 
   const userIdentity = {
@@ -301,10 +327,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAppliedCoupon(null);
   };
 
-  const baseDeliveryCharge = selectedZone ? selectedZone.charge : 70;
+  const baseDeliveryCharge = selectedZone ? Number(selectedZone.charge) || 0 : 70;
   const deliveryCharge = isFreeDelivery ? 0 : baseDeliveryCharge;
   const grandTotal = Math.max(0, subtotal - discount + deliveryCharge);
-  const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
+  const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
 
   return (
     <CartContext.Provider

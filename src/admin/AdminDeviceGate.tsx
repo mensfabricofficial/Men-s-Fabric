@@ -43,8 +43,15 @@ export const AdminDeviceGate: React.FC<AdminDeviceGateProps> = ({
   const [checkingDevice, setCheckingDevice] = useState(false);
   const [reRequestLoading, setReRequestLoading] = useState(false);
 
-  const deviceId = adminDeviceService.getCurrentDeviceId();
-  const deviceInfo = adminDeviceService.getDeviceInfo();
+  const [deviceId, setDeviceId] = useState<string>(() => adminDeviceService.getStoredDeviceId() || '');
+  const deviceInfo = React.useMemo(() => adminDeviceService.getDeviceInfo(), []);
+
+  useEffect(() => {
+    const resolved = adminDeviceService.getCurrentDeviceId();
+    if (resolved && resolved !== deviceId) {
+      setDeviceId(resolved);
+    }
+  }, [deviceId]);
 
   // Re-evaluate session key state if user changes
   useEffect(() => {
@@ -69,7 +76,7 @@ export const AdminDeviceGate: React.FC<AdminDeviceGateProps> = ({
 
   // Run device check + live Firestore listener once Access Key is verified
   useEffect(() => {
-    if (!keyVerified) return;
+    if (!keyVerified || !deviceId) return;
 
     verifyCurrentDevice();
 

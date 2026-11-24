@@ -753,7 +753,7 @@ export const AdminPosTerminal: React.FC = () => {
                           : 'border-neutral-200 hover:border-neutral-900 hover:shadow-sm'
                     }`}
                   >
-                    <div className="aspect-[4/3] bg-neutral-100 relative overflow-hidden">
+                    <div className="aspect-square bg-neutral-100 relative overflow-hidden">
                       <img
                         src={prod.thumbnail || prod.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                         alt={prod.name}

@@ -124,13 +124,13 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             </div>
 
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center space-x-7">
+            <nav className="hidden lg:flex items-center space-x-8">
               {navLinks.map((link) => (
                 <button
                   key={link.label}
                   onClick={() => onNavigate(link.href)}
-                  className={`text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer ${
-                    currentRoute === link.href ? 'text-black border-b-2 border-black pb-1' : 'text-neutral-600 hover:text-black'
+                  className={`text-[11px] uppercase tracking-[0.15em] transition-colors cursor-pointer ${
+                    currentRoute === link.href ? 'text-black font-bold' : 'text-neutral-500 font-medium hover:text-black'
                   }`}
                 >
                   {link.label}

@@ -160,7 +160,9 @@ export const AdminBanners: React.FC = () => {
           banners.map((b) => (
             <div key={b.id} className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs flex flex-col justify-between">
               <div className="relative aspect-[16/9] bg-neutral-900">
-                <img src={b.image} alt={b.title} className="w-full h-full object-cover opacity-60" />
+                {b.image && b.image.trim() ? (
+                  <img src={b.image.trim()} alt={b.title} className="w-full h-full object-cover opacity-60" />
+                ) : null}
                 <div className="absolute inset-0 p-4 flex flex-col justify-end text-white">
                   {b.badge && <span className="text-[10px] uppercase font-bold tracking-widest text-neutral-300">{b.badge}</span>}
                   <h3 className="text-lg font-bold uppercase">{b.title}</h3>

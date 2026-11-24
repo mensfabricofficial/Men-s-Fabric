@@ -605,6 +605,7 @@ export const posService = {
   },
 
   async addPurchase(params: {
+    purchaseNumber?: string;
     supplierId: string;
     supplierName: string;
     date: string;
@@ -612,15 +613,22 @@ export const posService = {
     paidAmount: number;
     paymentMethod: PurchaseEntry['paymentMethod'];
     syncStock: boolean;
+    status?: PurchaseEntry['status'];
+    origin?: PurchaseEntry['origin'];
     notes?: string;
     createdBy?: string;
   }): Promise<PurchaseEntry> {
     const nowIso = new Date().toISOString();
     const id = `pur_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const purchaseNumber = `PO-${Math.floor(10000 + Math.random() * 90000)}`;
+    const existingList = this.getLocalPurchases();
+    const nextNum = 2001 + existingList.length;
+    const purchaseNumber =
+      params.purchaseNumber?.trim() || `PUR-${nextNum}`;
     const totalAmount = params.items.reduce((sum, i) => sum + (Number(i.totalCost) || 0), 0);
     const paidAmount = Math.min(totalAmount, Math.max(0, Number(params.paidAmount) || 0));
     const dueAmount = Math.max(0, totalAmount - paidAmount);
+    const initialStatus: PurchaseEntry['status'] = params.status || 'pending_purchase';
+    const shouldPostLedgerNow = initialStatus === 'approved' || initialStatus === 'pending_stock';
 
     const entry: PurchaseEntry = {
       id,
@@ -633,20 +641,22 @@ export const posService = {
       paidAmount,
       dueAmount,
       paymentMethod: params.paymentMethod,
-      stockSynced: params.syncStock,
+      status: initialStatus,
+      origin: params.origin || 'manual_purchase',
+      ledgerPosted: shouldPostLedgerNow,
+      stockSynced: initialStatus === 'approved' && params.syncStock,
       notes: params.notes?.trim() || '',
       createdBy: params.createdBy || 'Admin',
       createdAt: nowIso,
     };
 
-    const nextPurchases = [entry, ...this.getLocalPurchases()];
+    const nextPurchases = [entry, ...existingList];
     livePurchases = nextPurchases;
     purchasesListeners.forEach((cb) => cb(nextPurchases));
     writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
 
-    // Update supplier balance if linked to a real supplier
     let nextSuppliers = this.getLocalSuppliers();
-    if (params.supplierId) {
+    if (shouldPostLedgerNow && params.supplierId) {
       nextSuppliers = nextSuppliers.map((s) =>
         s.id === params.supplierId
           ? {
@@ -663,23 +673,20 @@ export const posService = {
       writeBackupList(LOCAL_SUPPLIERS_KEY, nextSuppliers);
     }
 
-    // Optionally increment product stock & update costPrice for linked catalog items
-    if (params.syncStock) {
+    if (initialStatus === 'approved' && params.syncStock) {
       const localProducts = productService.getLocalProducts();
       for (const item of params.items) {
         if (!item.productId || item.quantity <= 0) continue;
         try {
-          const prodSnap = await getDoc(doc(db, 'products', item.productId)).catch(() => null);
-          const prodData = prodSnap && prodSnap.exists()
-            ? ({ id: prodSnap.id, ...prodSnap.data() } as Product)
-            : localProducts.find((p) => p.id === item.productId);
-
+          const prodData = localProducts.find((p) => p.id === item.productId);
           if (prodData) {
             const prevStock = Number(prodData.totalStock) || 0;
             const newTotalStock = prevStock + Number(item.quantity);
             await productService
               .updateProduct(item.productId, {
                 totalStock: newTotalStock,
+                approvalStatus: 'approved',
+                pendingStockQty: 0,
                 ...(item.unitCost > 0 ? { costPrice: Number(item.unitCost) } : {}),
               })
               .catch(() => {});
@@ -707,10 +714,231 @@ export const posService = {
 
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ purchases: nextPurchases, suppliers: nextSuppliers }), 2500),
-      setDoc(doc(db, 'purchases', id), sanitizeForFirestore(entry), { merge: true }).catch(() => {}),
+      withTimeout(setDoc(doc(db, 'purchases', id), sanitizeForFirestore(entry), { merge: true }).catch(() => {}), 2500),
     ]);
 
     return entry;
+  },
+
+  async approvePurchaseToStock(
+    purchaseId: string,
+    staffName: string,
+    patch?: {
+      quantity?: number;
+      unitCost?: number;
+      paidAmount?: number;
+      supplierId?: string;
+      supplierName?: string;
+    }
+  ): Promise<PurchaseEntry | null> {
+    const nowIso = new Date().toISOString();
+    const list = this.getLocalPurchases();
+    const target = list.find((p) => p.id === purchaseId);
+    if (!target) return null;
+
+    let updatedItems = target.items || [];
+    if (patch && updatedItems.length > 0 && (patch.quantity !== undefined || patch.unitCost !== undefined)) {
+      updatedItems = updatedItems.map((it, idx) => {
+        if (idx !== 0) return it;
+        const nextQty = patch.quantity !== undefined ? Math.max(0, Number(patch.quantity) || 0) : it.quantity;
+        const nextCost = patch.unitCost !== undefined ? Math.max(0, Number(patch.unitCost) || 0) : it.unitCost;
+        return {
+          ...it,
+          quantity: nextQty,
+          unitCost: nextCost,
+          totalCost: nextQty * nextCost,
+        };
+      });
+    }
+
+    const totalAmount = updatedItems.reduce((sum, i) => sum + (Number(i.totalCost) || 0), 0);
+    const rawPaid = patch?.paidAmount !== undefined ? Number(patch.paidAmount) || 0 : target.paidAmount;
+    const paidAmount = Math.min(totalAmount, Math.max(0, rawPaid));
+    const dueAmount = Math.max(0, totalAmount - paidAmount);
+    const resolvedSupplierId = patch?.supplierId !== undefined ? patch.supplierId : target.supplierId;
+    const resolvedSupplierName = patch?.supplierName !== undefined ? patch.supplierName : target.supplierName;
+
+    const updatedEntry: PurchaseEntry = {
+      ...target,
+      supplierId: resolvedSupplierId,
+      supplierName: resolvedSupplierName,
+      items: updatedItems,
+      totalAmount,
+      paidAmount,
+      dueAmount,
+      status: 'pending_stock',
+      ledgerPosted: true,
+      purchaseApprovedBy: staffName || 'Admin',
+      purchaseApprovedAt: nowIso,
+    };
+
+    const nextPurchases = list.map((p) => (p.id === purchaseId ? updatedEntry : p));
+    livePurchases = nextPurchases;
+    purchasesListeners.forEach((cb) => cb(nextPurchases));
+    writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
+
+    let nextSuppliers = this.getLocalSuppliers();
+    if (!target.ledgerPosted && resolvedSupplierId) {
+      nextSuppliers = nextSuppliers.map((s) =>
+        s.id === resolvedSupplierId
+          ? {
+              ...s,
+              totalPurchased: (s.totalPurchased || 0) + totalAmount,
+              totalPaid: (s.totalPaid || 0) + paidAmount,
+              dueAmount: (s.dueAmount || 0) + dueAmount,
+              updatedAt: nowIso,
+            }
+          : s
+      );
+      liveSuppliers = nextSuppliers;
+      suppliersListeners.forEach((cb) => cb(nextSuppliers));
+      writeBackupList(LOCAL_SUPPLIERS_KEY, nextSuppliers);
+    }
+
+    const localProducts = productService.getLocalProducts();
+    for (const item of updatedItems) {
+      if (!item.productId) continue;
+      const prodData = localProducts.find((p) => p.id === item.productId);
+      if (prodData && (prodData.approvalStatus === 'pending_purchase' || prodData.approvalStatus === 'rejected')) {
+        await productService
+          .updateProduct(item.productId, {
+            approvalStatus: 'pending_stock',
+            pendingStockQty: Number(item.quantity) || 0,
+            ...(item.unitCost > 0 ? { costPrice: Number(item.unitCost) } : {}),
+          })
+          .catch(() => {});
+      }
+    }
+
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ purchases: nextPurchases, suppliers: nextSuppliers }), 2500),
+      withTimeout(setDoc(doc(db, 'purchases', purchaseId), sanitizeForFirestore(updatedEntry), { merge: true }).catch(() => {}), 2500),
+    ]);
+
+    return updatedEntry;
+  },
+
+  async finalApprovePurchaseStock(purchaseId: string, staffName: string): Promise<PurchaseEntry | null> {
+    const nowIso = new Date().toISOString();
+    const list = this.getLocalPurchases();
+    const target = list.find((p) => p.id === purchaseId);
+    if (!target) return null;
+
+    const updatedEntry: PurchaseEntry = {
+      ...target,
+      status: 'approved',
+      stockSynced: true,
+      stockApprovedBy: staffName || 'Stock Admin',
+      stockApprovedAt: nowIso,
+    };
+
+    const nextPurchases = list.map((p) => (p.id === purchaseId ? updatedEntry : p));
+    livePurchases = nextPurchases;
+    purchasesListeners.forEach((cb) => cb(nextPurchases));
+    writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
+
+    const localProducts = productService.getLocalProducts();
+    for (const item of target.items || []) {
+      if (!item.productId) continue;
+      const prodData = localProducts.find((p) => p.id === item.productId);
+      if (!prodData) continue;
+      const qty = Math.max(0, Number(item.quantity) || 0);
+      const prevStock = Number(prodData.totalStock) || 0;
+      const newTotalStock = prevStock + qty;
+
+      await productService
+        .updateProduct(item.productId, {
+          totalStock: newTotalStock,
+          approvalStatus: 'approved',
+          pendingStockQty: 0,
+          ...(item.unitCost > 0 ? { costPrice: Number(item.unitCost) } : {}),
+        })
+        .catch(() => {});
+
+      if (qty > 0) {
+        await productService
+          .recordStockMovement({
+            productId: item.productId,
+            productName: item.productName || prodData.name,
+            sku: item.sku || prodData.sku || '',
+            previousStock: prevStock,
+            change: qty,
+            newStock: newTotalStock,
+            type: 'purchase',
+            reason: `Stock Final Approval — ${target.purchaseNumber} (${target.supplierName})`,
+            referenceId: target.purchaseNumber,
+            staffName: staffName || 'Stock Admin',
+            date: target.date,
+          })
+          .catch(() => {});
+      }
+    }
+
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ purchases: nextPurchases }), 2500),
+      withTimeout(setDoc(doc(db, 'purchases', purchaseId), sanitizeForFirestore(updatedEntry), { merge: true }).catch(() => {}), 2500),
+    ]);
+
+    return updatedEntry;
+  },
+
+  async rejectPurchaseEntry(purchaseId: string, staffName: string, reason?: string): Promise<PurchaseEntry | null> {
+    const nowIso = new Date().toISOString();
+    const list = this.getLocalPurchases();
+    const target = list.find((p) => p.id === purchaseId);
+    if (!target) return null;
+
+    const updatedEntry: PurchaseEntry = {
+      ...target,
+      status: 'rejected',
+      ledgerPosted: false,
+      stockSynced: false,
+      notes: reason?.trim() ? `${target.notes ? `${target.notes} | ` : ''}Rejected by ${staffName}: ${reason.trim()}` : target.notes,
+    };
+
+    const nextPurchases = list.map((p) => (p.id === purchaseId ? updatedEntry : p));
+    livePurchases = nextPurchases;
+    purchasesListeners.forEach((cb) => cb(nextPurchases));
+    writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
+
+    let nextSuppliers = this.getLocalSuppliers();
+    if (target.ledgerPosted && target.supplierId) {
+      nextSuppliers = nextSuppliers.map((s) =>
+        s.id === target.supplierId
+          ? {
+              ...s,
+              totalPurchased: Math.max(0, (s.totalPurchased || 0) - target.totalAmount),
+              totalPaid: Math.max(0, (s.totalPaid || 0) - target.paidAmount),
+              dueAmount: Math.max(0, (s.dueAmount || 0) - target.dueAmount),
+              updatedAt: nowIso,
+            }
+          : s
+      );
+      liveSuppliers = nextSuppliers;
+      suppliersListeners.forEach((cb) => cb(nextSuppliers));
+      writeBackupList(LOCAL_SUPPLIERS_KEY, nextSuppliers);
+    }
+
+    const localProducts = productService.getLocalProducts();
+    for (const item of target.items || []) {
+      if (!item.productId) continue;
+      const prodData = localProducts.find((p) => p.id === item.productId);
+      if (prodData && (prodData.approvalStatus === 'pending_purchase' || prodData.approvalStatus === 'pending_stock')) {
+        await productService
+          .updateProduct(item.productId, {
+            approvalStatus: 'rejected',
+            pendingStockQty: 0,
+          })
+          .catch(() => {});
+      }
+    }
+
+    await Promise.allSettled([
+      withTimeout(syncLedgerMirror({ purchases: nextPurchases, suppliers: nextSuppliers }), 2500),
+      withTimeout(setDoc(doc(db, 'purchases', purchaseId), sanitizeForFirestore(updatedEntry), { merge: true }).catch(() => {}), 2500),
+    ]);
+
+    return updatedEntry;
   },
 
   async deletePurchase(purchaseId: string): Promise<void> {
@@ -722,7 +950,12 @@ export const posService = {
     writeBackupList(LOCAL_PURCHASES_KEY, nextPurchases);
 
     let nextSuppliers = this.getLocalSuppliers();
-    if (target?.supplierId) {
+    const shouldReverseLedger =
+      target &&
+      target.supplierId &&
+      (target.ledgerPosted === true || (target.ledgerPosted === undefined && target.status !== 'pending_purchase' && target.status !== 'rejected'));
+
+    if (shouldReverseLedger && target) {
       nextSuppliers = nextSuppliers.map((s) =>
         s.id === target.supplierId
           ? {
@@ -741,7 +974,7 @@ export const posService = {
 
     await Promise.allSettled([
       withTimeout(syncLedgerMirror({ purchases: nextPurchases, suppliers: nextSuppliers }), 2500),
-      deleteDoc(doc(db, 'purchases', purchaseId)).catch(() => {}),
+      withTimeout(deleteDoc(doc(db, 'purchases', purchaseId)).catch(() => {}), 2500),
     ]);
   },
 

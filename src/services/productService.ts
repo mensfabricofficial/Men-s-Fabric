@@ -185,7 +185,13 @@ export const productService = {
   saveLocalProducts(list: Product[]) {
     persistProductsBackup(list);
     liveAllProducts = list;
-    const activeOnly = list.filter((p) => p.active !== false);
+    const activeOnly = list.filter(
+      (p) =>
+        p.active !== false &&
+        p.approvalStatus !== 'pending_purchase' &&
+        p.approvalStatus !== 'pending_stock' &&
+        p.approvalStatus !== 'rejected'
+    );
     liveActiveProducts = activeOnly;
     allProductListeners.forEach((cb) => cb(list));
     activeProductListeners.forEach((cb) => cb(activeOnly));
@@ -194,9 +200,26 @@ export const productService = {
     }
   },
 
-  // Synchronous instant accessors returning ONLY hydrated live memory (never stale localStorage)
+  // Synchronous instant accessors returning hydrated live memory or warm localStorage catalog (0ms load)
   getInstantActiveProducts(): Product[] | null {
-    return liveActiveProducts;
+    if (liveActiveProducts !== null) return liveActiveProducts;
+    try {
+      const hasBackup = typeof window !== 'undefined' && localStorage.getItem(LOCAL_PRODUCTS_KEY) !== null;
+      if (hasBackup) {
+        const local = this.getLocalProducts().filter(
+          (p) =>
+            p.active !== false &&
+            p.approvalStatus !== 'pending_purchase' &&
+            p.approvalStatus !== 'pending_stock' &&
+            p.approvalStatus !== 'rejected'
+        );
+        liveActiveProducts = local;
+        return local;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   },
 
   getInstantAllProducts(): Product[] {
@@ -204,7 +227,46 @@ export const productService = {
   },
 
   getInstantCategories(): Category[] | null {
-    return liveCategories;
+    if (liveCategories !== null) return liveCategories;
+    try {
+      const hasBackup = typeof window !== 'undefined' && localStorage.getItem(LOCAL_CATEGORIES_KEY) !== null;
+      if (hasBackup) {
+        const local = this.getLocalCategories();
+        liveCategories = local;
+        return local;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  },
+
+  getInstantProductById(idOrSlug: string): Product | null {
+    if (!idOrSlug) return null;
+    try {
+      const cleanParam = decodeURIComponent(idOrSlug).trim().replace(/^\/+|\/+$/g, '');
+      if (!cleanParam) return null;
+      const lowerParam = cleanParam.toLowerCase();
+      const cached = cachedProductsMap.get(cleanParam) || cachedProductsMap.get(lowerParam);
+      if (cached) return cached;
+      const localList = this.getLocalProducts();
+      const match = localList.find(
+        (p) =>
+          p.id === cleanParam ||
+          p.slug === cleanParam ||
+          (p.slug && p.slug.toLowerCase().trim() === lowerParam) ||
+          (p.sku && p.sku.toLowerCase().trim() === lowerParam) ||
+          p.name.toLowerCase().trim() === lowerParam ||
+          p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') === lowerParam
+      );
+      if (match) {
+        cacheProductRecord(match);
+        return match;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   },
 
   getInstantStockMovements(): StockMovementEntry[] {
@@ -213,15 +275,56 @@ export const productService = {
 
   ensureSharedActiveListener(onError?: (err: any) => void) {
     if (sharedActiveUnsub) return;
+    this.getInstantActiveProducts();
     try {
       const q = query(collection(db, 'products'), where('active', '==', true));
+      // Fast parallel getDocs burst for immediate cold boot before LongPolling stream settles
+      if (liveActiveProducts === null || liveActiveProducts.length === 0) {
+        getDocs(q)
+          .then((snap) => {
+            if (snap.empty) return;
+            const fastList: Product[] = [];
+            snap.forEach((d) => {
+              const data = d.data() as Product;
+              if (
+                data.active !== false &&
+                data.approvalStatus !== 'pending_purchase' &&
+                data.approvalStatus !== 'pending_stock' &&
+                data.approvalStatus !== 'rejected'
+              ) {
+                const prod = { ...data, id: d.id };
+                fastList.push(prod);
+                cacheProductRecord(prod);
+              }
+            });
+            if (fastList.length > 0) {
+              fastList.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+              liveActiveProducts = fastList;
+              if (liveAllProducts === null) {
+                persistProductsBackup(fastList);
+              }
+              activeProductListeners.forEach((cb) => cb(fastList));
+            }
+          })
+          .catch(() => {
+            // handled by onSnapshot fallback
+          });
+      }
       sharedActiveUnsub = onSnapshot(
         q,
         (snap) => {
+          if (snap.empty && snap.metadata.fromCache && liveActiveProducts && liveActiveProducts.length > 0) {
+            return;
+          }
           const remoteList: Product[] = [];
           snap.forEach((d) => {
             const data = d.data() as Product;
-            if (data.active !== false) {
+            if (
+              data.active !== false &&
+              data.approvalStatus !== 'pending_purchase' &&
+              data.approvalStatus !== 'pending_stock' &&
+              data.approvalStatus !== 'rejected'
+            ) {
               const prod = { ...data, id: d.id };
               remoteList.push(prod);
               cacheProductRecord(prod);
@@ -234,7 +337,14 @@ export const productService = {
           remoteList.forEach((p) => map.set(p.id, p));
           if (pendingIds.size > 0 && liveAllProducts) {
             liveAllProducts
-              .filter((p) => p.active !== false && pendingIds.has(p.id))
+              .filter(
+                (p) =>
+                  p.active !== false &&
+                  p.approvalStatus !== 'pending_purchase' &&
+                  p.approvalStatus !== 'pending_stock' &&
+                  p.approvalStatus !== 'rejected' &&
+                  pendingIds.has(p.id)
+              )
               .forEach((p) => {
                 if (!map.has(p.id)) map.set(p.id, p);
               });
@@ -242,6 +352,10 @@ export const productService = {
 
           const merged = Array.from(map.values());
           merged.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+
+          if (merged.length === 0 && snap.metadata.fromCache && liveActiveProducts && liveActiveProducts.length > 0) {
+            return;
+          }
 
           liveActiveProducts = merged;
           if (liveAllProducts === null) {
@@ -252,7 +366,13 @@ export const productService = {
         (err) => {
           console.warn('Real-time active products remote notice:', err);
           if (liveActiveProducts === null) {
-            const fallback = this.getLocalProducts().filter((p) => p.active !== false);
+            const fallback = this.getLocalProducts().filter(
+              (p) =>
+                p.active !== false &&
+                p.approvalStatus !== 'pending_purchase' &&
+                p.approvalStatus !== 'pending_stock' &&
+                p.approvalStatus !== 'rejected'
+            );
             liveActiveProducts = fallback;
             activeProductListeners.forEach((cb) => cb(fallback));
           }
@@ -293,7 +413,13 @@ export const productService = {
           merged.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
 
           liveAllProducts = merged;
-          liveActiveProducts = merged.filter((p) => p.active !== false);
+          liveActiveProducts = merged.filter(
+            (p) =>
+              p.active !== false &&
+              p.approvalStatus !== 'pending_purchase' &&
+              p.approvalStatus !== 'pending_stock' &&
+              p.approvalStatus !== 'rejected'
+          );
           persistProductsBackup(merged);
           allProductListeners.forEach((cb) => cb(merged));
           activeProductListeners.forEach((cb) => cb(liveActiveProducts!));
@@ -317,6 +443,21 @@ export const productService = {
     if (sharedCategoriesUnsub) return;
     try {
       const q = query(collection(db, 'categories'), orderBy('sortOrder', 'asc'));
+      if (liveCategories === null) {
+        getDocs(q)
+          .then((snap) => {
+            if (liveCategories !== null) return;
+            const list: Category[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Category));
+            liveCategories = list;
+            safeSetLocalStorage(LOCAL_CATEGORIES_KEY, list, {
+              stripInlineData: true,
+              maxChars: 200_000,
+            });
+            categoryListeners.forEach((cb) => cb(list));
+          })
+          .catch(() => {});
+      }
       sharedCategoriesUnsub = onSnapshot(
         q,
         (snap) => {
@@ -360,7 +501,7 @@ export const productService = {
             if (liveActiveProducts === null) {
               callback([]);
             }
-          }, 4000)
+          }, 1800)
         : null;
 
     return () => {
@@ -433,20 +574,31 @@ export const productService = {
         const list: Product[] = [];
         snap.forEach((d) => {
           const data = d.data() as Product;
-          list.push({ ...data, id: d.id });
+          if (
+            data.approvalStatus !== 'pending_purchase' &&
+            data.approvalStatus !== 'pending_stock' &&
+            data.approvalStatus !== 'rejected'
+          ) {
+            list.push({ ...data, id: d.id });
+          }
         });
         list.sort((a, b) => {
           const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
           const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
           return timeB - timeA;
         });
-        this.saveLocalProducts(list);
         return list;
       }
     } catch (err) {
       console.warn('Remote fetch active products notice, using persistent local store:', err);
     }
-    return this.getLocalProducts().filter((p) => p.active !== false);
+    return this.getLocalProducts().filter(
+      (p) =>
+        p.active !== false &&
+        p.approvalStatus !== 'pending_purchase' &&
+        p.approvalStatus !== 'pending_stock' &&
+        p.approvalStatus !== 'rejected'
+    );
   },
 
   // Get active products for customer shop & home with filters

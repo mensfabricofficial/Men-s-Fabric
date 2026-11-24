@@ -23,7 +23,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const discountPercent = isSale && regularPrice > 0 ? Math.round(((regularPrice - saleVal) / regularPrice) * 100) : 0;
   const isOutOfStock = (Number(product.totalStock) || 0) <= 0;
 
-  const primaryImage = product.thumbnail || product.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
+  const primaryImage =
+    (typeof product.thumbnail === 'string' && product.thumbnail.trim()) ||
+    (Array.isArray(product.images) ? product.images.find((u) => typeof u === 'string' && u.trim())?.trim() : '') ||
+    '/assets/aistudio/selvee1_8ff37f5b.jpg';
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
   const displaySku = product.sku || product.variants?.[0]?.sku || (product.id ? product.id.slice(0, 6).toUpperCase() : '277055');
@@ -68,8 +71,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       onClick={() => onNavigate(`/product/${product.id}`)}
       className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none"
     >
-      {/* Image container (No auto image swap on hover) */}
-      <div className="relative w-full aspect-square bg-neutral-100 overflow-hidden rounded-lg border border-neutral-200/70 group-hover:border-neutral-300 transition-colors duration-300">
+      {/* Image container (Square 1:1, No auto image swap on hover) */}
+      <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-md ring-1 ring-black/[0.04] group-hover:ring-black/15 transition-all duration-300">
         <img
           src={primaryImage}
           alt={product.name}
@@ -77,34 +80,28 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-[1.03] will-change-transform"
         />
 
-        {/* Badges on top-left: Discount % or Sold Out */}
-        <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
-          {isOutOfStock ? (
-            <span className="bg-neutral-900/90 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-wider uppercase">
+        {/* Out of stock badge only (no floating discount badge on image) */}
+        {isOutOfStock && (
+          <div className="absolute top-2.5 left-2.5 z-10">
+            <span className="bg-neutral-900/90 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded-sm tracking-wider uppercase">
               Sold Out
             </span>
-          ) : (
-            isSale && (
-              <span className="bg-red-600 text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
-                -{discountPercent}%
-              </span>
-            )
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Bottom-left Premium White Shopping Cart Icon Button */}
+        {/* Bottom-left Square Shopping Bag + Icon Button (matches reference) */}
         <button
           onClick={handleQuickAdd}
           disabled={isOutOfStock}
           aria-label="Add to cart"
           title={isOutOfStock ? 'Sold Out' : 'Quick Add to Cart'}
-          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 backdrop-blur-xs border border-neutral-200/90 shadow-xs flex items-center justify-center transition-all duration-200 z-10 ${
+          className={`absolute bottom-3 left-3 w-10 h-10 sm:w-11 sm:h-11 rounded-md bg-white/95 border border-neutral-200/80 flex items-center justify-center transition-all duration-200 shadow-xs z-10 ${
             isOutOfStock
               ? 'opacity-40 cursor-not-allowed text-neutral-400'
-              : 'text-neutral-800 hover:bg-black hover:text-white hover:border-black active:scale-95 cursor-pointer'
+              : 'text-neutral-900 hover:bg-black hover:text-white hover:border-black active:scale-95 cursor-pointer'
           }`}
         >
-          <ShoppingBag className="w-4 h-4" />
+          <ShoppingBag className="w-[18px] h-[18px]" />
         </button>
 
         {/* Quick View Button on hover bottom-right */}
@@ -115,21 +112,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               onQuickView(product);
             }}
             title="Quick view"
-            className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-md bg-white/95 backdrop-blur-xs text-neutral-800 hover:text-black hover:bg-white border border-neutral-200/90 flex items-center justify-center shadow-xs opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 cursor-pointer z-10"
+            className="absolute bottom-3 right-3 w-10 h-10 sm:w-11 sm:h-11 rounded-md bg-white/95 text-neutral-900 hover:bg-black hover:text-white border border-neutral-200/80 flex items-center justify-center opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 shadow-xs cursor-pointer z-10"
           >
-            <Eye className="w-3.5 h-3.5" />
+            <Eye className="w-4 h-4" />
           </button>
         )}
       </div>
 
       {/* Info container */}
-      <div className="pt-3 pb-2 flex flex-col space-y-1">
+      <div className="pt-3.5 pb-2 flex flex-col space-y-1.5">
         {/* Row 1: Title on Left, Product Code on Right */}
         <div className="flex items-baseline justify-between gap-2">
-          <h4 className="text-[13px] sm:text-sm font-semibold text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1">
+          <h4 className="text-[13px] sm:text-sm font-medium text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1 tracking-[-0.01em]">
             {product.name}
           </h4>
-          <span className="text-[11px] sm:text-xs font-mono tabular-nums text-neutral-500 shrink-0">
+          <span className="text-[11px] font-mono tabular-nums text-neutral-400 shrink-0">
             {displaySku}
           </span>
         </div>

@@ -60,7 +60,7 @@ export const printElementById = (
               color: #000000 !important;
               margin: 0 !important;
               padding: 0 !important;
-              font-family: ${isThermal ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'};
+              font-family: ${isThermal ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : '"Satoshi", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'};
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }

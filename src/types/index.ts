@@ -41,6 +41,8 @@ export interface Product {
   totalStock: number;
   minStock?: number;
   damagedStock?: number;
+  approvalStatus?: 'pending_purchase' | 'pending_stock' | 'approved' | 'rejected';
+  pendingStockQty?: number;
   weight?: string;
   tags?: string[];
   featured: boolean;
@@ -637,6 +639,13 @@ export interface PurchaseEntry {
   paidAmount: number;
   dueAmount: number;
   paymentMethod: 'cash' | 'bank' | 'bkash' | 'nagad' | 'credit';
+  status?: 'pending_purchase' | 'pending_stock' | 'approved' | 'rejected';
+  origin?: 'product_add' | 'manual_purchase';
+  ledgerPosted?: boolean;
+  purchaseApprovedBy?: string;
+  purchaseApprovedAt?: string;
+  stockApprovedBy?: string;
+  stockApprovedAt?: string;
   stockSynced?: boolean;
   notes?: string;
   createdBy?: string;

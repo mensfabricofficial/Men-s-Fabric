@@ -1,6 +1,10 @@
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { productService } from './services/productService';
+
+productService.ensureSharedActiveListener();
+productService.ensureSharedCategoriesListener();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker

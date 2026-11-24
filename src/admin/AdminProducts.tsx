@@ -33,7 +33,7 @@ import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { posService } from '../services/posService';
 import { useAuth } from '../context/AuthContext';
-import { computeStockAudit } from '../lib/accountingUtils';
+import { computeStockAudit, getLocalDateKey } from '../lib/accountingUtils';
 import { formatDateTime } from '../lib/dateFormat';
 import { AdminPageHeader } from './AdminLayout';
 
@@ -280,7 +280,11 @@ export const AdminProducts: React.FC = () => {
     setColors(prod.colors || []);
     setColorsInput((prod.colors || []).map((c) => c.name).join(', '));
     setVariants(prod.variants || []);
-    setTotalStock(prod.totalStock || 0);
+    setTotalStock(
+      prod.approvalStatus === 'pending_purchase' || prod.approvalStatus === 'pending_stock'
+        ? prod.pendingStockQty ?? prod.totalStock ?? 0
+        : prod.totalStock || 0
+    );
     setStockMode(prod.variants && prod.variants.length > 0 ? 'variants' : 'simple');
     setFeatured(Boolean(prod.featured));
     setNewArrival(Boolean(prod.newArrival));
@@ -447,7 +451,12 @@ export const AdminProducts: React.FC = () => {
 
     const cleanImages = images.length > 0 ? images : ['/assets/aistudio/selvee1_8ff37f5b.jpg'];
 
-    const productPayload = {
+    const requestedInitialStock =
+      variants.length > 0
+        ? variants.reduce((s, v) => s + (Number(v.stock) || 0), 0)
+        : Math.max(0, Number(totalStock) || 0);
+
+    const basePayload = {
       name: name.trim(),
       slug: autoSlug,
       sku: sku.trim().toUpperCase(),
@@ -469,10 +478,6 @@ export const AdminProducts: React.FC = () => {
       sizes: parsedSizes.length > 0 ? parsedSizes : ['Free Size'],
       colors: parsedColors,
       variants,
-      totalStock:
-        variants.length > 0
-          ? variants.reduce((s, v) => s + (Number(v.stock) || 0), 0)
-          : Math.max(0, Number(totalStock) || 0),
       tags: [gender, fabric, chosenCat?.name || ''].filter(Boolean),
       featured,
       newArrival,
@@ -482,13 +487,24 @@ export const AdminProducts: React.FC = () => {
 
     try {
       if (editingProduct) {
+        const isStillPendingApproval =
+          editingProduct.approvalStatus === 'pending_purchase' ||
+          editingProduct.approvalStatus === 'pending_stock';
+        const editPayload = {
+          ...basePayload,
+          totalStock: isStillPendingApproval
+            ? Math.max(0, Number(editingProduct.totalStock) || 0)
+            : requestedInitialStock,
+          pendingStockQty: isStillPendingApproval ? requestedInitialStock : editingProduct.pendingStockQty,
+          approvalStatus: editingProduct.approvalStatus || 'approved',
+        };
         const updatedItem: Product = {
           ...editingProduct,
-          ...productPayload,
+          ...editPayload,
           updatedAt: new Date().toISOString() as any,
         };
         setProducts((prev) => prev.map((p) => (p.id === editingProduct.id ? updatedItem : p)));
-        await productService.updateProduct(editingProduct.id, productPayload);
+        await productService.updateProduct(editingProduct.id, editPayload);
         if (currentUser) {
           try {
             await settingsService.logAdminAction(
@@ -504,14 +520,45 @@ export const AdminProducts: React.FC = () => {
         }
         setActionToast(`Product "${name}" updated successfully.`);
       } else {
-        const newId = await productService.createProduct(productPayload as any);
+        const newProductPayload = {
+          ...basePayload,
+          totalStock: 0,
+          pendingStockQty: requestedInitialStock,
+          approvalStatus: 'pending_purchase' as const,
+        };
+        const newId = await productService.createProduct(newProductPayload as any);
         const newItem: Product = {
-          ...productPayload,
+          ...newProductPayload,
           id: newId,
           createdAt: new Date().toISOString() as any,
           updatedAt: new Date().toISOString() as any,
         };
         setProducts((prev) => [newItem, ...prev.filter((p) => p.id !== newId)]);
+
+        const actor = staffProfile?.name || currentUser?.email || 'Admin';
+        await posService.addPurchase({
+          supplierId: matchedSupplier.id,
+          supplierName: matchedSupplier.name,
+          date: getLocalDateKey(),
+          items: [
+            {
+              productId: newId,
+              productName: name.trim(),
+              sku: sku.trim().toUpperCase(),
+              quantity: Math.max(1, requestedInitialStock || 0),
+              unitCost: numericCostPrice,
+              totalCost: Math.max(1, requestedInitialStock || 0) * numericCostPrice,
+            },
+          ],
+          paidAmount: 0,
+          paymentMethod: 'credit',
+          syncStock: false,
+          status: 'pending_purchase',
+          origin: 'product_add',
+          notes: `Auto-created from Products (${requestedInitialStock} pcs queued)`,
+          createdBy: actor,
+        });
+
         if (currentUser) {
           try {
             await settingsService.logAdminAction(
@@ -519,13 +566,13 @@ export const AdminProducts: React.FC = () => {
               currentUser.email || '',
               'CREATE_PRODUCT',
               newId,
-              `Created ${name}`
+              `Created ${name} (${requestedInitialStock} pcs sent to Purchases)`
             );
           } catch {
             // non-blocking
           }
         }
-        setActionToast(`Product "${name}" created successfully.`);
+        setActionToast(`Product "${name}" added and sent to Purchases for approval.`);
       }
 
       const syncStatus = productService.getLastSyncStatus();
@@ -536,7 +583,7 @@ export const AdminProducts: React.FC = () => {
       }
 
       setModalOpen(false);
-      setTimeout(() => setActionToast(null), 3500);
+      setTimeout(() => setActionToast(null), 3800);
     } catch (err: any) {
       console.warn('Product save notice:', err);
       setModalOpen(false);
@@ -1158,7 +1205,7 @@ service cloud.firestore {
                                 <img
                                   src={p.thumbnail || p.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                                   alt={p.name || 'Product'}
-                                  className="w-10 h-12 object-cover rounded border border-neutral-200 bg-neutral-50 shrink-0"
+                                  className="w-11 h-11 aspect-square object-cover rounded border border-neutral-200 bg-neutral-50 shrink-0"
                                 />
                                 <div className="min-w-0">
                                   <p className="font-semibold text-neutral-950 truncate max-w-[210px]">
@@ -1193,17 +1240,29 @@ service cloud.firestore {
 
                             <td className="py-3.5 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-2">
-                                <span className={`font-mono font-bold text-xs ${stockColor}`}>
-                                  {stockLabel}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenQuickStock(p)}
-                                  className="text-[11px] font-mono font-bold text-blue-600 hover:underline cursor-pointer"
-                                  title="Adjust stock or write off damaged units"
-                                >
-                                  Adjust
-                                </button>
+                                {p.approvalStatus === 'pending_purchase' ? (
+                                  <span className="font-mono font-bold text-xs text-amber-700">
+                                    QUEUED · {p.pendingStockQty ?? 0} PCS
+                                  </span>
+                                ) : p.approvalStatus === 'pending_stock' ? (
+                                  <span className="font-mono font-bold text-xs text-blue-700">
+                                    IN STOCK QUEUE · {p.pendingStockQty ?? 0} PCS
+                                  </span>
+                                ) : (
+                                  <span className={`font-mono font-bold text-xs ${stockColor}`}>
+                                    {stockLabel}
+                                  </span>
+                                )}
+                                {(!p.approvalStatus || p.approvalStatus === 'approved') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenQuickStock(p)}
+                                    className="text-[11px] font-mono font-bold text-blue-600 hover:underline cursor-pointer"
+                                    title="Adjust stock or write off damaged units"
+                                  >
+                                    Adjust
+                                  </button>
+                                )}
                               </div>
                               <span className="block text-[10px] font-mono text-neutral-400 mt-0.5">
                                 Min Alert: {threshold} pcs{(p.damagedStock || 0) > 0 ? ` · Damaged: ${p.damagedStock}` : ''}
@@ -1215,13 +1274,27 @@ service cloud.firestore {
                             </td>
 
                             <td className="py-3.5 px-3 whitespace-nowrap">
-                              <span
-                                className={`font-mono font-bold text-xs uppercase tracking-wide ${
-                                  p.active ? 'text-emerald-700' : 'text-neutral-400'
-                                }`}
-                              >
-                                {p.active ? 'Active' : 'Draft'}
-                              </span>
+                              {p.approvalStatus === 'pending_purchase' ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-amber-50 border border-amber-200 font-mono font-bold text-[10px] uppercase tracking-wide text-amber-700">
+                                  Pending Purchase
+                                </span>
+                              ) : p.approvalStatus === 'pending_stock' ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-blue-50 border border-blue-200 font-mono font-bold text-[10px] uppercase tracking-wide text-blue-700">
+                                  Pending Stock
+                                </span>
+                              ) : p.approvalStatus === 'rejected' ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-red-50 border border-red-200 font-mono font-bold text-[10px] uppercase tracking-wide text-red-700">
+                                  Rejected
+                                </span>
+                              ) : (
+                                <span
+                                  className={`font-mono font-bold text-xs uppercase tracking-wide ${
+                                    p.active ? 'text-emerald-700' : 'text-neutral-400'
+                                  }`}
+                                >
+                                  {p.active ? 'Active' : 'Draft'}
+                                </span>
+                              )}
                             </td>
 
                             <td
@@ -1346,10 +1419,26 @@ service cloud.firestore {
                 </div>
                 <span
                   className={`text-[11px] font-bold uppercase tracking-wide ${
-                    selectedProduct.active ? 'text-emerald-700' : 'text-neutral-500'
+                    selectedProduct.approvalStatus === 'pending_purchase'
+                      ? 'text-amber-700'
+                      : selectedProduct.approvalStatus === 'pending_stock'
+                      ? 'text-blue-700'
+                      : selectedProduct.approvalStatus === 'rejected'
+                      ? 'text-red-700'
+                      : selectedProduct.active
+                      ? 'text-emerald-700'
+                      : 'text-neutral-500'
                   }`}
                 >
-                  {selectedProduct.active ? 'ACTIVE IN STORE' : 'DRAFT (HIDDEN)'}
+                  {selectedProduct.approvalStatus === 'pending_purchase'
+                    ? 'PENDING PURCHASE APPROVAL'
+                    : selectedProduct.approvalStatus === 'pending_stock'
+                    ? 'PENDING STOCK APPROVAL'
+                    : selectedProduct.approvalStatus === 'rejected'
+                    ? 'REJECTED'
+                    : selectedProduct.active
+                    ? 'ACTIVE IN STORE'
+                    : 'DRAFT (HIDDEN)'}
                 </span>
               </div>
 
@@ -1366,17 +1455,18 @@ service cloud.firestore {
 
                   <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                     <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                      {(selectedProduct.images && selectedProduct.images.length > 0
-                        ? selectedProduct.images
-                        : [selectedProduct.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg']
-                      ).map((imgUrl, idx) => (
-                        <img
-                          key={idx}
-                          src={imgUrl}
-                          alt={`${selectedProduct.name} ${idx + 1}`}
-                          className="w-16 h-20 object-cover rounded border border-neutral-200 bg-neutral-50"
-                        />
-                      ))}
+                      {(() => {
+                        const imgs = (selectedProduct.images || []).map((u) => (typeof u === 'string' ? u.trim() : '')).filter(Boolean);
+                        const list = imgs.length > 0 ? imgs : [(typeof selectedProduct.thumbnail === 'string' ? selectedProduct.thumbnail.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg'];
+                        return list.map((imgUrl, idx) => (
+                          <img
+                            key={idx}
+                            src={imgUrl}
+                            alt={`${selectedProduct.name} ${idx + 1}`}
+                            className="w-16 h-16 aspect-square object-cover rounded border border-neutral-200 bg-neutral-50"
+                          />
+                        ));
+                      })()}
                     </div>
                     <div className="min-w-0 font-sans space-y-1.5 flex-1">
                       <p className="font-bold text-sm text-neutral-950">{selectedProduct.name}</p>
@@ -2040,12 +2130,12 @@ service cloud.firestore {
                         key={i}
                         onClick={() => handleSetPrimaryImage(i)}
                         title={i === 0 ? 'Primary Cover Photo' : 'Click to make Primary photo'}
-                        className={`relative w-20 h-24 rounded-lg overflow-hidden bg-neutral-50 group cursor-pointer border transition-colors ${
+                        className={`relative w-20 h-20 aspect-square rounded-lg overflow-hidden bg-neutral-50 group cursor-pointer border transition-colors ${
                           i === 0 ? 'border-black ring-1 ring-black/20' : 'border-neutral-200 hover:border-neutral-400'
                         }`}
                       >
                         <img
-                          src={img}
+                          src={(typeof img === 'string' ? img.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
                           alt={`Product ${i + 1}`}
                           referrerPolicy="no-referrer"
                           className="w-full h-full object-cover"
@@ -2219,23 +2309,30 @@ service cloud.firestore {
             </form>
 
             {/* Modal Footer Actions */}
-            <div className="px-6 py-4 border-t border-neutral-200 flex items-center justify-end gap-2.5 bg-neutral-50">
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="px-5 py-2.5 bg-neutral-500 hover:bg-neutral-600 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                form="productForm"
-                disabled={saving}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg disabled:bg-neutral-400 cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-xs"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>{saving ? 'Saving...' : editingProduct ? 'Update Product' : 'Save Product'}</span>
-              </button>
+            <div className="px-6 py-4 border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2.5 bg-neutral-50">
+              <span className="text-[11px] text-neutral-500">
+                {editingProduct
+                  ? 'Changes update catalog details immediately.'
+                  : 'New products go to Purchases first, then Stock Control for final approval.'}
+              </span>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-5 py-2.5 bg-neutral-500 hover:bg-neutral-600 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  form="productForm"
+                  disabled={saving}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg disabled:bg-neutral-400 cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{saving ? 'Saving...' : editingProduct ? 'Update Product' : 'Save Product'}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

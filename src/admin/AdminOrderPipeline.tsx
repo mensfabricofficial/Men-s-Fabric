@@ -945,10 +945,10 @@ export const AdminOrderPipeline: React.FC = () => {
                               <img
                                 src={thumbUrl}
                                 alt={item.productName}
-                                className="w-11 h-14 object-cover rounded border border-neutral-200 bg-neutral-50 shrink-0"
+                                className="w-12 h-12 aspect-square object-cover rounded border border-neutral-200 bg-neutral-50 shrink-0"
                               />
                             ) : (
-                              <div className="w-11 h-14 rounded border border-neutral-200 bg-neutral-50 flex items-center justify-center text-neutral-400 shrink-0">
+                              <div className="w-12 h-12 aspect-square rounded border border-neutral-200 bg-neutral-50 flex items-center justify-center text-neutral-400 shrink-0">
                                 <Package className="w-4 h-4" />
                               </div>
                             )}

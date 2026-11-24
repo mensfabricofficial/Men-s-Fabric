@@ -25,6 +25,7 @@ import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import { useAuth } from '../context/AuthContext';
 import { ProductGrid } from '../components/product/ProductGrid';
+import { ProductDetailsSkeleton } from '../components/common/SkeletonLoader';
 import { FloatingInput, FloatingTextarea } from '../components/common/FloatingInput';
 
 interface ProductDetailsPageProps {
@@ -40,11 +41,14 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const { isInWishlist, toggleWishlist } = useWishlist();
   const { currentUser } = useAuth();
 
-  const [product, setProduct] = useState<Product | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedImage, setSelectedImage] = useState<string>('');
-  const [selectedSize, setSelectedSize] = useState<string>('');
-  const [selectedColor, setSelectedColor] = useState<string>('');
+  const instantMatch = productService.getInstantProductById(productIdOrSlug);
+  const [product, setProduct] = useState<Product | null>(instantMatch);
+  const [loading, setLoading] = useState(!instantMatch);
+  const [selectedImage, setSelectedImage] = useState<string>(() =>
+    instantMatch ? (instantMatch.thumbnail || instantMatch.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg') : ''
+  );
+  const [selectedSize, setSelectedSize] = useState<string>(() => instantMatch?.sizes?.[0] || '');
+  const [selectedColor, setSelectedColor] = useState<string>(() => instantMatch?.colors?.[0]?.name || '');
   const [quantity, setQuantity] = useState(1);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -74,7 +78,16 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     let isMounted = true;
     let unsubLive: (() => void) | null = null;
     let unsubReviews: (() => void) | null = null;
-    setLoading(true);
+    const warmProd = productService.getInstantProductById(productIdOrSlug);
+    if (warmProd) {
+      setProduct(warmProd);
+      setSelectedImage(warmProd.thumbnail || warmProd.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg');
+      setSelectedSize(warmProd.sizes?.[0] || '');
+      setSelectedColor(warmProd.colors?.[0]?.name || '');
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setReviews([]);
 
     const initProduct = async () => {
@@ -164,19 +177,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   }, [productIdOrSlug]);
 
   if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 animate-pulse">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <div className="aspect-square bg-neutral-200 rounded-lg" />
-          <div className="space-y-4">
-            <div className="h-4 w-1/4 bg-neutral-200 rounded" />
-            <div className="h-8 w-3/4 bg-neutral-200 rounded" />
-            <div className="h-6 w-1/3 bg-neutral-200 rounded" />
-            <div className="h-24 bg-neutral-100 rounded" />
-          </div>
-        </div>
-      </div>
-    );
+    return <ProductDetailsSkeleton />;
   }
 
   if (!product) {
@@ -214,10 +215,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const isWishlisted = isInWishlist(product.id);
   const isOutOfStock = availableStock <= 0;
 
-  const galleryImages =
-    product.images && product.images.length > 0
-      ? product.images
-      : [product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg'];
+  const cleanProductImages = (product.images || [])
+    .map((u) => (typeof u === 'string' ? u.trim() : ''))
+    .filter(Boolean);
+  const fallbackThumb = (typeof product.thumbnail === 'string' ? product.thumbnail.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg';
+  const galleryImages = cleanProductImages.length > 0 ? cleanProductImages : [fallbackThumb];
   const foundImgIndex = galleryImages.indexOf(selectedImage);
   const activeImageIndex = foundImgIndex >= 0 ? foundImgIndex : 0;
 
@@ -303,15 +305,6 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               className="w-full h-full object-cover object-center transition-opacity duration-200"
             />
 
-            {/* Badges */}
-            {isSale && (
-              <div className="absolute top-4 left-4 z-10">
-                <span className="bg-red-600 text-white text-[11px] font-extrabold px-2.5 py-1 rounded tracking-wider uppercase shadow-xs">
-                  -{discountPercent}%
-                </span>
-              </div>
-            )}
-
             {/* Frosted Circular Carousel Navigation Arrows */}
             {galleryImages.length > 1 && (
               <>
@@ -335,31 +328,23 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             )}
           </div>
 
-          {/* Premium Counter & Outlined Pill Progress Bar */}
-          <div className="flex items-center justify-center gap-3.5 pt-1">
-            <span className="text-xs sm:text-[13px] font-medium tracking-wide text-neutral-900 tabular-nums">
-              {activeImageIndex + 1} / {galleryImages.length}
-            </span>
-            <div className="relative w-48 sm:w-60 h-[8px] rounded-full border border-neutral-800/80 bg-white overflow-hidden">
-              <div
-                className="h-full bg-neutral-950 rounded-full transition-all duration-300 ease-out"
-                style={{
-                  width: `${((activeImageIndex + 1) / galleryImages.length) * 100}%`,
-                }}
-              />
-              <div className="absolute inset-0 flex">
-                {galleryImages.map((img, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => setSelectedImage(img)}
-                    aria-label={`View image ${idx + 1}`}
-                    className="flex-1 h-full cursor-pointer"
-                  />
-                ))}
-              </div>
+          {galleryImages.length > 1 && (
+            <div className="flex items-center gap-2.5 overflow-x-auto pt-1">
+              {galleryImages.map((img, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setSelectedImage(img)}
+                  aria-label={`View image ${idx + 1}`}
+                  className={`w-16 h-16 aspect-square rounded-md overflow-hidden border shrink-0 cursor-pointer transition-all ${
+                    idx === activeImageIndex ? 'border-black ring-1 ring-black' : 'border-neutral-200 opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <img src={img || fallbackThumb} alt={`${product.name} ${idx + 1}`} className="w-full h-full object-cover" />
+                </button>
+              ))}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right: Product Actions & Specs */}

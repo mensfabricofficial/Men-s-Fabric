@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import { EmptyState } from '../common/EmptyState';
 import { FloatingInput } from '../common/FloatingInput';
 import { settingsService } from '../../services/settingsService';
+import { getProductUrlSlug } from '../../services/productService';
+import { ProgressiveImage } from '../common/ProgressiveImage';
 
 interface CartDrawerProps {
   onNavigate: (route: string) => void;
@@ -117,24 +119,35 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                 const salePrice = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : 0;
                 const itemPrice = salePrice > 0 ? salePrice : regPrice;
                 const itemQty = Math.max(1, Number(item.quantity) || 1);
+                const itemSlug = getProductUrlSlug({
+                  id: item.productId,
+                  name: item.productName,
+                  slug: item.productSlug,
+                  sku: item.sku,
+                });
                 return (
                   <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-4 flex gap-4 first:pt-0">
-                    <img
-                      src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
-                      alt={item.productName}
+                    <div
                       onClick={() => {
                         setIsCartDrawerOpen(false);
-                        onNavigate(`/product/${item.productId}`);
+                        onNavigate(`/product/${itemSlug}`);
                       }}
-                      className="w-20 h-20 aspect-square object-cover object-center rounded-md bg-neutral-100 shrink-0 border border-neutral-200/80 cursor-pointer hover:opacity-90 transition-opacity"
-                    />
+                      className="w-20 h-20 aspect-square rounded-md overflow-hidden bg-neutral-100 shrink-0 border border-neutral-200/80 cursor-pointer hover:opacity-90 transition-opacity"
+                    >
+                      <ProgressiveImage
+                        src={item.productImage}
+                        alt={item.productName}
+                        wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
+                        className="w-full h-full object-cover object-center"
+                      />
+                    </div>
                     <div className="flex-1 flex flex-col justify-between">
                       <div>
                         <div className="flex items-start justify-between gap-2">
                           <h4 
                             onClick={() => {
                               setIsCartDrawerOpen(false);
-                              onNavigate(`/product/${item.productId}`);
+                              onNavigate(`/product/${itemSlug}`);
                             }}
                             className="text-xs sm:text-sm font-semibold text-neutral-900 hover:underline cursor-pointer line-clamp-1"
                           >

@@ -18,7 +18,7 @@ import {
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Product, Review } from '../types';
-import { productService } from '../services/productService';
+import { productService, getProductUrlSlug } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { sizeGuideService, SizeGuideCategory, DEFAULT_SIZE_GUIDES } from '../services/sizeGuideService';
 import { useCart } from '../context/CartContext';
@@ -27,6 +27,7 @@ import { useAuth } from '../context/AuthContext';
 import { ProductGrid } from '../components/product/ProductGrid';
 import { ProductDetailsSkeleton } from '../components/common/SkeletonLoader';
 import { FloatingInput, FloatingTextarea } from '../components/common/FloatingInput';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 
 interface ProductDetailsPageProps {
   productIdOrSlug: string;
@@ -45,7 +46,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [product, setProduct] = useState<Product | null>(instantMatch);
   const [loading, setLoading] = useState(!instantMatch);
   const [selectedImage, setSelectedImage] = useState<string>(() =>
-    instantMatch ? (instantMatch.thumbnail || instantMatch.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg') : ''
+    instantMatch ? (instantMatch.thumbnail || instantMatch.images?.[0] || '') : ''
   );
   const [selectedSize, setSelectedSize] = useState<string>(() => instantMatch?.sizes?.[0] || '');
   const [selectedColor, setSelectedColor] = useState<string>(() => instantMatch?.colors?.[0]?.name || '');
@@ -81,7 +82,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     const warmProd = productService.getInstantProductById(productIdOrSlug);
     if (warmProd) {
       setProduct(warmProd);
-      setSelectedImage(warmProd.thumbnail || warmProd.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg');
+      setSelectedImage(warmProd.thumbnail || warmProd.images?.[0] || '');
       setSelectedSize(warmProd.sizes?.[0] || '');
       setSelectedColor(warmProd.colors?.[0]?.name || '');
       setLoading(false);
@@ -97,7 +98,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
         if (prod) {
           setProduct(prod);
-          const initialImg = prod.thumbnail || prod.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg';
+          const canonicalPath = `/product/${getProductUrlSlug(prod)}`;
+          if (typeof window !== 'undefined' && window.location.pathname !== canonicalPath) {
+            window.history.replaceState({}, '', canonicalPath);
+          }
+          const initialImg = prod.thumbnail || prod.images?.[0] || '';
           setSelectedImage(initialImg);
           
           // Default size & color selection
@@ -218,8 +223,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const cleanProductImages = (product.images || [])
     .map((u) => (typeof u === 'string' ? u.trim() : ''))
     .filter(Boolean);
-  const fallbackThumb = (typeof product.thumbnail === 'string' ? product.thumbnail.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg';
-  const galleryImages = cleanProductImages.length > 0 ? cleanProductImages : [fallbackThumb];
+  const fallbackThumb = typeof product.thumbnail === 'string' ? product.thumbnail.trim() : '';
+  const galleryImages = cleanProductImages.length > 0 ? cleanProductImages : fallbackThumb ? [fallbackThumb] : [];
   const foundImgIndex = galleryImages.indexOf(selectedImage);
   const activeImageIndex = foundImgIndex >= 0 ? foundImgIndex : 0;
 
@@ -238,8 +243,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     addItem({
       productId: product.id,
       productName: product.name,
-      productSlug: product.slug,
-      productImage: selectedImage || product.thumbnail || '/assets/aistudio/selvee1_8ff37f5b.jpg',
+      productSlug: getProductUrlSlug(product),
+      productImage: selectedImage || product.thumbnail || '',
       size: selectedSize || 'Standard',
       color: selectedColor || 'Standard',
       quantity,
@@ -280,10 +285,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   };
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12 py-8 sm:py-12">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
       
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-8">
+      <div className="flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-4 sm:mb-6">
         <button onClick={() => onNavigate('/')} className="hover:text-black cursor-pointer">Home</button>
         <span>/</span>
         <button onClick={() => onNavigate('/shop')} className="hover:text-black cursor-pointer">Shop</button>
@@ -292,82 +297,74 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       </div>
 
       {/* Main Details Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start mb-16">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-10 items-start mb-10 sm:mb-12">
         
-        {/* Left: Perfect-Sized Square Image Showcase + Frosted Arrows + Premium Gliding Progress Bar */}
-        <div className="lg:col-span-6 space-y-4">
+        {/* Left: Square Image Showcase + Smaller Arrows + 1 | N Counter Pill */}
+        <div className="lg:col-span-6">
           <div className="relative w-full aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200/80">
-            <img
-              src={galleryImages[activeImageIndex] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+            <ProgressiveImage
+              src={galleryImages[activeImageIndex] || ''}
               alt={product.name}
               decoding="async"
               fetchPriority="high"
-              className="w-full h-full object-cover object-center transition-opacity duration-200"
+              wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
+              className="w-full h-full object-cover object-center"
             />
 
-            {/* Frosted Circular Carousel Navigation Arrows */}
+            {/* Bottom-left Image Counter Pill (e.g. 1 | 4) */}
+            {galleryImages.length > 0 && (
+              <div className="absolute bottom-3 left-3 z-10 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/85 backdrop-blur-xs text-neutral-900 text-xs font-semibold border border-black/5 shadow-xs lining-nums tabular-nums select-none">
+                <span>{activeImageIndex + 1}</span>
+                <span className="text-neutral-400 font-normal">|</span>
+                <span>{galleryImages.length}</span>
+              </div>
+            )}
+
+            {/* Smaller Frosted Circular Carousel Navigation Arrows */}
             {galleryImages.length > 1 && (
               <>
                 <button
                   type="button"
                   onClick={handlePrevImage}
                   aria-label="Previous image"
-                  className="absolute left-4 top-1/2 -translate-y-1/2 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-neutral-900/25 hover:bg-neutral-900/45 border border-white/80 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-neutral-900/30 hover:bg-neutral-900/50 border border-white/75 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
                 >
-                  <ChevronLeft className="w-5 h-5" strokeWidth={1.8} />
+                  <ChevronLeft className="w-4 h-4" strokeWidth={1.8} />
                 </button>
                 <button
                   type="button"
                   onClick={handleNextImage}
                   aria-label="Next image"
-                  className="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-neutral-900/25 hover:bg-neutral-900/45 border border-white/80 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-neutral-900/30 hover:bg-neutral-900/50 border border-white/75 text-white backdrop-blur-xs shadow-xs flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer z-10"
                 >
-                  <ChevronRight className="w-5 h-5" strokeWidth={1.8} />
+                  <ChevronRight className="w-4 h-4" strokeWidth={1.8} />
                 </button>
               </>
             )}
           </div>
-
-          {galleryImages.length > 1 && (
-            <div className="flex items-center gap-2.5 overflow-x-auto pt-1">
-              {galleryImages.map((img, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setSelectedImage(img)}
-                  aria-label={`View image ${idx + 1}`}
-                  className={`w-16 h-16 aspect-square rounded-md overflow-hidden border shrink-0 cursor-pointer transition-all ${
-                    idx === activeImageIndex ? 'border-black ring-1 ring-black' : 'border-neutral-200 opacity-75 hover:opacity-100'
-                  }`}
-                >
-                  <img src={img || fallbackThumb} alt={`${product.name} ${idx + 1}`} className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Right: Product Actions & Specs */}
-        <div className="lg:col-span-6 flex flex-col justify-between space-y-6">
+        <div className="lg:col-span-6 flex flex-col justify-between space-y-4">
           
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-neutral-400 font-semibold tracking-wider uppercase">
               <span>{product.brand && !/men'?s\s*fabric/i.test(product.brand) ? product.brand : 'Selvee'}</span>
               <span>SKU: {currentSku}</span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-neutral-900 leading-tight">
+            <h1 className="text-xl sm:text-3xl font-extrabold text-neutral-900 leading-tight">
               {product.name}
             </h1>
 
             {/* Price section with Red Discount Badge beside prices */}
-            <div className="flex items-center flex-wrap gap-3 pt-1">
-              <span className="text-2xl sm:text-3xl font-bold text-neutral-900 tabular-nums">
+            <div className="flex items-center flex-wrap gap-3 lining-nums tabular-nums">
+              <span className="text-xl sm:text-3xl font-heading font-bold text-neutral-900">
                 BDT {(Number(currentPrice) || 0).toLocaleString('en-BD')}
               </span>
               {isSale && (
                 <>
-                  <span className="text-base text-neutral-400 line-through font-normal tabular-nums">
+                  <span className="text-sm sm:text-base text-neutral-400 line-through font-normal tabular-nums">
                     BDT {(Number(product.price) || 0).toLocaleString('en-BD')}
                   </span>
                   <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
@@ -378,7 +375,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             </div>
 
             {/* Stock indicator */}
-            <div className="pt-1">
+            <div>
               {isOutOfStock ? (
                 <div className="inline-flex items-center gap-1.5 text-xs font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded">
                   <AlertCircle className="w-3.5 h-3.5" />
@@ -398,8 +395,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
             {/* Color selection */}
             {product.colors && product.colors.length > 0 && (
-              <div className="pt-3">
-                <div className="flex items-center justify-between text-xs mb-2">
+              <div className="pt-1.5">
+                <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="font-bold uppercase tracking-wider text-neutral-700">
                     Color: <span className="font-normal text-neutral-900">{selectedColor}</span>
                   </span>
@@ -422,8 +419,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
             {/* Size selection */}
             {product.sizes && product.sizes.length > 0 && (
-              <div className="pt-3">
-                <div className="flex items-center justify-between text-xs mb-2">
+              <div className="pt-1.5">
+                <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="font-bold uppercase tracking-wider text-neutral-700">
                     Size: <span className="font-normal text-neutral-900">{selectedSize}</span>
                   </span>
@@ -453,8 +450,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             )}
 
             {/* Quantity Selector */}
-            <div className="pt-3">
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-2">
+            <div className="pt-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
                 Quantity
               </label>
               <div className="flex items-center border border-neutral-300 rounded-lg w-32 overflow-hidden bg-white">
@@ -476,7 +473,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             </div>
 
             {/* Main CTA Actions */}
-            <div className="flex flex-col gap-2.5 pt-4">
+            <div className="flex flex-col gap-2 pt-2">
               <div className="flex gap-2">
                 <button
                   onClick={() => handleAddToCart(false)}
@@ -499,7 +496,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             </div>
 
             {/* Shipping & Assurance Highlights */}
-            <div className="border-t border-neutral-200 pt-5 space-y-2.5 text-xs text-neutral-600">
+            <div className="border-t border-neutral-200 pt-4 space-y-2 text-xs text-neutral-600">
               <div className="flex items-center gap-2.5">
                 <Truck className="w-4 h-4 text-black shrink-0" />
                 {(() => {
@@ -528,7 +525,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       </div>
 
       {/* Unified Stacked Hairline Accordion (Mobile & Desktop) */}
-      <div className="mb-16 border-b border-neutral-200">
+      <div className="mb-10 sm:mb-12 border-b border-neutral-200">
         {[
           {
             id: 'desc' as const,
@@ -684,7 +681,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
       {/* Related Products Section */}
       {relatedProducts.length > 0 && (
-        <section className="border-t border-neutral-200 pt-12">
+        <section className="border-t border-neutral-200 pt-8 sm:pt-10">
           <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-neutral-900 mb-6">
             You May Also Like
           </h2>

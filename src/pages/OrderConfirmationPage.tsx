@@ -3,6 +3,7 @@ import { CheckCircle, Package, ArrowRight, Truck, Phone, MapPin, FileText, Print
 import { Order } from '../types';
 import { orderService } from '../services/orderService';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 
 interface OrderConfirmationPageProps {
   currentRoute: string;
@@ -106,10 +107,11 @@ export const OrderConfirmationPage: React.FC<OrderConfirmationPageProps> = ({
                 {(order.items || []).map((item, i) => (
                   <div key={i} className="py-2.5 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+                      <ProgressiveImage
+                        src={item.productImage}
                         alt={item.productName || 'Item'}
-                        className="w-12 h-12 aspect-square object-cover object-center rounded-md bg-white border border-neutral-200/80 shrink-0"
+                        wrapperClassName="relative w-12 h-12 aspect-square rounded-md overflow-hidden bg-neutral-100 border border-neutral-200/80 shrink-0"
+                        className="w-full h-full object-cover object-center"
                       />
                       <div>
                         <p className="font-semibold text-neutral-900">{item.productName || 'Item'}</p>

@@ -29,13 +29,14 @@ import {
   SalesTargetsConfig,
   Supplier,
 } from '../types';
-import { productService } from '../services/productService';
+import { productService, getProductUrlSlug } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { posService } from '../services/posService';
 import { useAuth } from '../context/AuthContext';
 import { computeStockAudit, getLocalDateKey } from '../lib/accountingUtils';
 import { formatDateTime } from '../lib/dateFormat';
 import { AdminPageHeader } from './AdminLayout';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 
 const COLOR_HEX_MAP: Record<string, string> = {
   black: '#111827',
@@ -444,12 +445,13 @@ export const AdminProducts: React.FC = () => {
 
     const autoSlug =
       slug.trim() ||
-      name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '');
+      getProductUrlSlug({
+        name: name.trim(),
+        sku: sku.trim().toUpperCase(),
+        variants,
+      });
 
-    const cleanImages = images.length > 0 ? images : ['/assets/aistudio/selvee1_8ff37f5b.jpg'];
+    const cleanImages = images.map((u) => (typeof u === 'string' ? u.trim() : '')).filter(Boolean);
 
     const requestedInitialStock =
       variants.length > 0
@@ -474,7 +476,7 @@ export const AdminProducts: React.FC = () => {
       costPrice: numericCostPrice > 0 ? numericCostPrice : undefined,
       minStock: minStock !== undefined && minStock > 0 ? Number(minStock) : 5,
       images: cleanImages,
-      thumbnail: cleanImages[0],
+      thumbnail: cleanImages[0] || '',
       sizes: parsedSizes.length > 0 ? parsedSizes : ['Free Size'],
       colors: parsedColors,
       variants,
@@ -1202,10 +1204,11 @@ service cloud.firestore {
 
                             <td className="py-3.5 px-3">
                               <div className="flex items-center gap-3">
-                                <img
-                                  src={p.thumbnail || p.images?.[0] || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+                                <ProgressiveImage
+                                  src={p.thumbnail || p.images?.[0]}
                                   alt={p.name || 'Product'}
-                                  className="w-11 h-11 aspect-square object-cover rounded border border-neutral-200 bg-neutral-50 shrink-0"
+                                  wrapperClassName="relative w-11 h-11 aspect-square rounded overflow-hidden border border-neutral-200 bg-neutral-50 shrink-0"
+                                  className="w-full h-full object-cover"
                                 />
                                 <div className="min-w-0">
                                   <p className="font-semibold text-neutral-950 truncate max-w-[210px]">
@@ -1457,13 +1460,15 @@ service cloud.firestore {
                     <div className="flex items-center gap-2 shrink-0 flex-wrap">
                       {(() => {
                         const imgs = (selectedProduct.images || []).map((u) => (typeof u === 'string' ? u.trim() : '')).filter(Boolean);
-                        const list = imgs.length > 0 ? imgs : [(typeof selectedProduct.thumbnail === 'string' ? selectedProduct.thumbnail.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg'];
+                        const thumb = typeof selectedProduct.thumbnail === 'string' ? selectedProduct.thumbnail.trim() : '';
+                        const list = imgs.length > 0 ? imgs : thumb ? [thumb] : [''];
                         return list.map((imgUrl, idx) => (
-                          <img
+                          <ProgressiveImage
                             key={idx}
                             src={imgUrl}
                             alt={`${selectedProduct.name} ${idx + 1}`}
-                            className="w-16 h-16 aspect-square object-cover rounded border border-neutral-200 bg-neutral-50"
+                            wrapperClassName="relative w-16 h-16 aspect-square rounded overflow-hidden border border-neutral-200 bg-neutral-50"
+                            className="w-full h-full object-cover"
                           />
                         ));
                       })()}
@@ -2134,10 +2139,11 @@ service cloud.firestore {
                           i === 0 ? 'border-black ring-1 ring-black/20' : 'border-neutral-200 hover:border-neutral-400'
                         }`}
                       >
-                        <img
-                          src={(typeof img === 'string' ? img.trim() : '') || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+                        <ProgressiveImage
+                          src={typeof img === 'string' ? img.trim() : ''}
                           alt={`Product ${i + 1}`}
                           referrerPolicy="no-referrer"
+                          wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-50"
                           className="w-full h-full object-cover"
                         />
                         <button

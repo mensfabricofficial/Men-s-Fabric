@@ -17,6 +17,7 @@ import { settingsService, defaultSettings } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { A4InvoiceModal } from '../components/common/A4InvoiceModal';
 import { FloatingInput } from '../components/common/FloatingInput';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 
 interface TrackOrderPageProps {
   currentRoute: string;
@@ -962,10 +963,11 @@ export const TrackOrderPage: React.FC<TrackOrderPageProps> = ({ currentRoute, on
                 {(order.items || []).map((item, i) => (
                   <div key={i} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-4 text-xs">
                     <div className="flex items-center gap-3.5 min-w-0">
-                      <img
-                        src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+                      <ProgressiveImage
+                        src={item.productImage}
                         alt={item.productName || 'Item'}
-                        className="w-12 h-12 aspect-square object-cover object-center rounded-md bg-neutral-50 border border-neutral-200/70 shrink-0"
+                        wrapperClassName="relative w-12 h-12 aspect-square rounded-md overflow-hidden bg-neutral-100 border border-neutral-200/70 shrink-0"
+                        className="w-full h-full object-cover object-center"
                       />
                       <div className="min-w-0">
                         <p className="font-medium text-neutral-900 truncate">{item.productName || 'Item'}</p>

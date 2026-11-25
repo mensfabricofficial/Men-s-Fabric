@@ -2,6 +2,8 @@ import React from 'react';
 import { ShoppingBag, Eye, ChevronUp } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
+import { getProductUrlSlug } from '../../services/productService';
+import { ProgressiveImage } from '../common/ProgressiveImage';
 
 interface ProductCardProps {
   product: Product;
@@ -26,7 +28,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const primaryImage =
     (typeof product.thumbnail === 'string' && product.thumbnail.trim()) ||
     (Array.isArray(product.images) ? product.images.find((u) => typeof u === 'string' && u.trim())?.trim() : '') ||
-    '/assets/aistudio/selvee1_8ff37f5b.jpg';
+    '';
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
   const displaySku = product.sku || product.variants?.[0]?.sku || (product.id ? product.id.slice(0, 6).toUpperCase() : '277055');
@@ -54,7 +56,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     addItem({
       productId: product.id,
       productName: product.name,
-      productSlug: product.slug,
+      productSlug: getProductUrlSlug(product),
       productImage: primaryImage,
       size: defaultSize,
       color: defaultColor,
@@ -68,16 +70,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <div
-      onClick={() => onNavigate(`/product/${product.id}`)}
+      onClick={() => onNavigate(`/product/${getProductUrlSlug(product)}`)}
       className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none"
     >
       {/* Image container (Square 1:1, No auto image swap on hover) */}
-      <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-md ring-1 ring-black/[0.04] group-hover:ring-black/15 transition-all duration-300">
-        <img
+      <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-lg border border-neutral-100 group-hover:border-neutral-200 transition-colors">
+        <ProgressiveImage
           src={primaryImage}
           alt={product.name}
           decoding="async"
-          className="w-full h-full object-cover object-center transition-transform duration-700 ease-out group-hover:scale-[1.03] will-change-transform"
+          wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
+          className="w-full h-full object-cover object-center transition-all duration-700 ease-out group-hover:scale-105 will-change-transform"
         />
 
         {/* Out of stock badge only (no floating discount badge on image) */}
@@ -89,19 +92,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
 
-        {/* Bottom-left Square Shopping Bag + Icon Button (matches reference) */}
+        {/* Bottom-left Cart Icon Button */}
         <button
           onClick={handleQuickAdd}
           disabled={isOutOfStock}
           aria-label="Add to cart"
           title={isOutOfStock ? 'Sold Out' : 'Quick Add to Cart'}
-          className={`absolute bottom-3 left-3 w-10 h-10 sm:w-11 sm:h-11 rounded-md bg-white/95 border border-neutral-200/80 flex items-center justify-center transition-all duration-200 shadow-xs z-10 ${
+          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 border border-neutral-200/80 flex items-center justify-center transition-all duration-200 shadow-xs z-10 ${
             isOutOfStock
               ? 'opacity-40 cursor-not-allowed text-neutral-400'
               : 'text-neutral-900 hover:bg-black hover:text-white hover:border-black active:scale-95 cursor-pointer'
           }`}
         >
-          <ShoppingBag className="w-[18px] h-[18px]" />
+          <ShoppingBag className="w-4 h-4" />
         </button>
 
         {/* Quick View Button on hover bottom-right */}
@@ -112,7 +115,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               onQuickView(product);
             }}
             title="Quick view"
-            className="absolute bottom-3 right-3 w-10 h-10 sm:w-11 sm:h-11 rounded-md bg-white/95 text-neutral-900 hover:bg-black hover:text-white border border-neutral-200/80 flex items-center justify-center opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 shadow-xs cursor-pointer z-10"
+            className="absolute bottom-2.5 right-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 text-neutral-900 hover:bg-black hover:text-white border border-neutral-200/80 flex items-center justify-center opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200 shadow-xs cursor-pointer z-10"
           >
             <Eye className="w-4 h-4" />
           </button>
@@ -120,13 +123,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Info container */}
-      <div className="pt-3.5 pb-2 flex flex-col space-y-1.5">
+      <div className="pt-3 pb-2 flex flex-col space-y-1">
         {/* Row 1: Title on Left, Product Code on Right */}
         <div className="flex items-baseline justify-between gap-2">
-          <h4 className="text-[13px] sm:text-sm font-medium text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1 tracking-[-0.01em]">
+          <h4 className="text-[13px] sm:text-sm font-heading font-bold text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1">
             {product.name}
           </h4>
-          <span className="text-[11px] font-mono tabular-nums text-neutral-400 shrink-0">
+          <span className="text-[11px] font-medium lining-nums tabular-nums text-neutral-400 shrink-0 tracking-wide">
             {displaySku}
           </span>
         </div>
@@ -157,8 +160,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
 
         {/* Row 3: Price line */}
-        <div className="flex items-baseline flex-wrap gap-2 pt-0.5 tabular-nums">
-          <span className="text-[13px] sm:text-sm font-bold text-neutral-900">
+        <div className="flex items-baseline flex-wrap gap-1.5 sm:gap-2 pt-0.5 lining-nums tabular-nums">
+          <span className="text-[13px] sm:text-sm font-heading font-bold text-neutral-900">
             BDT {currentPrice.toLocaleString('en-BD')}
           </span>
 
@@ -167,7 +170,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <span className="text-[11px] sm:text-xs text-neutral-400 line-through font-normal">
                 BDT {regularPrice.toLocaleString('en-BD')}
               </span>
-              <span className="text-[11px] sm:text-xs font-bold text-red-600">
+              <span className="text-[11px] sm:text-xs font-heading font-bold text-red-600">
                 -{discountPercent}%
               </span>
             </>

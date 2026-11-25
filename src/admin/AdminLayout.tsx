@@ -406,12 +406,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
       {/* Main Content Area */}
       <main
-        className={`flex-1 min-w-0 w-full relative transition-all duration-300 flex flex-col ${
+        className={`flex-1 min-w-0 w-full max-w-none relative transition-all duration-300 flex flex-col ${
           currentTab === 'pos'
-            ? 'p-4 sm:p-5 lg:px-6 lg:pt-5 lg:pb-4 lg:h-screen lg:overflow-hidden max-w-none'
-            : `p-4 sm:p-6 lg:p-8 overflow-y-auto mx-auto ${
-                desktopSidebarCollapsed ? 'max-w-[1600px]' : 'max-w-7xl'
-              }`
+            ? 'p-4 sm:p-5 lg:px-6 lg:pt-5 lg:pb-4 lg:h-screen lg:overflow-hidden'
+            : 'p-4 sm:p-6 lg:px-7 lg:py-6 overflow-y-auto'
         }`}
       >
         {/* Compact Desktop Top Utility Bar with Sidebar Slide Toggle, Active Page Header & Live Admin Alerts */}

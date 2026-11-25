@@ -30,13 +30,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   }, []);
 
   return (
-    <footer className="bg-[#09090b] text-white border-t border-neutral-800/80 pb-20 md:pb-0">
+    <footer className="bg-black text-white border-t border-neutral-800 pb-20 md:pb-0">
       {/* Trust Badges Bar */}
-      <div className="border-b border-neutral-800/80 py-9 px-4 sm:px-6 lg:px-8 2xl:px-12">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-md bg-white/[0.03] border border-neutral-800 flex items-center justify-center shrink-0">
-              <Truck className="w-4 h-4 text-neutral-300" strokeWidth={1.6} />
+      <div className="border-b border-neutral-800 py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+              <Truck className="w-4 h-4 text-neutral-300" />
             </div>
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-white">Nationwide Delivery</h4>
@@ -44,9 +44,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-md bg-white/[0.03] border border-neutral-800 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-4 h-4 text-neutral-300" strokeWidth={1.6} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4 text-neutral-300" />
             </div>
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-white">100% Premium Fabric</h4>
@@ -54,9 +54,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-md bg-white/[0.03] border border-neutral-800 flex items-center justify-center shrink-0">
-              <RotateCcw className="w-4 h-4 text-neutral-300" strokeWidth={1.6} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+              <RotateCcw className="w-4 h-4 text-neutral-300" />
             </div>
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-white">Easy 3-Day Exchange</h4>
@@ -64,9 +64,9 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-md bg-white/[0.03] border border-neutral-800 flex items-center justify-center shrink-0">
-              <CheckCircle className="w-4 h-4 text-neutral-300" strokeWidth={1.6} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+              <CheckCircle className="w-4 h-4 text-neutral-300" />
             </div>
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-white">Customer Support</h4>
@@ -77,7 +77,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
       </div>
 
       {/* Main Footer Links */}
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12 py-12 lg:py-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-10">
           
           {/* Brand Info & Official Logo */}

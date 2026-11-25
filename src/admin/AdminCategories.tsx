@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, FolderTree, X, AlertCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, FolderTree, X, AlertCircle, Upload } from 'lucide-react';
 import { Category } from '../types';
 import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { AdminPageHeader } from './AdminLayout';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 
 export const AdminCategories: React.FC = () => {
   const { currentUser } = useAuth();
@@ -23,6 +24,7 @@ export const AdminCategories: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<number>(1);
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -55,6 +57,22 @@ export const AdminCategories: React.FC = () => {
     setActive(cat.active !== false);
     setError('');
     setModalOpen(true);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      const url = await productService.uploadImage(file, 'categories');
+      setImage(url);
+    } catch {
+      setError('Image upload failed. Please try another file or paste an image URL.');
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -191,7 +209,12 @@ export const AdminCategories: React.FC = () => {
                   <td className="p-3.5">
                     <div className="flex items-center gap-3">
                       {c.image ? (
-                        <img src={c.image} alt={c.name} className="w-10 h-10 rounded object-cover bg-neutral-100" />
+                        <ProgressiveImage
+                          src={c.image}
+                          alt={c.name}
+                          wrapperClassName="relative w-10 h-10 rounded overflow-hidden bg-neutral-100 shrink-0"
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
                         <div className="w-10 h-10 rounded bg-neutral-900 text-white flex items-center justify-center font-bold">
                           {c.name.slice(0, 2).toUpperCase()}
@@ -277,14 +300,21 @@ export const AdminCategories: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-neutral-700 uppercase mb-1">Cover Image URL</label>
-                <input
-                  type="url"
-                  value={image}
-                  onChange={(e) => setImage(e.target.value)}
-                  placeholder="https://... image link"
-                  className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
-                />
+                <label className="block font-bold text-neutral-700 uppercase mb-1">Cover Image</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={image}
+                    onChange={(e) => setImage(e.target.value)}
+                    placeholder="https://... or upload high-res photo"
+                    className="flex-1 min-w-0 px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                  <label className="px-3 py-2 bg-neutral-200 hover:bg-neutral-300 rounded font-bold cursor-pointer flex items-center gap-1.5 shrink-0">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{uploading ? 'Uploading...' : 'Upload'}</span>
+                    <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

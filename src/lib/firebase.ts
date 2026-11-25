@@ -33,17 +33,17 @@ try {
   auth = getAuth(app);
   db = createFirestoreInstance(app);
   storage = getStorage(app);
-  // Cap max retry time to prevent hanging 120s on unconfigured or offline buckets
-  storage.maxUploadRetryTime = 5000;
-  storage.maxOperationRetryTime = 5000;
+  // Allow larger multi-MB studio uploads to progress; uploadImage stallTimer aborts stalled buckets within 7s
+  storage.maxUploadRetryTime = 60000;
+  storage.maxOperationRetryTime = 30000;
 } catch (error) {
   console.error('Firebase initialization failed:', error);
   app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = createFirestoreInstance(app);
   storage = getStorage(app);
-  storage.maxUploadRetryTime = 5000;
-  storage.maxOperationRetryTime = 5000;
+  storage.maxUploadRetryTime = 60000;
+  storage.maxOperationRetryTime = 30000;
 }
 
 export { app, auth, db, storage };

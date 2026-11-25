@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-neutral-200/80 shadow-[0_1px_12px_rgba(0,0,0,0.03)]">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-neutral-200 shadow-xs">
         {/* Announcement Bar */}
         {announcementActive && (
           <div className="bg-black text-white text-[11px] sm:text-xs font-medium py-2 px-4 text-center tracking-wide flex items-center justify-center gap-2">
@@ -99,8 +99,8 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
         )}
 
         {/* Main Header Container */}
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12">
-          <div className="flex items-center justify-between h-15 sm:h-18 gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 sm:h-20 gap-4">
             
             {/* Mobile Menu Button */}
             <div className="flex items-center lg:hidden">
@@ -115,22 +115,22 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               </button>
             </div>
 
-            {/* Official Brand Logo - Prominent on mobile, compact & balanced on desktop */}
+            {/* Official Brand Logo */}
             <div 
               onClick={() => onNavigate('/')}
               className="flex items-center cursor-pointer select-none py-1 shrink-0"
             >
-              <BrandLogo variant="dark" imgClassName="h-8 sm:h-8 lg:h-8 w-auto" />
+              <BrandLogo variant="dark" size="md" />
             </div>
 
             {/* Desktop Navigation */}
-            <nav className="hidden lg:flex items-center space-x-8">
+            <nav className="hidden lg:flex items-center space-x-7">
               {navLinks.map((link) => (
                 <button
                   key={link.label}
                   onClick={() => onNavigate(link.href)}
-                  className={`text-[11px] uppercase tracking-[0.15em] transition-colors cursor-pointer ${
-                    currentRoute === link.href ? 'text-black font-bold' : 'text-neutral-500 font-medium hover:text-black'
+                  className={`text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer ${
+                    currentRoute === link.href ? 'text-black font-bold border-b-2 border-black pb-1' : 'text-neutral-600 hover:text-black'
                   }`}
                 >
                   {link.label}

@@ -17,7 +17,7 @@ import {
   onSnapshot,
   Unsubscribe,
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { Product, Category, StockMovementEntry, StockMovementType } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
@@ -115,9 +115,41 @@ const getTimeMs = (t: any): number => {
   return 0;
 };
 
+export const slugifyProductPart = (text: string): string =>
+  (text || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+export const getProductUrlSlug = (product: {
+  id?: string;
+  name?: string;
+  sku?: string;
+  slug?: string;
+  variants?: Array<{ sku?: string }>;
+}): string => {
+  const nameSlug = slugifyProductPart(product.name || '');
+  const rawCode = (product.sku || product.variants?.[0]?.sku || '').trim();
+  const codeSlug = slugifyProductPart(rawCode);
+  if (nameSlug && codeSlug) {
+    return nameSlug.endsWith(`-${codeSlug}`) || nameSlug === codeSlug
+      ? nameSlug
+      : `${nameSlug}-${codeSlug}`;
+  }
+  if (nameSlug) return nameSlug;
+  if (codeSlug) return codeSlug;
+  if (product.slug) return slugifyProductPart(product.slug) || product.slug;
+  return product.id || 'product';
+};
+
 export const cacheProductRecord = (prod: Product) => {
   if (!prod || !prod.id) return;
   cachedProductsMap.set(prod.id, prod);
+  const canonicalSlug = getProductUrlSlug(prod);
+  if (canonicalSlug) {
+    cachedProductsMap.set(canonicalSlug, prod);
+  }
   if (prod.slug) {
     cachedProductsMap.set(prod.slug, prod);
     cachedProductsMap.set(prod.slug.toLowerCase().trim(), prod);
@@ -127,7 +159,7 @@ export const cacheProductRecord = (prod: Product) => {
     cachedProductsMap.set(prod.sku.toLowerCase().trim(), prod);
   }
   if (prod.name) {
-    const slugified = prod.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const slugified = slugifyProductPart(prod.name);
     if (slugified) cachedProductsMap.set(slugified, prod);
   }
 };
@@ -200,7 +232,7 @@ export const productService = {
     }
   },
 
-  // Synchronous instant accessors returning hydrated live memory or warm localStorage catalog (0ms load)
+  // Synchronous instant accessors returning hydrated live memory or non-empty warm localStorage catalog
   getInstantActiveProducts(): Product[] | null {
     if (liveActiveProducts !== null) return liveActiveProducts;
     try {
@@ -213,8 +245,10 @@ export const productService = {
             p.approvalStatus !== 'pending_stock' &&
             p.approvalStatus !== 'rejected'
         );
-        liveActiveProducts = local;
-        return local;
+        if (local.length > 0) {
+          liveActiveProducts = local;
+          return local;
+        }
       }
     } catch {
       // ignore
@@ -232,8 +266,10 @@ export const productService = {
       const hasBackup = typeof window !== 'undefined' && localStorage.getItem(LOCAL_CATEGORIES_KEY) !== null;
       if (hasBackup) {
         const local = this.getLocalCategories();
-        liveCategories = local;
-        return local;
+        if (local.length > 0) {
+          liveCategories = local;
+          return local;
+        }
       }
     } catch {
       // ignore
@@ -253,11 +289,12 @@ export const productService = {
       const match = localList.find(
         (p) =>
           p.id === cleanParam ||
+          getProductUrlSlug(p) === lowerParam ||
           p.slug === cleanParam ||
           (p.slug && p.slug.toLowerCase().trim() === lowerParam) ||
           (p.sku && p.sku.toLowerCase().trim() === lowerParam) ||
           p.name.toLowerCase().trim() === lowerParam ||
-          p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') === lowerParam
+          slugifyProductPart(p.name) === lowerParam
       );
       if (match) {
         cacheProductRecord(match);
@@ -484,7 +521,7 @@ export const productService = {
     }
   },
 
-  // Real-time listener for active products (Customer Home & Shop pages)
+  // Real-time listener for active products (Customer Home & Shop pages - stays loading until Firestore responds)
   subscribeToActiveProducts(callback: (products: Product[]) => void, onError?: (err: any) => void): Unsubscribe {
     activeProductListeners.add(callback);
 
@@ -495,17 +532,7 @@ export const productService = {
 
     this.ensureSharedActiveListener(onError);
 
-    const safetyTimer =
-      instant === null
-        ? window.setTimeout(() => {
-            if (liveActiveProducts === null) {
-              callback([]);
-            }
-          }, 1800)
-        : null;
-
     return () => {
-      if (safetyTimer) window.clearTimeout(safetyTimer);
       activeProductListeners.delete(callback);
     };
   },
@@ -703,38 +730,86 @@ export const productService = {
       const localMatch = localList.find(
         (p) =>
           p.id === cleanParam ||
+          getProductUrlSlug(p) === lowerParam ||
           p.slug === cleanParam ||
           (p.slug && p.slug.toLowerCase().trim() === lowerParam) ||
           (p.sku && p.sku.toLowerCase().trim() === lowerParam) ||
           p.name.toLowerCase().trim() === lowerParam ||
-          p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') === lowerParam
+          slugifyProductPart(p.name) === lowerParam
       );
       if (localMatch) {
         cacheProductRecord(localMatch);
         return localMatch;
       }
 
-      // 3. Firestore Document ID lookup
+      // 3. Direct Firestore Document ID lookup first if ID looks like a doc ID (e.g. prod-...)
+      if (cleanParam.startsWith('prod-')) {
+        try {
+          const docRef = doc(db, 'products', cleanParam);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const item = { id: docSnap.id, ...docSnap.data() } as Product;
+            cacheProductRecord(item);
+            return item;
+          }
+        } catch {
+          // Continue
+        }
+      }
+
+      // 4. Fast single-round-trip slug/active catalog lookup for <name>-<code> URLs
       try {
-        const docRef = doc(db, 'products', cleanParam);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const item = { id: docSnap.id, ...docSnap.data() } as Product;
+        const [slugSnap, activeSnap] = await Promise.all([
+          getDocs(query(collection(db, 'products'), where('slug', '==', cleanParam), limit(1))).catch(() => null),
+          getDocs(query(collection(db, 'products'), where('active', '==', true))).catch(() => null),
+        ]);
+
+        if (slugSnap && !slugSnap.empty) {
+          const item = { id: slugSnap.docs[0].id, ...slugSnap.docs[0].data() } as Product;
           cacheProductRecord(item);
           return item;
+        }
+
+        if (activeSnap && !activeSnap.empty) {
+          const fetched: Product[] = [];
+          activeSnap.forEach((d) => {
+            const item = { id: d.id, ...d.data() } as Product;
+            fetched.push(item);
+            cacheProductRecord(item);
+          });
+          const slugMatch = fetched.find(
+            (p) =>
+              p.id === cleanParam ||
+              getProductUrlSlug(p) === lowerParam ||
+              (p.slug && p.slug.toLowerCase().trim() === lowerParam) ||
+              (p.sku && p.sku.toLowerCase().trim() === lowerParam) ||
+              slugifyProductPart(p.name) === lowerParam
+          );
+          if (slugMatch) return slugMatch;
         }
       } catch {
         // Continue
       }
 
-      // 4. Firestore Slug query lookup
+      // 5. Fallback full collection scan (e.g. inactive/legacy ID or non-prefixed doc ID)
       try {
-        const q = query(collection(db, 'products'), where('slug', '==', cleanParam), limit(1));
-        const querySnap = await getDocs(q);
-        if (!querySnap.empty) {
-          const item = { id: querySnap.docs[0].id, ...querySnap.docs[0].data() } as Product;
-          cacheProductRecord(item);
-          return item;
+        const allSnap = await getDocs(collection(db, 'products'));
+        if (!allSnap.empty) {
+          const fetched: Product[] = [];
+          allSnap.forEach((d) => {
+            const item = { id: d.id, ...d.data() } as Product;
+            fetched.push(item);
+            cacheProductRecord(item);
+          });
+          const fallbackMatch = fetched.find(
+            (p) =>
+              p.id === cleanParam ||
+              getProductUrlSlug(p) === lowerParam ||
+              (p.slug && p.slug.toLowerCase().trim() === lowerParam) ||
+              (p.sku && p.sku.toLowerCase().trim() === lowerParam) ||
+              slugifyProductPart(p.name) === lowerParam
+          );
+          if (fallbackMatch) return fallbackMatch;
         }
       } catch {
         // Continue
@@ -1417,107 +1492,195 @@ export const productService = {
     }
   },
 
-  // High-definition adaptive image encoder: preserves crisp 2K/4K clarity while staying safe for cloud/Firestore storage
+  // High-definition adaptive image encoder: decodes large multi-MB studio files cleanly & preserves sharp 2K/4K clarity
   async compressImage(
     file: File,
     maxWidth = 2560,
-    quality = 0.93,
-    maxChars = 220000
+    quality = 0.94,
+    maxChars = 340000
   ): Promise<string> {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        if (!result) {
-          resolve('/assets/aistudio/selvee1_8ff37f5b.jpg');
-          return;
-        }
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
 
-        // Preserve small original high-res files untouched (zero re-compression loss)
-        if (result.length <= maxChars && file.size <= 240 * 1024) {
-          resolve(result);
-          return;
-        }
-
-        const img = new Image();
-        img.onload = () => {
+      img.onload = () => {
+        try {
           const encodeWith = (targetW: number, q: number, mime: string): string => {
-            let width = img.naturalWidth || img.width;
-            let height = img.naturalHeight || img.height;
+            const natW = img.naturalWidth || img.width;
+            const natH = img.naturalHeight || img.height;
+            let width = natW;
+            let height = natH;
             if (width > targetW) {
               height = Math.round((height * targetW) / width);
               width = targetW;
             }
+
+            // Multi-step 0.5x downsampling when source is >2x larger (eliminates aliasing/softness on high-MB studio shots)
+            let sourceCanvas: HTMLImageElement | HTMLCanvasElement = img;
+            let curW = natW;
+            let curH = natH;
+            while (curW * 0.5 > width * 1.25) {
+              const stepW = Math.round(curW * 0.5);
+              const stepH = Math.round(curH * 0.5);
+              const stepCanvas = document.createElement('canvas');
+              stepCanvas.width = stepW;
+              stepCanvas.height = stepH;
+              const stepCtx = stepCanvas.getContext('2d');
+              if (!stepCtx) break;
+              stepCtx.imageSmoothingEnabled = true;
+              stepCtx.imageSmoothingQuality = 'high';
+              stepCtx.drawImage(sourceCanvas, 0, 0, stepW, stepH);
+              sourceCanvas = stepCanvas;
+              curW = stepW;
+              curH = stepH;
+            }
+
             const canvas = document.createElement('canvas');
             canvas.width = width;
             canvas.height = height;
             const ctx = canvas.getContext('2d');
-            if (!ctx) return result;
+            if (!ctx) return '';
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, width, height);
+            ctx.drawImage(sourceCanvas, 0, 0, width, height);
             return canvas.toDataURL(mime, q);
           };
 
           // Prefer crisp WebP (35%+ sharper per byte than JPEG), fallback to JPEG if unsupported
           let mime = 'image/webp';
           let encoded = encodeWith(maxWidth, quality, mime);
-          if (!encoded.startsWith('data:image/webp')) {
+          if (!encoded || !encoded.startsWith('data:image/webp')) {
             mime = 'image/jpeg';
             encoded = encodeWith(maxWidth, quality, mime);
           }
 
-          // Gently step down only if exceeding Firestore safety budget so multi-image docs never fail
+          // Gently step down only if exceeding Firestore safety budget so large docs never fail
           const attempts: [number, number][] = [
-            [maxWidth, 0.90],
-            [Math.min(maxWidth, 2048), 0.88],
+            [maxWidth, 0.91],
+            [Math.min(maxWidth, 2400), 0.89],
+            [Math.min(maxWidth, 2048), 0.87],
             [Math.min(maxWidth, 1800), 0.84],
             [Math.min(maxWidth, 1600), 0.80],
-            [Math.min(maxWidth, 1440), 0.76],
           ];
           for (const [w, q] of attempts) {
-            if (encoded.length <= maxChars) break;
+            if (!encoded || encoded.length <= maxChars) break;
             encoded = encodeWith(w, q, mime);
           }
 
-          resolve(encoded);
-        };
-        img.onerror = () => resolve(result);
-        img.src = result;
+          URL.revokeObjectURL(objectUrl);
+          if (encoded) {
+            resolve(encoded);
+          } else {
+            reject(new Error('Could not encode image'));
+          }
+        } catch (err) {
+          URL.revokeObjectURL(objectUrl);
+          reject(err);
+        }
       };
-      reader.onerror = () => resolve('/assets/aistudio/selvee1_8ff37f5b.jpg');
-      reader.readAsDataURL(file);
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        // Fallback via FileReader if object URL decoding fails for exotic formats
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const result = e.target?.result as string;
+          if (result && result.length <= maxChars) resolve(result);
+          else reject(new Error('Image decoding failed'));
+        };
+        reader.onerror = () => reject(new Error('Failed to read image file'));
+        reader.readAsDataURL(file);
+      };
+
+      img.src = objectUrl;
     });
   },
 
-  // Resilient Image Upload: attempts raw full-resolution cloud upload first, falls back to crisp HD WebP
+  // Resilient High-Quality Upload: uploads full multi-MB original via resumable cloud upload (progress-aware timeout), falls back to crisp HD WebP
   async uploadImage(file: File, folder = 'products'): Promise<string> {
+    const ext = file.name.split('.').pop() || 'jpg';
+    const filename = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const storageRef = ref(storage, filename);
+
     try {
-      const ext = file.name.split('.').pop() || 'jpg';
-      const filename = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-      const storageRef = ref(storage, filename);
+      const cloudUrl = await new Promise<string>((resolve, reject) => {
+        const uploadTask = uploadBytesResumable(storageRef, file, {
+          contentType: file.type || 'image/jpeg',
+        });
 
-      // Upload raw original 4K/full-res file if Firebase Storage responds cleanly
-      const uploadTask = uploadBytes(storageRef, file).then(() => getDownloadURL(storageRef));
-      const timeoutTask = new Promise<string>((_, reject) =>
-        setTimeout(() => reject(new Error('Storage upload timeout')), 4500)
-      );
+        let lastBytes = 0;
+        let settled = false;
 
-      try {
-        return await Promise.race([uploadTask, timeoutTask]);
-      } catch (cloudErr) {
-        console.warn('Firebase Storage offline, using HD compressed image:', cloudErr);
-        const isBanner = folder === 'banners';
-        return await this.compressImage(
-          file,
-          isBanner ? 3840 : 2560,
-          0.93,
-          isBanner ? 580000 : 220000
+        // Abort early only if stalled with 0 progress for 7s, or inactive for 20s mid-upload (allows large multi-MB files to complete cleanly!)
+        let stallTimer = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try { uploadTask.cancel(); } catch { /* ignore */ }
+            reject(new Error('Storage upload stalled'));
+          }
+        }, 7000);
+
+        const maxTotalTimer = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try { uploadTask.cancel(); } catch { /* ignore */ }
+            reject(new Error('Storage upload timeout'));
+          }
+        }, 120000);
+
+        const clearTimers = () => {
+          window.clearTimeout(stallTimer);
+          window.clearTimeout(maxTotalTimer);
+        };
+
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            if (snapshot.bytesTransferred > lastBytes) {
+              lastBytes = snapshot.bytesTransferred;
+              window.clearTimeout(stallTimer);
+              stallTimer = window.setTimeout(() => {
+                if (!settled) {
+                  settled = true;
+                  try { uploadTask.cancel(); } catch { /* ignore */ }
+                  reject(new Error('Storage upload stalled'));
+                }
+              }, 20000);
+            }
+          },
+          (err) => {
+            if (!settled) {
+              settled = true;
+              clearTimers();
+              reject(err);
+            }
+          },
+          async () => {
+            if (!settled) {
+              settled = true;
+              clearTimers();
+              try {
+                const url = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(url);
+              } catch (urlErr) {
+                reject(urlErr);
+              }
+            }
+          }
         );
-      }
-    } catch (err) {
-      console.error('Image upload failed:', err);
-      return '/assets/aistudio/selvee1_8ff37f5b.jpg';
+      });
+
+      return cloudUrl;
+    } catch (cloudErr) {
+      console.warn('Firebase Storage unavailable, encoding HD WebP:', cloudErr);
+      const isBanner = folder === 'banners';
+      const isCategory = folder === 'categories';
+      return await this.compressImage(
+        file,
+        isBanner ? 3840 : isCategory ? 2400 : 2560,
+        0.94,
+        isBanner ? 760000 : isCategory ? 650000 : 340000
+      );
     }
   },
 };

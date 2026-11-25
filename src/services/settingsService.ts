@@ -291,6 +291,10 @@ export const settingsService = {
     return liveSettings;
   },
 
+  hasLoadedBanners(): boolean {
+    return liveAllBanners !== null;
+  },
+
   getInstantBanners(activeOnly = true): Banner[] {
     const list = liveAllBanners ?? [];
     return activeOnly ? list.filter((b) => b.active) : list;
@@ -372,6 +376,18 @@ export const settingsService = {
 
     if (!sharedBannersUnsub) {
       try {
+        if (liveAllBanners === null) {
+          getDocs(collection(db, 'banners'))
+            .then((snap) => {
+              if (liveAllBanners !== null) return;
+              const list: Banner[] = [];
+              snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Banner));
+              list.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+              liveAllBanners = list;
+              bannersListeners.forEach((cb) => cb(list));
+            })
+            .catch(() => {});
+        }
         sharedBannersUnsub = onSnapshot(
           collection(db, 'banners'),
           (snap) => {

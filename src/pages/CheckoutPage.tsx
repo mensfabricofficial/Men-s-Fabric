@@ -28,6 +28,7 @@ import { orderService } from '../services/orderService';
 import { settingsService, defaultPaymentSettings } from '../services/settingsService';
 import { ShippingAddress, PaymentMethod, PaymentSettings, PaymentDetails } from '../types';
 import { FloatingInput, FloatingTextarea, FloatingSelect } from '../components/common/FloatingInput';
+import { ProgressiveImage } from '../components/common/ProgressiveImage';
 import {
   BD_DIVISIONS,
   BD_DISTRICTS_BY_DIVISION,
@@ -109,6 +110,24 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const [errorMessage, setErrorMessage] = useState('');
   const [gatewayDropdownOpen, setGatewayDropdownOpen] = useState(false);
   const gatewayDropdownRef = useRef<HTMLDivElement>(null);
+  const [zoneDropdownOpen, setZoneDropdownOpen] = useState(false);
+  const zoneDropdownRef = useRef<HTMLDivElement>(null);
+
+  const sortedZones = React.useMemo(() => {
+    return [...deliveryZones].sort((a, b) => {
+      const aName = (a.name || '').toLowerCase();
+      const bName = (b.name || '').toLowerCase();
+      const aInside = a.id === 'dhaka' || aName.includes('inside');
+      const bInside = b.id === 'dhaka' || bName.includes('inside');
+      if (aInside && !bInside) return -1;
+      if (!aInside && bInside) return 1;
+      const aOutside = a.id === 'outside-dhaka' || aName.includes('outside');
+      const bOutside = b.id === 'outside-dhaka' || bName.includes('outside');
+      if (aOutside && !bOutside) return -1;
+      if (!aOutside && bOutside) return 1;
+      return 0;
+    });
+  }, [deliveryZones]);
 
   useEffect(() => {
     settingsService.getSettings().then((s) => {
@@ -141,14 +160,20 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   }, [customerProfile, currentUser]);
 
   useEffect(() => {
-    if (!gatewayDropdownOpen) return;
+    if (!gatewayDropdownOpen && !zoneDropdownOpen) return;
     const handleOutside = (e: MouseEvent) => {
-      if (gatewayDropdownRef.current && !gatewayDropdownRef.current.contains(e.target as Node)) {
+      if (gatewayDropdownOpen && gatewayDropdownRef.current && !gatewayDropdownRef.current.contains(e.target as Node)) {
         setGatewayDropdownOpen(false);
+      }
+      if (zoneDropdownOpen && zoneDropdownRef.current && !zoneDropdownRef.current.contains(e.target as Node)) {
+        setZoneDropdownOpen(false);
       }
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setGatewayDropdownOpen(false);
+      if (e.key === 'Escape') {
+        setGatewayDropdownOpen(false);
+        setZoneDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleOutside);
     document.addEventListener('keydown', handleKey);
@@ -156,7 +181,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('keydown', handleKey);
     };
-  }, [gatewayDropdownOpen]);
+  }, [gatewayDropdownOpen, zoneDropdownOpen]);
 
   // If cart is empty
   if (items.length === 0) {
@@ -447,10 +472,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
       <form onSubmit={handleSubmitOrder} noValidate className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* Left Column: Form Fields */}
-        <div className="lg:col-span-7 space-y-6">
-          
-          <div className="bg-white border border-neutral-200 rounded-2xl p-5 sm:p-7 shadow-xs space-y-6">
+        {/* Left Column: Form Fields (Floating directly on clean page background) */}
+        <div className="lg:col-span-7 space-y-8">
+          <div className="space-y-8">
             
             {/* Error Message */}
             {errorMessage && (
@@ -498,7 +522,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
             </div>
 
             {/* SECTION 2: Shipping Address */}
-            <div className="space-y-4 pt-5 border-t border-neutral-200">
+            <div className="space-y-4">
               <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
                 <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">2</span>
                 <span>Delivery Address</span>
@@ -594,8 +618,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
               />
             </div>
 
-            {/* SECTION 3: Shipping Zone */}
-            <div className="space-y-4 pt-5 border-t border-neutral-200">
+            {/* SECTION 3: Shipping Zone (Dropdown) */}
+            <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
                   <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">3</span>
@@ -610,69 +634,117 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 gap-3">
-                {[...deliveryZones]
-                  .sort((a, b) => {
-                    const aName = (a.name || '').toLowerCase();
-                    const bName = (b.name || '').toLowerCase();
-                    const aInside = a.id === 'dhaka' || aName.includes('inside');
-                    const bInside = b.id === 'dhaka' || bName.includes('inside');
-                    if (aInside && !bInside) return -1;
-                    if (!aInside && bInside) return 1;
-                    const aOutside = a.id === 'outside-dhaka' || aName.includes('outside');
-                    const bOutside = b.id === 'outside-dhaka' || bName.includes('outside');
-                    if (aOutside && !bOutside) return -1;
-                    if (!aOutside && bOutside) return 1;
-                    return 0;
-                  })
-                  .map((zone) => {
-                    const isInside = zone.id === 'dhaka' || (zone.name || '').toLowerCase().includes('inside');
-                    const isSelected = selectedZone?.id === zone.id;
-                    const zoneTitle = isInside ? 'Inside Dhaka' : 'Outside Dhaka';
-                    const zoneSubtext = isInside
-                      ? 'Fast home delivery across Dhaka city within 24–48 hours.'
-                      : 'Nationwide courier doorstep delivery across all 64 districts.';
 
-                    return (
-                      <label
-                        key={zone.id}
-                        className={`relative flex items-start gap-3 p-4 rounded-xl cursor-pointer border transition-all duration-200 ${
-                          isSelected
-                            ? 'border-neutral-900 bg-neutral-50/90 ring-1 ring-neutral-900 shadow-xs'
-                            : 'border-neutral-200 bg-white hover:border-neutral-400 hover:bg-neutral-50/30'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="deliveryZone"
-                          checked={isSelected}
-                          onChange={() => setSelectedZone(zone)}
-                          className="mt-1 accent-black cursor-pointer shrink-0"
-                        />
-                        <div className="flex-1 flex items-start justify-between gap-3 text-xs">
-                          <div>
-                            <p className="font-bold text-neutral-900 text-sm tracking-tight">{zoneTitle}</p>
-                            <p className="text-[11px] text-neutral-500 mt-0.5">{zoneSubtext}</p>
-                          </div>
-                          {effectiveFreeDelivery ? (
-                            <div className="text-right shrink-0">
-                              <span className="text-[10px] text-neutral-400 line-through font-mono mr-1.5">৳{zone.charge}</span>
-                              <span className="font-black text-emerald-700 text-sm uppercase">FREE</span>
-                            </div>
-                          ) : (
-                            <span className="font-black text-neutral-900 text-base font-mono shrink-0">
-                              ৳{zone.charge}
+              {(() => {
+                const activeZone = selectedZone || sortedZones[0];
+                const isActiveInside =
+                  activeZone?.id === 'dhaka' || (activeZone?.name || '').toLowerCase().includes('inside');
+                const activeTitle = isActiveInside ? 'Dhaka Inside' : 'Dhaka Outside';
+                const activeEta = isActiveInside ? '24–48 hrs' : '64 districts';
+
+                return (
+                  <div className="relative" ref={zoneDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setZoneDropdownOpen((prev) => !prev)}
+                      aria-expanded={zoneDropdownOpen}
+                      aria-haspopup="listbox"
+                      className={`w-full h-12 px-3.5 bg-white border rounded-[6px] flex items-center justify-between gap-3 text-sm transition-colors cursor-pointer ${
+                        zoneDropdownOpen
+                          ? 'border-neutral-900'
+                          : 'border-neutral-300 hover:border-neutral-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-semibold text-neutral-900 truncate">{activeTitle}</span>
+                        <span className="text-xs text-neutral-400 hidden sm:inline">• {activeEta}</span>
+                      </div>
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        {effectiveFreeDelivery ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-neutral-400 line-through font-mono">
+                              ৳{activeZone?.charge ?? 60}
                             </span>
-                          )}
-                        </div>
-                      </label>
-                    );
-                  })}
-              </div>
+                            <span className="font-bold text-emerald-700 text-xs uppercase">FREE</span>
+                          </div>
+                        ) : (
+                          <span className="font-bold text-neutral-900 text-sm font-mono">
+                            ৳{activeZone?.charge ?? 60}
+                          </span>
+                        )}
+                        <ChevronDown
+                          className={`w-4 h-4 text-neutral-600 transition-transform duration-200 ${
+                            zoneDropdownOpen ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </div>
+                    </button>
+
+                    <span className="pointer-events-none absolute -top-2 left-2.5 px-1.5 text-[11px] font-medium text-neutral-600 bg-white leading-none">
+                      Shipping Zone
+                      <sup aria-hidden="true" className="ml-0.5 font-mono text-[10px] font-bold leading-none text-current">*</sup>
+                    </span>
+
+                    {zoneDropdownOpen && (
+                      <div
+                        role="listbox"
+                        className="absolute left-0 right-0 mt-1.5 bg-white border border-neutral-300 rounded-[8px] shadow-xl overflow-hidden z-30 animate-fade-in"
+                      >
+                        {sortedZones.map((zone) => {
+                          const isInside = zone.id === 'dhaka' || (zone.name || '').toLowerCase().includes('inside');
+                          const isSelected = activeZone?.id === zone.id;
+                          const zoneTitle = isInside ? 'Dhaka Inside' : 'Dhaka Outside';
+                          const zoneSubtext = isInside
+                            ? 'Fast home delivery across Dhaka city within 24–48 hours.'
+                            : 'Nationwide courier doorstep delivery across all 64 districts.';
+
+                          return (
+                            <button
+                              key={zone.id}
+                              type="button"
+                              role="option"
+                              aria-selected={isSelected}
+                              onClick={() => {
+                                setSelectedZone(zone);
+                                setZoneDropdownOpen(false);
+                              }}
+                              className={`w-full px-3.5 py-3 flex items-center justify-between gap-3 text-left transition-colors cursor-pointer border-b border-neutral-100 last:border-b-0 ${
+                                isSelected
+                                  ? 'bg-neutral-100 text-neutral-900'
+                                  : 'bg-white text-neutral-800 hover:bg-neutral-50'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <p className={`text-sm tracking-tight ${isSelected ? 'font-bold text-neutral-900' : 'font-semibold text-neutral-800'}`}>
+                                  {zoneTitle}
+                                </p>
+                                <p className="text-[11px] text-neutral-500 mt-0.5">{zoneSubtext}</p>
+                              </div>
+                              <div className="flex items-center gap-2.5 shrink-0">
+                                {effectiveFreeDelivery ? (
+                                  <div className="text-right">
+                                    <span className="text-[10px] text-neutral-400 line-through font-mono mr-1.5">৳{zone.charge}</span>
+                                    <span className="font-black text-emerald-700 text-xs uppercase">FREE</span>
+                                  </div>
+                                ) : (
+                                  <span className="font-bold text-neutral-900 text-sm font-mono">
+                                    ৳{zone.charge}
+                                  </span>
+                                )}
+                                {isSelected && <Check className="w-4 h-4 text-black shrink-0" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* SECTION 4: Payment Method Selection */}
-            <div className="space-y-4 pt-5 border-t border-neutral-200">
+            <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
                   <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">4</span>
@@ -781,9 +853,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 </div>
               )}
 
-              {/* Digital Gateway Payment Box (For COD with delivery fee > 0 OR Online Payment) */}
+              {/* Digital Gateway Payment Section (Floating directly on clean page background) */}
               {activeGateway && needsAdvancePayment && (
-                <div className="p-5 sm:p-6 bg-neutral-50/90 border border-neutral-300 rounded-2xl shadow-xs space-y-5 animate-fade-in transition-all">
+                <div className="space-y-4 animate-fade-in transition-all">
                   
                   {/* Mode Banner */}
                   <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between ${
@@ -813,7 +885,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       aria-expanded={gatewayDropdownOpen}
                       aria-haspopup="listbox"
                       className={`w-full h-12 px-3.5 bg-white border rounded-[6px] flex items-center justify-between text-sm font-semibold text-neutral-900 transition-colors cursor-pointer ${
-                        gatewayDropdownOpen ? 'border-neutral-900' : 'border-neutral-400 hover:border-neutral-700'
+                        gatewayDropdownOpen ? 'border-neutral-900' : 'border-neutral-300 hover:border-neutral-400'
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
@@ -833,8 +905,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       />
                     </button>
 
-                    <span className="pointer-events-none absolute -top-2.5 left-3 px-1.5 text-[11px] font-medium text-neutral-900 bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)] leading-none">
-                      Select Payment Method *
+                    <span className="pointer-events-none absolute -top-2 left-2.5 px-1.5 text-[11px] font-medium text-neutral-600 bg-white leading-none">
+                      Select Payment Method
+                      <sup aria-hidden="true" className="ml-0.5 font-mono text-[10px] font-bold leading-none text-current">*</sup>
                     </span>
 
                     {gatewayDropdownOpen && (
@@ -952,7 +1025,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                     <FloatingInput
                       label="Sender Mobile Number *"
-                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
                       type="tel"
                       required
                       value={senderNumber}
@@ -963,7 +1035,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
                     <FloatingInput
                       label="Transaction ID (TrxID) *"
-                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
                       type="text"
                       required
                       value={transactionId}
@@ -1018,9 +1089,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
         </div>
 
-        {/* Right Column: Order Summary & Confirmation Button */}
+        {/* Right Column: Order Summary & Confirmation Button (Floating directly on clean page background) */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white border border-neutral-200 rounded-2xl p-5 sm:p-7 shadow-xs space-y-5 sticky top-24">
+          <div className="space-y-5 sticky top-24">
             
             <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900 pb-3 border-b border-neutral-200">
               Order Summary ({items.reduce((s, i) => s + i.quantity, 0)} Items)
@@ -1033,10 +1104,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 return (
                   <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-2.5 flex items-center justify-between text-xs first:pt-0">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={item.productImage || '/assets/aistudio/selvee1_8ff37f5b.jpg'}
+                      <ProgressiveImage
+                        src={item.productImage}
                         alt={item.productName}
-                        className="w-14 h-14 aspect-square object-cover object-center rounded-md bg-neutral-100 border border-neutral-200/80 shrink-0"
+                        wrapperClassName="relative w-14 h-14 aspect-square rounded-md overflow-hidden bg-neutral-100 border border-neutral-200/80 shrink-0"
+                        className="w-full h-full object-cover object-center"
                       />
                       <div>
                         <p className="font-semibold text-neutral-900 line-clamp-1">{item.productName}</p>
@@ -1081,7 +1153,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
 
               <div className="flex items-center justify-between text-neutral-600">
                 <span>
-                  Delivery Fee ({selectedZone?.id === 'dhaka' || (selectedZone?.name || '').toLowerCase().includes('inside') ? 'Inside Dhaka' : 'Outside Dhaka'})
+                  Delivery Fee ({selectedZone?.id === 'dhaka' || (selectedZone?.name || '').toLowerCase().includes('inside') ? 'Dhaka Inside' : 'Dhaka Outside'})
                 </span>
                 {effectiveFreeDelivery ? (
                   <span className="font-bold text-emerald-700">

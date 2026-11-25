@@ -1,5 +1,26 @@
 import React, { useState, useId } from 'react';
 
+const renderFloatingLabel = (label: string, isRequired?: boolean) => {
+  const trimmed = label.trim();
+  const hasTrailingStar = trimmed.endsWith('*');
+  const cleanLabel = hasTrailingStar ? trimmed.slice(0, -1).trimEnd() : label;
+  const showRequired = hasTrailingStar || Boolean(isRequired);
+
+  return (
+    <>
+      <span>{cleanLabel}</span>
+      {showRequired && (
+        <sup
+          aria-hidden="true"
+          className="ml-0.5 font-mono text-[10px] font-bold leading-none text-current"
+        >
+          *
+        </sup>
+      )}
+    </>
+  );
+};
+
 interface FloatingInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label: string;
   labelBgClass?: string;
@@ -25,6 +46,7 @@ export const FloatingInput: React.FC<FloatingInputProps> = ({
   onFocus,
   onBlur,
   placeholder,
+  required,
   ...props
 }) => {
   const autoId = useId();
@@ -59,6 +81,7 @@ export const FloatingInput: React.FC<FloatingInputProps> = ({
         id={inputId}
         value={value}
         defaultValue={defaultValue}
+        required={required}
         placeholder={isFloated ? placeholder : ''}
         onFocus={(e) => {
           setFocused(true);
@@ -91,10 +114,10 @@ export const FloatingInput: React.FC<FloatingInputProps> = ({
               }`
             : `top-1/2 -translate-y-1/2 ${
                 leftIcon ? 'left-10' : 'left-3.5'
-              } ${compact ? 'text-xs' : 'text-sm'} text-neutral-400 bg-transparent`
+              } ${compact ? 'text-xs' : 'text-sm'} text-neutral-500 bg-transparent`
         }`}
       >
-        {label}
+        {renderFloatingLabel(label, required)}
       </label>
 
       {rightElement && (
@@ -124,6 +147,7 @@ export const FloatingTextarea: React.FC<FloatingTextareaProps> = ({
   onBlur,
   placeholder,
   rows = 3,
+  required,
   ...props
 }) => {
   const autoId = useId();
@@ -146,6 +170,7 @@ export const FloatingTextarea: React.FC<FloatingTextareaProps> = ({
         rows={rows}
         value={value}
         defaultValue={defaultValue}
+        required={required}
         placeholder={isFloated ? placeholder : ''}
         onFocus={(e) => {
           setFocused(true);
@@ -170,10 +195,10 @@ export const FloatingTextarea: React.FC<FloatingTextareaProps> = ({
             ? `-top-2 left-2.5 px-1.5 text-[11px] font-medium leading-none ${labelBgClass} ${
                 focused ? 'text-neutral-900' : 'text-neutral-600'
               }`
-            : 'top-3.5 left-3.5 text-sm text-neutral-400 bg-transparent'
+            : 'top-3.5 left-3.5 text-sm text-neutral-500 bg-transparent'
         }`}
       >
-        {label}
+        {renderFloatingLabel(label, required)}
       </label>
     </div>
   );
@@ -194,6 +219,7 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
   children,
   onFocus,
   onBlur,
+  required,
   ...props
 }) => {
   const autoId = useId();
@@ -204,6 +230,7 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
     <div className={`relative w-full ${containerClassName}`}>
       <select
         id={selectId}
+        required={required}
         onFocus={(e) => {
           setFocused(true);
           onFocus?.(e);
@@ -228,7 +255,7 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
           focused ? 'text-neutral-900' : 'text-neutral-600'
         }`}
       >
-        {label}
+        {renderFloatingLabel(label, required)}
       </label>
     </div>
   );

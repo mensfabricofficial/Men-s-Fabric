@@ -3,8 +3,8 @@ import React from 'react';
 export const ProductCardSkeleton: React.FC = () => {
   return (
     <div className="flex flex-col bg-white overflow-hidden animate-pulse select-none">
-      <div className="w-full aspect-square bg-neutral-100 rounded-md ring-1 ring-black/[0.04]" />
-      <div className="pt-3.5 pb-2 space-y-2">
+      <div className="w-full aspect-square bg-neutral-100 rounded-lg border border-neutral-100" />
+      <div className="pt-3 pb-2 space-y-2">
         <div className="flex items-center justify-between gap-3">
           <div className="h-3.5 w-3/5 bg-neutral-100 rounded-sm" />
           <div className="h-3 w-12 bg-neutral-100 rounded-sm" />
@@ -18,10 +18,10 @@ export const ProductCardSkeleton: React.FC = () => {
 
 export const ProductDetailsSkeleton: React.FC = () => {
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 2xl:px-12 py-10 sm:py-14 animate-pulse">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 animate-pulse">
       <div className="h-3 w-48 bg-neutral-100 rounded-sm mb-8" />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
-        <div className="lg:col-span-6 aspect-square bg-neutral-100 rounded-md ring-1 ring-black/[0.04]" />
+        <div className="lg:col-span-6 aspect-square bg-neutral-100 rounded-lg border border-neutral-200/80" />
         <div className="lg:col-span-6 space-y-5">
           <div className="flex justify-between">
             <div className="h-3 w-20 bg-neutral-100 rounded-sm" />

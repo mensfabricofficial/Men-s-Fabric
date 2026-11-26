@@ -1,18 +1,27 @@
 import React from 'react';
 
-export const HeroBannerSkeleton: React.FC = () => {
+export const HeroBannerTileSkeleton: React.FC = () => {
   return (
     <div
       aria-hidden="true"
-      className="relative w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] rounded-xl overflow-hidden border border-neutral-200/70 skeleton-shimmer select-none"
+      className="relative w-full aspect-[3/2] rounded-xl overflow-hidden border border-neutral-200/70 skeleton-shimmer select-none"
     >
-      <div className="absolute inset-0 flex items-center p-6 sm:p-14 lg:p-20">
-        <div className="w-full max-w-md space-y-3 sm:space-y-5">
-          <div className="h-3 w-28 sm:w-40 rounded bg-black/10" />
-          <div className="h-8 sm:h-14 w-3/4 rounded bg-black/10" />
-          <div className="h-3 sm:h-4 w-5/6 rounded bg-black/10" />
+      <div className="absolute inset-0 flex items-center p-5 sm:p-8 lg:p-10">
+        <div className="w-full max-w-sm space-y-2.5 sm:space-y-3.5">
+          <div className="h-3 w-24 sm:w-32 rounded bg-black/10" />
+          <div className="h-7 sm:h-10 w-3/4 rounded bg-black/10" />
+          <div className="h-3 sm:h-3.5 w-5/6 rounded bg-black/10" />
         </div>
       </div>
+    </div>
+  );
+};
+
+export const HeroBannerSkeleton: React.FC = () => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5">
+      <HeroBannerTileSkeleton />
+      <HeroBannerTileSkeleton />
     </div>
   );
 };
@@ -57,18 +66,15 @@ export const ProductCardSkeleton: React.FC = () => {
 
 export const ProductDetailsSkeleton: React.FC = () => {
   return (
-    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 select-none">
-      <div className="h-3 w-48 skeleton-shimmer rounded-sm mb-4 sm:mb-6" />
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-10 items-start">
-        <div className="lg:col-span-6 aspect-square skeleton-shimmer rounded-lg border border-neutral-200/80" />
-        <div className="lg:col-span-6 space-y-4">
-          <div className="flex justify-between">
-            <div className="h-3 w-20 skeleton-shimmer rounded-sm" />
-            <div className="h-3 w-24 skeleton-shimmer rounded-sm" />
-          </div>
-          <div className="h-8 w-3/4 skeleton-shimmer rounded-sm" />
+    <div className="max-w-[1660px] mx-auto px-0 lg:px-8 py-0 lg:py-8 select-none">
+      <div className="hidden lg:block h-3 w-48 skeleton-shimmer rounded-sm mb-6" />
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 lg:gap-10 items-start">
+        <div className="lg:col-span-6 aspect-square skeleton-shimmer rounded-none lg:rounded-lg border-b lg:border border-neutral-200/80" />
+        <div className="lg:col-span-6 px-4 sm:px-6 lg:px-0 pt-3.5 lg:pt-0 space-y-4">
+          <div className="lg:hidden h-3 w-36 skeleton-shimmer rounded-sm" />
+          <div className="h-7 sm:h-8 w-3/4 skeleton-shimmer rounded-sm" />
+          <div className="h-4 w-40 skeleton-shimmer rounded-sm" />
           <div className="h-7 w-1/3 skeleton-shimmer rounded-sm" />
-          <div className="h-6 w-40 skeleton-shimmer rounded-sm" />
           <div className="flex gap-2 pt-2">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="w-12 h-10 skeleton-shimmer rounded-lg" />

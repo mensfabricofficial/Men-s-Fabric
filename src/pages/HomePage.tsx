@@ -5,11 +5,85 @@ import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { ProductGrid } from '../components/product/ProductGrid';
 import { ProgressiveImage } from '../components/common/ProgressiveImage';
-import { HeroBannerSkeleton, CategoryCardSkeleton } from '../components/common/SkeletonLoader';
+import { HeroBannerSkeleton, HeroBannerTileSkeleton, CategoryCardSkeleton } from '../components/common/SkeletonLoader';
 
 interface HomePageProps {
   onNavigate: (route: string) => void;
 }
+
+const HeroBannerTile: React.FC<{ banner: Banner; onNavigate: (route: string) => void; priority?: boolean }> = ({
+  banner,
+  onNavigate,
+  priority = false,
+}) => {
+  const hasImage = Boolean(banner.image && banner.image.trim());
+  const [ready, setReady] = useState(!hasImage);
+  const hasText = Boolean(banner.badge?.trim() || banner.title?.trim() || banner.subtitle?.trim());
+
+  return (
+    <div
+      onClick={() => {
+        if (hasImage && !ready) return;
+        onNavigate(banner.buttonLink || '/shop');
+      }}
+      className={`relative w-full aspect-[3/2] bg-neutral-100 text-white rounded-xl overflow-hidden group ${
+        hasImage && !ready ? 'cursor-default' : 'cursor-pointer'
+      }`}
+    >
+      {hasImage && !ready && (
+        <div className="absolute inset-0 z-20">
+          <HeroBannerTileSkeleton />
+        </div>
+      )}
+
+      <div
+        className={`w-full h-full transition-opacity duration-300 ${
+          hasImage && !ready ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+      >
+        {hasImage ? (
+          <ProgressiveImage
+            src={banner.image.trim()}
+            alt={banner.title || 'Selvee Promotional Banner'}
+            decoding="async"
+            fetchPriority={priority ? 'high' : 'auto'}
+            onReadyChange={setReady}
+            wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-900"
+            skeletonClassName="skeleton-shimmer"
+            className={`w-full h-full object-cover object-center block select-none group-hover:scale-[1.02] transition-transform duration-500 ${
+              hasText ? 'opacity-80' : 'opacity-100'
+            }`}
+            emptyFallback={<div className="w-full h-full bg-black" />}
+          />
+        ) : (
+          <div className="w-full h-full bg-black" />
+        )}
+
+        {hasText && (
+          <div className="absolute inset-0 flex items-center p-5 sm:p-8 lg:p-10 bg-gradient-to-r from-black/75 via-black/35 to-transparent">
+            <div className="max-w-md space-y-1.5 sm:space-y-3">
+              {banner.badge?.trim() && (
+                <span className="inline-block bg-white/20 backdrop-blur-md border border-white/30 text-white text-[9px] sm:text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded">
+                  {banner.badge}
+                </span>
+              )}
+              {banner.title?.trim() && (
+                <h2 className="text-xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight leading-tight">
+                  {banner.title}
+                </h2>
+              )}
+              {banner.subtitle?.trim() && (
+                <p className="text-xs sm:text-sm lg:text-base text-neutral-200 font-light leading-snug line-clamp-2">
+                  {banner.subtitle}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const CategoryTile: React.FC<{ cat: Category; onNavigate: (route: string) => void }> = ({
   cat,
@@ -70,7 +144,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
   const [banners, setBanners] = useState<Banner[]>(() => settingsService.getInstantBanners(true));
   const [loadingBanners, setLoadingBanners] = useState(!bannersReady);
-  const [bannerImgReady, setBannerImgReady] = useState(false);
   const [categories, setCategories] = useState<Category[]>(() => (initialCategories || []).filter((c) => c.active));
   const [loadingCategories, setLoadingCategories] = useState(initialCategories === null);
   const [newArrivals, setNewArrivals] = useState<Product[]>(() => {
@@ -108,99 +181,76 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
     };
   }, []);
 
-  const activeBanner = banners.length > 0 ? banners[0] : null;
-  const hasBannerText = Boolean(
-    activeBanner &&
-      (activeBanner.badge?.trim() || activeBanner.title?.trim() || activeBanner.subtitle?.trim())
-  );
+  const heroBanners = banners.slice(0, 2);
 
   return (
-    <div className="space-y-7 sm:space-y-12">
+    <div className="space-y-7 sm:space-y-10">
       
-      {/* Banner Section — aligned left & right with header and category grid */}
+      {/* Banner Section — 2 compact cards side-by-side on desktop, stacked same 3:2 size on mobile */}
       <section className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
         {loadingBanners ? (
           <HeroBannerSkeleton />
-        ) : activeBanner ? (
-          <div
-            onClick={() => {
-              if (activeBanner.image?.trim() && !bannerImgReady) return;
-              onNavigate(activeBanner.buttonLink || '/shop');
-            }}
-            className={`relative w-full bg-neutral-100 text-white rounded-xl overflow-hidden group ${
-              activeBanner.image?.trim() && !bannerImgReady ? 'cursor-default' : 'cursor-pointer'
-            }`}
-          >
-            {activeBanner.image && activeBanner.image.trim() && !bannerImgReady && (
-              <div className="relative z-20">
-                <HeroBannerSkeleton />
-              </div>
-            )}
-
+        ) : heroBanners.length >= 2 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5">
+            {heroBanners.map((b, idx) => (
+              <HeroBannerTile key={b.id} banner={b} onNavigate={onNavigate} priority={idx === 0} />
+            ))}
+          </div>
+        ) : heroBanners.length === 1 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5">
+            <HeroBannerTile banner={heroBanners[0]} onNavigate={onNavigate} priority />
             <div
-              className={
-                activeBanner.image && activeBanner.image.trim() && !bannerImgReady
-                  ? 'absolute inset-0 opacity-0 pointer-events-none'
-                  : 'relative transition-opacity duration-300 opacity-100'
-              }
+              onClick={() => onNavigate('/shop?filter=new')}
+              className="relative w-full aspect-[3/2] bg-neutral-100 border border-neutral-200 text-neutral-900 rounded-xl overflow-hidden flex items-center p-6 sm:p-10 lg:p-12 cursor-pointer group"
             >
-              {activeBanner.image && activeBanner.image.trim() ? (
-                <ProgressiveImage
-                  src={activeBanner.image.trim()}
-                  alt={activeBanner.title || 'Selvee Promotional Banner'}
-                  decoding="async"
-                  fetchPriority="high"
-                  onReadyChange={setBannerImgReady}
-                  wrapperClassName="relative w-full overflow-hidden bg-neutral-900"
-                  skeletonClassName="skeleton-shimmer"
-                  className={`w-full h-auto block select-none ${
-                    hasBannerText ? 'opacity-80' : 'opacity-100'
-                  }`}
-                  emptyFallback={<div className="w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] bg-black" />}
-                />
-              ) : (
-                <div className="w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] bg-black" />
-              )}
-
-              {hasBannerText && (
-                <div className="absolute inset-0 flex items-center p-5 sm:p-12 lg:p-16 bg-gradient-to-r from-black/75 via-black/35 to-transparent">
-                  <div className="max-w-xl space-y-2 sm:space-y-4">
-                    {activeBanner.badge?.trim() && (
-                      <span className="inline-block bg-white/20 backdrop-blur-md border border-white/30 text-white text-[9px] sm:text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 sm:px-3 sm:py-1 rounded">
-                        {activeBanner.badge}
-                      </span>
-                    )}
-                    {activeBanner.title?.trim() && (
-                      <h1 className="text-xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-tight">
-                        {activeBanner.title}
-                      </h1>
-                    )}
-                    {activeBanner.subtitle?.trim() && (
-                      <p className="text-xs sm:text-base lg:text-lg text-neutral-200 font-light leading-snug sm:leading-relaxed line-clamp-2 sm:line-clamp-none">
-                        {activeBanner.subtitle}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div className="max-w-md space-y-2 sm:space-y-3.5">
+                <p className="text-[10px] sm:text-xs uppercase tracking-[0.2em] text-neutral-500 font-semibold">
+                  Fresh From The Atelier
+                </p>
+                <h2 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-none">
+                  NEW ARRIVALS
+                </h2>
+                <p className="text-xs sm:text-sm lg:text-base text-neutral-600 font-normal leading-relaxed line-clamp-2 sm:line-clamp-3">
+                  Explore pure cotton shirts, regal panjabis, and tailored silhouettes crafted for everyday distinction.
+                </p>
+              </div>
             </div>
           </div>
         ) : (
-          /* Default Brand Banner when no banners exist in Firestore yet */
-          <div
-            onClick={() => onNavigate('/shop')}
-            className="relative w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] bg-black text-white rounded-xl overflow-hidden flex items-center px-6 py-12 sm:px-14 sm:py-24 lg:px-20 lg:py-28 cursor-pointer"
-          >
-            <div className="max-w-3xl space-y-3 sm:space-y-6">
-              <p className="text-[10px] sm:text-xs uppercase tracking-[0.2em] sm:tracking-[0.25em] text-neutral-400 font-medium">
-                Elegance Defined · Contemporary Bangladeshi Menswear
-              </p>
-              <h1 className="text-3xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-none">
-                SELVEE
-              </h1>
-              <p className="text-xs sm:text-lg text-neutral-300 font-light max-w-xl leading-relaxed">
-                Elevate your presence with meticulously engineered menswear. Experience breathable pure cottons, regal panjabis, and sharp silhouettes tailored for distinction.
-              </p>
+          /* Default Dual Brand Showcase when no banners exist in Firestore yet */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5">
+            <div
+              onClick={() => onNavigate('/shop')}
+              className="relative w-full aspect-[3/2] bg-black text-white rounded-xl overflow-hidden flex items-center p-6 sm:p-10 lg:p-12 cursor-pointer"
+            >
+              <div className="max-w-md space-y-2 sm:space-y-3.5">
+                <p className="text-[10px] sm:text-xs uppercase tracking-[0.2em] text-neutral-400 font-medium">
+                  Elegance Defined · Bangladeshi Menswear
+                </p>
+                <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-none">
+                  SELVEE
+                </h1>
+                <p className="text-xs sm:text-sm lg:text-base text-neutral-300 font-light leading-relaxed line-clamp-3">
+                  Elevate your presence with meticulously engineered menswear, breathable cottons, and sharp silhouettes tailored for distinction.
+                </p>
+              </div>
+            </div>
+
+            <div
+              onClick={() => onNavigate('/shop?filter=new')}
+              className="relative w-full aspect-[3/2] bg-neutral-100 border border-neutral-200 text-neutral-900 rounded-xl overflow-hidden flex items-center p-6 sm:p-10 lg:p-12 cursor-pointer"
+            >
+              <div className="max-w-md space-y-2 sm:space-y-3.5">
+                <p className="text-[10px] sm:text-xs uppercase tracking-[0.2em] text-neutral-500 font-semibold">
+                  Curated Collection · Seasonal Edit
+                </p>
+                <h2 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-none">
+                  NEW DROP
+                </h2>
+                <p className="text-xs sm:text-sm lg:text-base text-neutral-600 font-normal leading-relaxed line-clamp-3">
+                  Discover handcrafted panjabis, structured shirts, and refined wardrobe essentials ready for nationwide delivery.
+                </p>
+              </div>
             </div>
           </div>
         )}

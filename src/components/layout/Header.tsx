@@ -29,7 +29,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
-  const { totalItems, setIsCartDrawerOpen } = useCart();
+  const { totalItems, isCartDrawerOpen, setIsCartDrawerOpen } = useCart();
   const { wishlistIds } = useWishlist();
   const { currentUser, isAdmin, logOut } = useAuth();
 
@@ -106,7 +106,10 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             <div className="flex items-center lg:hidden">
               <button
                 type="button"
-                onClick={() => setMobileMenuOpen(true)}
+                onClick={() => {
+                  setIsCartDrawerOpen(false);
+                  setMobileMenuOpen(true);
+                }}
                 aria-label="Open menu"
                 aria-expanded={mobileMenuOpen}
                 className="p-2 -ml-2 text-neutral-800 hover:text-black rounded-lg active:bg-neutral-100 cursor-pointer"
@@ -117,7 +120,10 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
             {/* Official Brand Logo */}
             <div 
-              onClick={() => onNavigate('/')}
+              onClick={() => {
+                setIsCartDrawerOpen(false);
+                onNavigate('/');
+              }}
               className="flex items-center cursor-pointer select-none py-1 shrink-0"
             >
               <BrandLogo variant="dark" size="md" />
@@ -176,7 +182,10 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
             <div className="flex items-center space-x-2 sm:space-x-3">
               {/* Search Toggle */}
               <button
-                onClick={() => setSearchOpen(!searchOpen)}
+                onClick={() => {
+                  setIsCartDrawerOpen(false);
+                  setSearchOpen(!searchOpen);
+                }}
                 aria-label="Search"
                 className="p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >
@@ -246,7 +255,7 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
               {/* Cart Trigger */}
               <button
-                onClick={() => setIsCartDrawerOpen(true)}
+                onClick={() => setIsCartDrawerOpen(!isCartDrawerOpen)}
                 aria-label="Cart"
                 className="relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >

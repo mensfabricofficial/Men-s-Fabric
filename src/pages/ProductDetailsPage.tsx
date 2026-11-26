@@ -5,14 +5,12 @@ import {
   Truck, 
   RotateCcw, 
   ShieldCheck, 
-  Check, 
   Star, 
   Ruler, 
   ChevronRight, 
   ChevronLeft,
   Plus,
   Minus,
-  Share2,
   AlertCircle
 } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -48,9 +46,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [selectedImage, setSelectedImage] = useState<string>(() =>
     instantMatch ? (instantMatch.thumbnail || instantMatch.images?.[0] || '') : ''
   );
-  const [selectedSize, setSelectedSize] = useState<string>(() => instantMatch?.sizes?.[0] || '');
+  const [selectedSize, setSelectedSize] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<string>(() => instantMatch?.colors?.[0]?.name || '');
-  const [quantity, setQuantity] = useState(1);
+  const [sizeError, setSizeError] = useState<string>('');
+  const [descExpanded, setDescExpanded] = useState(false);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [deliveryZones, setDeliveryZones] = useState(() => settingsService.getInstantDeliveryZones());
@@ -59,8 +58,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   const [sizeGuides, setSizeGuides] = useState<SizeGuideCategory[]>(DEFAULT_SIZE_GUIDES);
   const [activeGuideCatId, setActiveGuideCatId] = useState<string>('panjabi');
   
-  // Accordion state (unified mobile & desktop hairline accordion)
-  const [openAccordion, setOpenAccordion] = useState<'desc' | 'specs' | 'delivery' | 'reviews' | null>('desc');
+  // Accordion state (collapsed by default: Details, Materials, Delivery & Returns, Reviews)
+  const [openAccordion, setOpenAccordion] = useState<'details' | 'materials' | 'delivery' | 'reviews' | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
   // Review submission state
@@ -83,7 +82,8 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     if (warmProd) {
       setProduct(warmProd);
       setSelectedImage(warmProd.thumbnail || warmProd.images?.[0] || '');
-      setSelectedSize(warmProd.sizes?.[0] || '');
+      setSelectedSize('');
+      setSizeError('');
       setSelectedColor(warmProd.colors?.[0]?.name || '');
       setLoading(false);
     } else {
@@ -105,10 +105,9 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
           const initialImg = prod.thumbnail || prod.images?.[0] || '';
           setSelectedImage(initialImg);
           
-          // Default size & color selection
-          if (prod.sizes && prod.sizes.length > 0) {
-            setSelectedSize(prod.sizes[0]);
-          }
+          // Keep size unselected so customer actively picks their size; default color
+          setSelectedSize('');
+          setSizeError('');
           if (prod.colors && prod.colors.length > 0) {
             setSelectedColor(prod.colors[0].name);
           }
@@ -238,8 +237,15 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     setSelectedImage(galleryImages[nextIdx]);
   };
 
+  const requiresSize = Array.isArray(product.sizes) && product.sizes.length > 0;
+
   const handleAddToCart = (redirect = false) => {
     if (isOutOfStock) return;
+    if (requiresSize && !selectedSize) {
+      setSizeError('Please select a size first');
+      return;
+    }
+    setSizeError('');
     addItem({
       productId: product.id,
       productName: product.name,
@@ -247,7 +253,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       productImage: selectedImage || product.thumbnail || '',
       size: selectedSize || 'Standard',
       color: selectedColor || 'Standard',
-      quantity,
+      quantity: 1,
       price: product.price,
       salePrice: product.salePrice,
       availableStock,
@@ -285,10 +291,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   };
 
   return (
-    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+    <div className="max-w-[1660px] mx-auto px-0 lg:px-8 py-0 lg:py-8">
       
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-4 sm:mb-6">
+      {/* Desktop Breadcrumb */}
+      <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-6">
         <button onClick={() => onNavigate('/')} className="hover:text-black cursor-pointer">Home</button>
         <span>/</span>
         <button onClick={() => onNavigate('/shop')} className="hover:text-black cursor-pointer">Shop</button>
@@ -297,11 +303,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       </div>
 
       {/* Main Details Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-10 items-start mb-10 sm:mb-12">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 lg:gap-10 items-start mb-10 sm:mb-12">
         
-        {/* Left: Square Image Showcase + Smaller Arrows + 1 | N Counter Pill */}
+        {/* Left: Square Image Showcase (Full-width edge-to-edge on mobile) */}
         <div className="lg:col-span-6">
-          <div className="relative w-full aspect-square bg-neutral-100 rounded-lg overflow-hidden border border-neutral-200/80">
+          <div className="relative w-full aspect-square bg-neutral-100 rounded-none lg:rounded-lg overflow-hidden border-b lg:border border-neutral-200/80">
             <ProgressiveImage
               src={galleryImages[activeImageIndex] || ''}
               alt={product.name}
@@ -345,21 +351,42 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
         </div>
 
         {/* Right: Product Actions & Specs */}
-        <div className="lg:col-span-6 flex flex-col justify-between space-y-4">
+        <div className="lg:col-span-6 px-4 sm:px-6 lg:px-0 pt-3.5 lg:pt-0 flex flex-col justify-between space-y-4">
           
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-neutral-400 font-semibold tracking-wider uppercase">
-              <span>{product.brand && !/men'?s\s*fabric/i.test(product.brand) ? product.brand : 'Selvee'}</span>
-              <span>SKU: {currentSku}</span>
+          <div className="space-y-2.5">
+            {/* Mobile Breadcrumb directly under product image */}
+            <div className="flex lg:hidden items-center gap-1.5 text-xs text-neutral-500">
+              <button onClick={() => onNavigate('/')} className="underline underline-offset-2 text-neutral-800 hover:text-black cursor-pointer">
+                Home
+              </button>
+              <span className="text-neutral-300">/</span>
+              <button onClick={() => onNavigate('/shop')} className="underline underline-offset-2 text-neutral-800 hover:text-black cursor-pointer">
+                Shop
+              </button>
+              <span className="text-neutral-300">/</span>
+              <span className="text-neutral-500 truncate">{product.name}</span>
             </div>
 
-            <h1 className="text-xl sm:text-3xl font-extrabold text-neutral-900 leading-tight">
+            <h1 className="font-sans text-2xl sm:text-3xl font-semibold text-neutral-900 leading-snug tracking-tight">
               {product.name}
             </h1>
 
-            {/* Price section with Red Discount Badge beside prices */}
-            <div className="flex items-center flex-wrap gap-3 lining-nums tabular-nums">
-              <span className="text-xl sm:text-3xl font-heading font-bold text-neutral-900">
+            {/* Product Code (replaces stock ready pill) */}
+            <div className="flex items-center flex-wrap gap-2.5 text-xs sm:text-sm text-neutral-500">
+              <span>
+                Product Code: <span className="font-medium text-neutral-700">{currentSku || product.id}</span>
+              </span>
+              {isOutOfStock && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Out of Stock</span>
+                </span>
+              )}
+            </div>
+
+            {/* Price section with normal red discount text (no red background) */}
+            <div className="flex items-baseline flex-wrap gap-2.5 pt-1 lining-nums tabular-nums">
+              <span className="font-sans text-xl sm:text-2xl font-bold text-neutral-900">
                 BDT {(Number(currentPrice) || 0).toLocaleString('en-BD')}
               </span>
               {isSale && (
@@ -367,29 +394,10 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   <span className="text-sm sm:text-base text-neutral-400 line-through font-normal tabular-nums">
                     BDT {(Number(product.price) || 0).toLocaleString('en-BD')}
                   </span>
-                  <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded tracking-wider uppercase shadow-xs">
+                  <span className="text-xs sm:text-sm font-semibold text-red-600 tracking-wide">
                     -{discountPercent}% OFF
                   </span>
                 </>
-              )}
-            </div>
-
-            {/* Stock indicator */}
-            <div>
-              {isOutOfStock ? (
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>Currently Out of Stock</span>
-                </div>
-              ) : availableStock < 5 ? (
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded">
-                  <span>Only {availableStock} left in stock — order soon</span>
-                </div>
-              ) : (
-                <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded">
-                  <Check className="w-3.5 h-3.5" />
-                  <span>In Stock • Ready for Dispatch</span>
-                </div>
               )}
             </div>
 
@@ -417,12 +425,15 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               </div>
             )}
 
-            {/* Size selection */}
+            {/* Size selection (never pre-selected; customer chooses before adding to cart) */}
             {product.sizes && product.sizes.length > 0 && (
               <div className="pt-1.5">
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="font-bold uppercase tracking-wider text-neutral-700">
-                    Size: <span className="font-normal text-neutral-900">{selectedSize}</span>
+                    Size:{' '}
+                    <span className={selectedSize ? 'font-normal text-neutral-900' : 'font-normal text-neutral-400'}>
+                      {selectedSize || 'Select a size'}
+                    </span>
                   </span>
                   <button
                     onClick={() => setSizeGuideOpen(true)}
@@ -435,42 +446,31 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                   {product.sizes.map((s) => (
                     <button
                       key={s}
-                      onClick={() => setSelectedSize(s)}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSize(s);
+                        if (sizeError) setSizeError('');
+                      }}
                       className={`min-w-11 h-10 px-3 flex items-center justify-center text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                         selectedSize === s
                           ? 'border-black bg-black text-white'
-                          : 'border-neutral-200 bg-white text-neutral-800 hover:border-black'
+                          : sizeError
+                            ? 'border-red-400 bg-white text-neutral-800 hover:border-black'
+                            : 'border-neutral-200 bg-white text-neutral-800 hover:border-black'
                       }`}
                     >
                       {s}
                     </button>
                   ))}
                 </div>
+                {sizeError && (
+                  <p role="alert" className="mt-2 text-xs font-medium text-red-600 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{sizeError}</span>
+                  </p>
+                )}
               </div>
             )}
-
-            {/* Quantity Selector */}
-            <div className="pt-1.5">
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-700 mb-1.5">
-                Quantity
-              </label>
-              <div className="flex items-center border border-neutral-300 rounded-lg w-32 overflow-hidden bg-white">
-                <button
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-10 h-10 flex items-center justify-center text-neutral-600 hover:bg-neutral-100 cursor-pointer"
-                >
-                  -
-                </button>
-                <span className="flex-1 text-center text-xs font-bold">{quantity}</span>
-                <button
-                  onClick={() => setQuantity((q) => Math.min(availableStock, q + 1))}
-                  disabled={quantity >= availableStock}
-                  className="w-10 h-10 flex items-center justify-center text-neutral-600 hover:bg-neutral-100 disabled:opacity-40 cursor-pointer"
-                >
-                  +
-                </button>
-              </div>
-            </div>
 
             {/* Main CTA Actions */}
             <div className="flex flex-col gap-2 pt-2">
@@ -495,28 +495,212 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               </div>
             </div>
 
-            {/* Shipping & Assurance Highlights */}
-            <div className="border-t border-neutral-200 pt-4 space-y-2 text-xs text-neutral-600">
-              <div className="flex items-center gap-2.5">
-                <Truck className="w-4 h-4 text-black shrink-0" />
-                {(() => {
-                  const dh = deliveryZones.find((z) => z.id === 'dhaka');
-                  const out = deliveryZones.find((z) => z.id === 'outside-dhaka');
-                  return (
-                    <span>
-                      Delivery: <b>৳{dh?.charge ?? 70} Inside Dhaka</b> ({dh?.estimatedDays || '1-2 days'}), <b>৳{out?.charge ?? 130} Outside Dhaka</b> ({out?.estimatedDays || '2-4 days'})
-                    </span>
-                  );
-                })()}
-              </div>
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="w-4 h-4 text-black shrink-0" />
-                <span>100% Original Premium Quality Guaranteed</span>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <RotateCcw className="w-4 h-4 text-black shrink-0" />
-                <span>3-Day standard exchange for sizing adjustments</span>
-              </div>
+            {/* Product Description directly below Add to Cart */}
+            {(() => {
+              const descText =
+                product.description?.trim() ||
+                'Crafted with premium materials and precision tailoring for timeless everyday elegance.';
+              const isLong = descText.length > 140 || descText.includes('\n');
+              return (
+                <div className="pt-3 space-y-2">
+                  <p
+                    className={`whitespace-pre-line text-sm text-neutral-600 leading-relaxed ${
+                      !descExpanded && isLong ? 'line-clamp-3' : ''
+                    }`}
+                  >
+                    {descText}
+                  </p>
+                  {isLong && (
+                    <button
+                      type="button"
+                      onClick={() => setDescExpanded((prev) => !prev)}
+                      className="text-xs sm:text-sm font-medium text-neutral-900 underline underline-offset-4 hover:text-black cursor-pointer"
+                    >
+                      {descExpanded ? 'Read less' : 'Read more'}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Stacked Hairline Accordion: Details, Materials, Delivery & Returns, Reviews */}
+            <div className="pt-3 border-b border-neutral-200">
+              {[
+                {
+                  id: 'details' as const,
+                  label: 'Details',
+                  content: (
+                    <div className="w-full divide-y divide-neutral-100 text-xs sm:text-sm">
+                      <div className="py-2.5 flex justify-between gap-6">
+                        <span className="font-medium text-neutral-500">Product Code</span>
+                        <span className="font-semibold text-neutral-900 text-right">{currentSku || product.id}</span>
+                      </div>
+                      <div className="py-2.5 flex justify-between gap-6">
+                        <span className="font-medium text-neutral-500">Gender / Fit</span>
+                        <span className="font-semibold text-neutral-900 capitalize text-right">{product.gender || 'Menswear'}</span>
+                      </div>
+                      <div className="py-2.5 flex justify-between gap-6">
+                        <span className="font-medium text-neutral-500">Authenticity</span>
+                        <span className="font-semibold text-neutral-900 text-right">100% Original Selvee Tailoring</span>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'materials' as const,
+                  label: 'Materials',
+                  content: (
+                    <div className="w-full divide-y divide-neutral-100 text-xs sm:text-sm">
+                      <div className="py-2.5 flex justify-between gap-6">
+                        <span className="font-medium text-neutral-500">Fabric / Composition</span>
+                        <span className="font-semibold text-neutral-900 text-right">{product.fabric || '100% Premium Cotton'}</span>
+                      </div>
+                      <div className="py-2.5 flex justify-between gap-6">
+                        <span className="font-medium text-neutral-500">Care Instructions</span>
+                        <span className="font-semibold text-neutral-900 text-right">Machine wash cold with like colors; iron warm.</span>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'delivery' as const,
+                  label: 'Delivery & Returns',
+                  content: (() => {
+                    const dh = deliveryZones.find((z) => z.id === 'dhaka');
+                    const out = deliveryZones.find((z) => z.id === 'outside-dhaka');
+                    return (
+                      <div className="w-full space-y-2.5 text-xs sm:text-sm text-neutral-600 leading-relaxed">
+                        <div className="flex items-start gap-2.5">
+                          <Truck className="w-4 h-4 text-black shrink-0 mt-0.5" />
+                          <span>
+                            <strong className="font-semibold text-neutral-900">Inside Dhaka:</strong> ৳{dh?.charge ?? 70} ({dh?.estimatedDays || '1–2 days'}) · <strong className="font-semibold text-neutral-900">Outside Dhaka:</strong> ৳{out?.charge ?? 130} ({out?.estimatedDays || '2–4 days'})
+                          </span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <RotateCcw className="w-4 h-4 text-black shrink-0 mt-0.5" />
+                          <span>
+                            <strong className="font-semibold text-neutral-900">Exchange Policy:</strong> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.
+                          </span>
+                        </div>
+                        <div className="flex items-start gap-2.5">
+                          <ShieldCheck className="w-4 h-4 text-black shrink-0 mt-0.5" />
+                          <span>
+                            <strong className="font-semibold text-neutral-900">Payment:</strong> Cash on Delivery available nationwide; inspect package seal before accepting.
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })(),
+                },
+                {
+                  id: 'reviews' as const,
+                  label: `Reviews (${reviews.length})`,
+                  content: (
+                    <div className="w-full space-y-6">
+                      {reviews.length === 0 ? (
+                        <p className="text-xs sm:text-sm text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {reviews.map((r) => (
+                            <div key={r.id} className="p-4 bg-neutral-50 border border-neutral-100 rounded-lg space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-xs sm:text-sm text-neutral-900">{r.customerName}</span>
+                                <div className="flex text-amber-400">
+                                  {Array.from({ length: 5 }).map((_, i) => (
+                                    <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                                  ))}
+                                </div>
+                              </div>
+                              <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">{r.comment}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Submit Review Form */}
+                      <div className="border-t border-neutral-200 pt-5 max-w-2xl">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3.5">Write a Customer Review</h4>
+                        {reviewSuccess ? (
+                          <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-lg">
+                            Thank you! Your review has been submitted and will appear upon moderation.
+                          </div>
+                        ) : (
+                          <form onSubmit={handleReviewSubmit} className="space-y-3.5">
+                            {reviewError && (
+                              <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200">
+                                {reviewError}
+                              </div>
+                            )}
+                            <div>
+                              <label className="block text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-1">Rating</label>
+                              <div className="flex gap-1">
+                                {[1, 2, 3, 4, 5].map((num) => (
+                                  <button
+                                    key={num}
+                                    type="button"
+                                    onClick={() => setReviewRating(num)}
+                                    className="p-1 cursor-pointer text-amber-400"
+                                  >
+                                    <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <FloatingInput
+                              compact
+                              label="Your Name (Optional)"
+                              type="text"
+                              value={reviewAuthor}
+                              onChange={(e) => setReviewAuthor(e.target.value)}
+                            />
+                            <FloatingTextarea
+                              label="Write your review *"
+                              required
+                              rows={3}
+                              value={reviewComment}
+                              onChange={(e) => setReviewComment(e.target.value)}
+                              placeholder="Share your experience regarding the fabric, fit, and finish..."
+                            />
+                            <button
+                              type="submit"
+                              disabled={reviewSubmitting}
+                              className="w-full sm:w-auto px-6 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-neutral-800"
+                            >
+                              {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    </div>
+                  ),
+                },
+              ].map((section) => {
+                const isOpen = openAccordion === section.id;
+                return (
+                  <div key={section.id} className="border-t border-neutral-200">
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => setOpenAccordion(isOpen ? null : section.id)}
+                      className="w-full py-4 flex items-center justify-between text-left cursor-pointer group"
+                    >
+                      <span className="font-sans text-sm sm:text-base font-medium text-neutral-900 group-hover:text-black transition-colors">
+                        {section.label}
+                      </span>
+                      {isOpen ? (
+                        <Minus className="w-4 h-4 text-neutral-700 shrink-0" />
+                      ) : (
+                        <Plus className="w-4 h-4 text-neutral-700 shrink-0" />
+                      )}
+                    </button>
+                    {isOpen && (
+                      <div className="pb-5 animate-fade-in">
+                        {section.content}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
           </div>
@@ -524,171 +708,18 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
       </div>
 
-      {/* Unified Stacked Hairline Accordion (Mobile & Desktop) */}
-      <div className="mb-10 sm:mb-12 border-b border-neutral-200">
-        {[
-          {
-            id: 'desc' as const,
-            label: 'Description',
-            content: (
-              <p className="whitespace-pre-line text-xs sm:text-sm text-neutral-600 leading-relaxed">
-                {product.description || 'Crafted with premium materials and precision tailoring for timeless style.'}
-              </p>
-            ),
-          },
-          {
-            id: 'specs' as const,
-            label: 'Fabric & Specifications',
-            content: (
-              <div className="w-full divide-y divide-neutral-100 text-xs sm:text-sm">
-                <div className="py-3 flex justify-between gap-6">
-                  <span className="font-medium text-neutral-500">Fabric / Composition</span>
-                  <span className="font-semibold text-neutral-900 text-right">{product.fabric || '100% Premium Cotton'}</span>
-                </div>
-                <div className="py-3 flex justify-between gap-6">
-                  <span className="font-medium text-neutral-500">Gender / Fit</span>
-                  <span className="font-semibold text-neutral-900 capitalize text-right">{product.gender}</span>
-                </div>
-                <div className="py-3 flex justify-between gap-6">
-                  <span className="font-medium text-neutral-500">Care Instructions</span>
-                  <span className="font-semibold text-neutral-900 text-right">Machine wash cold with like colors; iron warm.</span>
-                </div>
-              </div>
-            ),
-          },
-          {
-            id: 'delivery' as const,
-            label: 'Delivery & Returns',
-            content: (
-              <div className="w-full space-y-2.5 text-xs sm:text-sm text-neutral-600 leading-relaxed">
-                <p><strong className="font-semibold text-neutral-900">Inside Dhaka:</strong> ৳70 (Delivered within 24–48 hours)</p>
-                <p><strong className="font-semibold text-neutral-900">Outside Dhaka:</strong> ৳130 (Delivered via courier within 2–4 business days)</p>
-                <p><strong className="font-semibold text-neutral-900">Exchange Policy:</strong> Easy 3-day size exchange for unworn items with original invoice &amp; tag attached.</p>
-                <p><strong className="font-semibold text-neutral-900">Payment:</strong> Cash on Delivery available nationwide. You may inspect the seal before accepting delivery.</p>
-              </div>
-            ),
-          },
-          {
-            id: 'reviews' as const,
-            label: `Reviews (${reviews.length})`,
-            content: (
-              <div className="w-full space-y-6">
-                {reviews.length === 0 ? (
-                  <p className="text-xs sm:text-sm text-neutral-500 italic">No reviews yet. Be the first to review this product!</p>
-                ) : (
-                  <div className="space-y-3">
-                    {reviews.map((r) => (
-                      <div key={r.id} className="p-4 bg-neutral-50 border border-neutral-100 rounded-lg space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-xs sm:text-sm text-neutral-900">{r.customerName}</span>
-                          <div className="flex text-amber-400">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <Star key={i} className={`w-3.5 h-3.5 ${i < r.rating ? 'fill-amber-400' : 'text-neutral-200'}`} />
-                            ))}
-                          </div>
-                        </div>
-                        <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">{r.comment}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Submit Review Form */}
-                <div className="border-t border-neutral-200 pt-5 max-w-2xl">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-900 mb-3.5">Write a Customer Review</h4>
-                  {reviewSuccess ? (
-                    <div className="p-3 bg-emerald-50 text-emerald-800 text-xs rounded-lg">
-                      Thank you! Your review has been submitted and will appear upon moderation.
-                    </div>
-                  ) : (
-                    <form onSubmit={handleReviewSubmit} className="space-y-3.5">
-                      {reviewError && (
-                        <div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200">
-                          {reviewError}
-                        </div>
-                      )}
-                      <div>
-                        <label className="block text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-1">Rating</label>
-                        <div className="flex gap-1">
-                          {[1, 2, 3, 4, 5].map((num) => (
-                            <button
-                              key={num}
-                              type="button"
-                              onClick={() => setReviewRating(num)}
-                              className="p-1 cursor-pointer text-amber-400"
-                            >
-                              <Star className={`w-5 h-5 ${num <= reviewRating ? 'fill-amber-400' : 'text-neutral-200'}`} />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <FloatingInput
-                        compact
-                        label="Your Name (Optional)"
-                        type="text"
-                        value={reviewAuthor}
-                        onChange={(e) => setReviewAuthor(e.target.value)}
-                      />
-                      <FloatingTextarea
-                        label="Write your review *"
-                        required
-                        rows={3}
-                        value={reviewComment}
-                        onChange={(e) => setReviewComment(e.target.value)}
-                        placeholder="Share your experience regarding the fabric, fit, and finish..."
-                      />
-                      <button
-                        type="submit"
-                        disabled={reviewSubmitting}
-                        className="w-full sm:w-auto px-6 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-neutral-800"
-                      >
-                        {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
-                      </button>
-                    </form>
-                  )}
-                </div>
-              </div>
-            ),
-          },
-        ].map((section) => {
-          const isOpen = openAccordion === section.id;
-          return (
-            <div key={section.id} className="border-t border-neutral-200">
-              <button
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setOpenAccordion(isOpen ? null : section.id)}
-                className="w-full py-4 sm:py-5 flex items-center justify-between text-left cursor-pointer group"
-              >
-                <span className="text-sm sm:text-base font-bold text-neutral-900 group-hover:text-black transition-colors">
-                  {section.label}
-                </span>
-                {isOpen ? (
-                  <Minus className="w-4 h-4 text-neutral-700 shrink-0" />
-                ) : (
-                  <Plus className="w-4 h-4 text-neutral-700 shrink-0" />
-                )}
-              </button>
-              {isOpen && (
-                <div className="pb-6 animate-fade-in">
-                  {section.content}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
       {/* Related Products Section */}
       {relatedProducts.length > 0 && (
-        <section className="border-t border-neutral-200 pt-8 sm:pt-10">
-          <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-tight text-neutral-900 mb-6">
-            You May Also Like
-          </h2>
-          <ProductGrid
-            products={relatedProducts}
-            onNavigate={onNavigate}
-          />
+        <section className="px-4 sm:px-6 lg:px-0 pb-8 lg:pb-0">
+          <div className="border-t border-neutral-200 pt-8 sm:pt-10">
+            <h2 className="font-sans text-xl sm:text-2xl font-bold uppercase tracking-tight text-neutral-900 mb-6">
+              You May Also Like
+            </h2>
+            <ProductGrid
+              products={relatedProducts}
+              onNavigate={onNavigate}
+            />
+          </div>
         </section>
       )}
 

@@ -117,8 +117,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   return (
     <div className="space-y-7 sm:space-y-12">
       
-      {/* Banner Section — aligned left & right with Shop by Category / View All */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
+      {/* Banner Section — aligned left & right with header and category grid */}
+      <section className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
         {loadingBanners ? (
           <HeroBannerSkeleton />
         ) : activeBanner ? (
@@ -156,10 +156,10 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                   className={`w-full h-auto block select-none ${
                     hasBannerText ? 'opacity-80' : 'opacity-100'
                   }`}
-                  emptyFallback={<div className="w-full aspect-[16/9] bg-black" />}
+                  emptyFallback={<div className="w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] bg-black" />}
                 />
               ) : (
-                <div className="w-full aspect-[16/9] bg-black" />
+                <div className="w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] bg-black" />
               )}
 
               {hasBannerText && (
@@ -208,7 +208,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
       {/* Featured Categories */}
       {(loadingCategories || categories.length > 0) && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <section className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8">
           {loadingCategories ? (
             <>
               <div className="flex items-end justify-between mb-5 sm:mb-6">
@@ -251,7 +251,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
       )}
 
       {/* New Arrivals Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8">
         {loadingProducts ? (
           <div className="flex items-end justify-between mb-5 sm:mb-6">
             <div className="space-y-2">
@@ -287,7 +287,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
       {/* Brand Craftsmanship Spotlight */}
       <section className="bg-neutral-50 border-t border-neutral-200 py-12 sm:py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10 sm:gap-14 text-center md:text-left">
             <div className="space-y-3.5">
               <div className="w-11 h-11 rounded-lg bg-black text-white flex items-center justify-center mx-auto md:mx-0">

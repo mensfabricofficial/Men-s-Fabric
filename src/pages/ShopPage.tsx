@@ -166,7 +166,7 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
     priceMax < 15000;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
       
       {/* Top Breadcrumb & Page Title */}
       <div className="mb-4">

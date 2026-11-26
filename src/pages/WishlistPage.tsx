@@ -14,7 +14,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onNavigate }) => {
   const { addItem } = useCart();
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16">
+    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16">
       
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-neutral-200 gap-4 mb-8">
         <div>

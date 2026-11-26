@@ -187,7 +187,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
 
   if (!product) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
+      <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
         <h2 className="text-2xl font-bold text-neutral-900 mb-2">Product Not Found</h2>
         <p className="text-sm text-neutral-500 mb-6">The requested garment could not be found or has been discontinued.</p>
         <button
@@ -285,7 +285,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
       
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-4 sm:mb-6">

@@ -4,7 +4,7 @@ export const HeroBannerSkeleton: React.FC = () => {
   return (
     <div
       aria-hidden="true"
-      className="relative w-full aspect-[16/9] rounded-xl overflow-hidden border border-neutral-200/70 skeleton-shimmer select-none"
+      className="relative w-full min-h-[280px] sm:min-h-[480px] lg:min-h-[560px] rounded-xl overflow-hidden border border-neutral-200/70 skeleton-shimmer select-none"
     >
       <div className="absolute inset-0 flex items-center p-6 sm:p-14 lg:p-20">
         <div className="w-full max-w-md space-y-3 sm:space-y-5">
@@ -57,7 +57,7 @@ export const ProductCardSkeleton: React.FC = () => {
 
 export const ProductDetailsSkeleton: React.FC = () => {
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 select-none">
+    <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 select-none">
       <div className="h-3 w-48 skeleton-shimmer rounded-sm mb-4 sm:mb-6" />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-10 items-start">
         <div className="lg:col-span-6 aspect-square skeleton-shimmer rounded-lg border border-neutral-200/80" />

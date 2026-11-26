@@ -167,7 +167,7 @@ export const AdminBanners: React.FC = () => {
         ) : (
           banners.map((b) => (
             <div key={b.id} className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs flex flex-col justify-between">
-              <div className="relative aspect-[16/9] bg-neutral-900 overflow-hidden">
+              <div className="relative aspect-[12/5] bg-neutral-900 overflow-hidden">
                 {b.image && b.image.trim() ? (
                   <ProgressiveImage
                     src={b.image.trim()}
@@ -230,11 +230,11 @@ export const AdminBanners: React.FC = () => {
                   Banner Image
                 </label>
                 <p className="text-[11px] text-neutral-500 mb-2">
-                  Banner Size: <span className="font-bold text-neutral-900">1920 × 1080 px</span> (16:9 Full HD — displays cleanly without cropping on both Mobile & PC).
+                  Banner Size: <span className="font-bold text-neutral-900">1920 × 800 px</span> (Full-width PC ও Mobile-এ কোনো অংশ কাটা ছাড়াই দেখাবে).
                 </p>
 
                 {image.trim() && (
-                  <div className="relative aspect-[16/9] w-full rounded-lg overflow-hidden border border-neutral-200 bg-neutral-100 mb-2">
+                  <div className="relative aspect-[12/5] w-full rounded-lg overflow-hidden border border-neutral-200 bg-neutral-100 mb-2">
                     <ProgressiveImage
                       src={image.trim()}
                       alt="Banner Preview"

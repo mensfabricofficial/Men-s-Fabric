@@ -33,7 +33,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
     <footer className="bg-black text-white border-t border-neutral-800 pb-20 md:pb-0">
       {/* Trust Badges Bar */}
       <div className="border-b border-neutral-800 py-8 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="max-w-[1660px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
               <Truck className="w-4 h-4 text-neutral-300" />
@@ -77,7 +77,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
       </div>
 
       {/* Main Footer Links */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
+      <div className="max-w-[1660px] mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-10">
           
           {/* Brand Info & Official Logo */}

@@ -232,28 +232,9 @@ export const productService = {
     }
   },
 
-  // Synchronous instant accessors returning hydrated live memory or non-empty warm localStorage catalog
+  // Synchronous instant accessors returning hydrated live Firestore memory (returns null on cold boot until Firestore responds)
   getInstantActiveProducts(): Product[] | null {
-    if (liveActiveProducts !== null) return liveActiveProducts;
-    try {
-      const hasBackup = typeof window !== 'undefined' && localStorage.getItem(LOCAL_PRODUCTS_KEY) !== null;
-      if (hasBackup) {
-        const local = this.getLocalProducts().filter(
-          (p) =>
-            p.active !== false &&
-            p.approvalStatus !== 'pending_purchase' &&
-            p.approvalStatus !== 'pending_stock' &&
-            p.approvalStatus !== 'rejected'
-        );
-        if (local.length > 0) {
-          liveActiveProducts = local;
-          return local;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return null;
+    return liveActiveProducts;
   },
 
   getInstantAllProducts(): Product[] {
@@ -261,20 +242,7 @@ export const productService = {
   },
 
   getInstantCategories(): Category[] | null {
-    if (liveCategories !== null) return liveCategories;
-    try {
-      const hasBackup = typeof window !== 'undefined' && localStorage.getItem(LOCAL_CATEGORIES_KEY) !== null;
-      if (hasBackup) {
-        const local = this.getLocalCategories();
-        if (local.length > 0) {
-          liveCategories = local;
-          return local;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return null;
+    return liveCategories;
   },
 
   getInstantProductById(idOrSlug: string): Product | null {
@@ -285,8 +253,9 @@ export const productService = {
       const lowerParam = cleanParam.toLowerCase();
       const cached = cachedProductsMap.get(cleanParam) || cachedProductsMap.get(lowerParam);
       if (cached) return cached;
-      const localList = this.getLocalProducts();
-      const match = localList.find(
+      const liveList = liveAllProducts ?? liveActiveProducts;
+      if (!liveList) return null;
+      const match = liveList.find(
         (p) =>
           p.id === cleanParam ||
           getProductUrlSlug(p) === lowerParam ||

@@ -7,6 +7,7 @@ interface ProgressiveImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageEl
   wrapperClassName?: string;
   skeletonClassName?: string;
   emptyFallback?: React.ReactNode;
+  onReadyChange?: (ready: boolean) => void;
 }
 
 export const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
@@ -14,8 +15,9 @@ export const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
   alt,
   className = '',
   wrapperClassName = 'relative w-full h-full overflow-hidden bg-neutral-100',
-  skeletonClassName = 'bg-neutral-200/70 animate-pulse',
+  skeletonClassName = 'skeleton-shimmer',
   emptyFallback,
+  onReadyChange,
   onLoad,
   onError,
   ...imgProps
@@ -27,13 +29,20 @@ export const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
 
   useLayoutEffect(() => {
     setFailed(false);
-    const el = imgRef.current;
-    if (cleanSrc && el && el.complete && el.naturalWidth > 0) {
+    if (!cleanSrc) {
       setLoaded(true);
+      onReadyChange?.(true);
+      return;
+    }
+    const el = imgRef.current;
+    if (el && el.complete && el.naturalWidth > 0) {
+      setLoaded(true);
+      onReadyChange?.(true);
     } else {
       setLoaded(false);
+      onReadyChange?.(false);
     }
-  }, [cleanSrc]);
+  }, [cleanSrc, onReadyChange]);
 
   if (!cleanSrc || failed) {
     return (
@@ -57,11 +66,13 @@ export const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
         alt={alt}
         onLoad={(e) => {
           setLoaded(true);
+          onReadyChange?.(true);
           onLoad?.(e);
         }}
         onError={(e) => {
           setFailed(true);
           setLoaded(true);
+          onReadyChange?.(true);
           onError?.(e);
         }}
         className={`${className} transition-opacity duration-300 ${

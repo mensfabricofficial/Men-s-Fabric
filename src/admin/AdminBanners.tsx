@@ -156,7 +156,7 @@ export const AdminBanners: React.FC = () => {
           <div className="col-span-2 p-12 text-center text-neutral-500 bg-white rounded-xl border border-neutral-200">
             <ImageIcon className="w-10 h-10 text-neutral-300 mx-auto mb-2" />
             <h4 className="text-sm font-bold text-neutral-900 mb-1">No homepage banners</h4>
-            <p className="text-xs text-neutral-500 mb-4">Add a hero banner with custom headline and CTA button.</p>
+            <p className="text-xs text-neutral-500 mb-4">Upload a high-resolution hero banner image for your storefront homepage.</p>
             <button
               onClick={openAddModal}
               className="px-5 py-2 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-lg"
@@ -174,7 +174,7 @@ export const AdminBanners: React.FC = () => {
                     alt={b.title || 'Banner'}
                     wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-900"
                     skeletonClassName="bg-neutral-800/80 animate-pulse"
-                    className="w-full h-full object-cover opacity-80"
+                    className="w-full h-full object-cover opacity-85"
                   />
                 ) : null}
                 {(b.badge || b.title || b.subtitle) && (
@@ -207,10 +207,10 @@ export const AdminBanners: React.FC = () => {
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 text-xs animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 text-xs animate-fade-in">
             <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
               <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-900">
-                {editingBanner ? 'Edit Banner' : 'Create Hero Banner'}
+                {editingBanner ? 'Edit Banner' : 'Upload Hero Banner'}
               </h3>
               <button onClick={() => setModalOpen(false)} className="text-neutral-400 hover:text-black">
                 <X className="w-5 h-5" />
@@ -227,6 +227,49 @@ export const AdminBanners: React.FC = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block font-bold text-neutral-700 uppercase mb-1">
+                  Banner Image
+                </label>
+                <p className="text-[11px] text-neutral-500 mb-2">
+                  Banner Size: <span className="font-bold text-neutral-900">1920 × 1080 px</span> (16:9 Full HD — displays cleanly without cropping on both Mobile & PC).
+                </p>
+
+                {image.trim() && (
+                  <div className="relative aspect-[16/9] w-full rounded-lg overflow-hidden border border-neutral-200 bg-neutral-100 mb-2">
+                    <ProgressiveImage
+                      src={image.trim()}
+                      alt="Banner Preview"
+                      wrapperClassName="w-full h-full"
+                      className="w-full h-full object-cover object-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImage('')}
+                      aria-label="Remove banner image"
+                      className="absolute top-2 right-2 p-1 bg-black/75 hover:bg-black text-white rounded-full cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={image}
+                    onChange={(e) => setImage(e.target.value)}
+                    placeholder="https://... or upload high-res banner"
+                    className="flex-1 px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
+                  />
+                  <label className="px-3.5 py-2 bg-black text-white hover:bg-neutral-800 rounded font-bold cursor-pointer flex items-center gap-1.5 shrink-0">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{uploading ? 'Uploading...' : 'Upload'}</span>
+                    <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-neutral-700 uppercase mb-1">
                   Headline Title <span className="font-normal text-neutral-400 normal-case">(Optional — leave empty for image-only banner)</span>
                 </label>
                 <input
@@ -239,7 +282,9 @@ export const AdminBanners: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-neutral-700 uppercase mb-1">Subtitle / Tagline</label>
+                <label className="block font-bold text-neutral-700 uppercase mb-1">
+                  Subtitle / Tagline <span className="font-normal text-neutral-400 normal-case">(Optional)</span>
+                </label>
                 <input
                   type="text"
                   value={subtitle}
@@ -261,43 +306,14 @@ export const AdminBanners: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-neutral-700 uppercase mb-1">Button Text</label>
+                  <label className="block font-bold text-neutral-700 uppercase mb-1">Banner Click Link</label>
                   <input
                     type="text"
-                    value={buttonText}
-                    onChange={(e) => setButtonText(e.target.value)}
-                    placeholder="Leave empty to hide button"
+                    value={buttonLink}
+                    onChange={(e) => setButtonLink(e.target.value)}
+                    placeholder="/shop"
                     className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
                   />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-neutral-700 uppercase mb-1">Banner Click Link</label>
-                <input
-                  type="text"
-                  value={buttonLink}
-                  onChange={(e) => setButtonLink(e.target.value)}
-                  placeholder="/shop"
-                  className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-neutral-700 uppercase mb-1">Banner Image</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={image}
-                    onChange={(e) => setImage(e.target.value)}
-                    placeholder="https://... or upload high-res photo"
-                    className="flex-1 px-3 py-2 bg-neutral-50 border border-neutral-300 rounded"
-                  />
-                  <label className="px-3 py-2 bg-neutral-200 hover:bg-neutral-300 rounded font-bold cursor-pointer flex items-center gap-1.5 shrink-0">
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>{uploading ? 'Uploading...' : 'Upload'}</span>
-                    <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                  </label>
                 </div>
               </div>
 

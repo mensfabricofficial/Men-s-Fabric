@@ -192,32 +192,43 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
 
       {/* Top Horizontal Category Pills Bar (Touch-friendly & Smooth Scrolling) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4 scrollbar-none touch-pan-x">
-        <button
-          onClick={() => setSelectedCategory('')}
-          className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
-            !selectedCategory
-              ? 'bg-black text-white shadow-xs'
-              : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
-          }`}
-        >
-          All
-        </button>
-        {categories.map((c) => {
-          const isSelected = selectedCategory === c.id || selectedCategory === c.slug;
-          return (
+        {loading && categories.length === 0 ? (
+          Array.from({ length: 5 }).map((_, idx) => (
+            <div
+              key={idx}
+              className="h-8 w-20 rounded-full skeleton-shimmer shrink-0"
+            />
+          ))
+        ) : (
+          <>
             <button
-              key={c.id}
-              onClick={() => setSelectedCategory(isSelected ? '' : (c.slug || c.id))}
-              className={`px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
-                isSelected
+              onClick={() => setSelectedCategory('')}
+              className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+                !selectedCategory
                   ? 'bg-black text-white shadow-xs'
                   : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
               }`}
             >
-              {c.name}
+              All
             </button>
-          );
-        })}
+            {categories.map((c) => {
+              const isSelected = selectedCategory === c.id || selectedCategory === c.slug;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedCategory(isSelected ? '' : (c.slug || c.id))}
+                  className={`px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+                    isSelected
+                      ? 'bg-black text-white shadow-xs'
+                      : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                  }`}
+                >
+                  {c.name}
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
 
       {/* Filter & Sort Controls Bar (Responsive Mobile Grid + Desktop Flex) */}
@@ -398,9 +409,13 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
       {/* Product Catalog Grid */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <p className="text-xs text-neutral-500 font-medium">
-            Showing <span className="font-bold text-neutral-900">{filteredProducts.length}</span> {filteredProducts.length === 1 ? 'product' : 'products'}
-          </p>
+          {loading && allProducts.length === 0 ? (
+            <div className="h-4 w-32 rounded skeleton-shimmer" aria-hidden="true" />
+          ) : (
+            <p className="text-xs text-neutral-500 font-medium">
+              Showing <span className="font-bold text-neutral-900">{filteredProducts.length}</span> {filteredProducts.length === 1 ? 'product' : 'products'}
+            </p>
+          )}
         </div>
 
         <ProductGrid

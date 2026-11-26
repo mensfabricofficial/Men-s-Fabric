@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ShoppingBag, Eye, ChevronUp } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
 import { getProductUrlSlug } from '../../services/productService';
 import { ProgressiveImage } from '../common/ProgressiveImage';
+import { ProductCardSkeleton } from '../common/SkeletonLoader';
 
 interface ProductCardProps {
   product: Product;
@@ -29,6 +30,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (typeof product.thumbnail === 'string' && product.thumbnail.trim()) ||
     (Array.isArray(product.images) ? product.images.find((u) => typeof u === 'string' && u.trim())?.trim() : '') ||
     '';
+  const [cardReady, setCardReady] = useState(!primaryImage);
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
   const displaySku = product.sku || product.variants?.[0]?.sku || (product.id ? product.id.slice(0, 6).toUpperCase() : '277055');
@@ -70,15 +72,33 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <div
-      onClick={() => onNavigate(`/product/${getProductUrlSlug(product)}`)}
-      className="group relative flex flex-col bg-white overflow-hidden cursor-pointer select-none"
+      onClick={() => {
+        if (!cardReady) return;
+        onNavigate(`/product/${getProductUrlSlug(product)}`);
+      }}
+      className={`group relative flex flex-col bg-white overflow-hidden select-none ${
+        cardReady ? 'cursor-pointer' : 'cursor-default'
+      }`}
     >
+      {!cardReady && (
+        <div className="absolute inset-0 z-20 bg-white">
+          <ProductCardSkeleton />
+        </div>
+      )}
+
+      <div
+        aria-hidden={!cardReady}
+        className={`flex flex-col transition-opacity duration-300 ${
+          cardReady ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
       {/* Image container (Square 1:1, No auto image swap on hover) */}
       <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-lg border border-neutral-100 group-hover:border-neutral-200 transition-colors">
         <ProgressiveImage
           src={primaryImage}
           alt={product.name}
           decoding="async"
+          onReadyChange={setCardReady}
           wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
           className="w-full h-full object-cover object-center transition-all duration-700 ease-out group-hover:scale-105 will-change-transform"
         />
@@ -176,6 +196,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

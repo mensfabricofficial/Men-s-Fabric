@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, Tag, CheckCircle2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { EmptyState } from '../common/EmptyState';
@@ -15,6 +16,7 @@ interface CartDrawerProps {
 export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
   const {
     items,
+    coupons,
     isCartDrawerOpen,
     setIsCartDrawerOpen,
     removeItem,
@@ -23,6 +25,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
     discount,
     baseDeliveryCharge,
     isFreeDelivery,
+    isQtyFreeDelivery,
+    freeDeliveryMinQtyActive,
+    freeDeliveryMinQty,
     activeFreeDeliveryCoupon,
     appliedCoupon,
     applyCoupon,
@@ -76,19 +81,32 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
     };
   }, [isCartDrawerOpen, setIsCartDrawerOpen]);
 
-  if (!isCartDrawerOpen) return null;
-
   const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     setCouponError('');
-    if (!couponInput.trim()) return;
+    const needle = couponInput.trim().toUpperCase();
+    if (!needle) return;
 
     setCouponLoading(true);
     try {
-      const allCoupons = await settingsService.getCoupons();
-      const match = allCoupons.find(
-        (c) => (c.code || '').toUpperCase() === couponInput.trim().toUpperCase()
-      );
+      let fetchedCoupons: typeof coupons = [];
+      try {
+        fetchedCoupons = await Promise.race([
+          settingsService.getCoupons(),
+          new Promise<typeof coupons>((resolve) => setTimeout(() => resolve([]), 2500)),
+        ]);
+      } catch {
+        fetchedCoupons = [];
+      }
+      const combinedMap = new Map<string, (typeof coupons)[number]>();
+      coupons.forEach((c) => combinedMap.set(c.id, c));
+      fetchedCoupons.forEach((c) => combinedMap.set(c.id, c));
+      const allCoupons = Array.from(combinedMap.values());
+
+      const match = settingsService.findBestCouponByCode(allCoupons, needle, {
+        uid: currentUser?.uid,
+        email: currentUser?.email,
+      });
       if (!match) {
         setCouponError('Invalid coupon code.');
       } else {
@@ -109,23 +127,35 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
   const totalQty = items.reduce((s, i) => s + i.quantity, 0);
 
   return (
-    <div
-      className={`fixed inset-x-0 bottom-0 sm:inset-0 overflow-hidden ${
-        mobileLayout.isMobile ? 'z-[45]' : 'z-50'
-      }`}
-      style={mobileLayout.isMobile ? { top: `${mobileLayout.topOffset}px` } : undefined}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Shopping Cart"
-    >
-      {/* Backdrop (Desktop side-drawer dimmer) */}
-      <div
-        className="hidden sm:block fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
-        onClick={() => setIsCartDrawerOpen(false)}
-      />
+    <AnimatePresence>
+      {isCartDrawerOpen && (
+        <div
+          className={`fixed inset-x-0 bottom-0 sm:inset-0 overflow-hidden ${
+            mobileLayout.isMobile ? 'z-[45]' : 'z-50'
+          }`}
+          style={mobileLayout.isMobile ? { top: `${mobileLayout.topOffset}px` } : undefined}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Shopping Cart"
+        >
+          {/* Backdrop (Desktop side-drawer dimmer) */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22 }}
+            className="hidden sm:block fixed inset-0 bg-black/60 backdrop-blur-xs"
+            onClick={() => setIsCartDrawerOpen(false)}
+          />
 
-      <div className="relative w-full h-full sm:fixed sm:inset-y-0 sm:left-auto sm:right-0 sm:w-auto max-w-full flex sm:pl-10">
-        <div className="w-full sm:w-screen sm:max-w-md h-full sm:h-dvh bg-white sm:shadow-2xl flex flex-col justify-between animate-fade-in sm:animate-slide-in-right">
+          <div className="relative w-full h-full sm:fixed sm:inset-y-0 sm:left-auto sm:right-0 sm:w-auto max-w-full flex sm:pl-10">
+            <motion.div
+              initial={mobileLayout.isMobile ? { opacity: 0, y: 18 } : { x: '100%' }}
+              animate={mobileLayout.isMobile ? { opacity: 1, y: 0 } : { x: 0 }}
+              exit={mobileLayout.isMobile ? { opacity: 0, y: 14 } : { x: '100%' }}
+              transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+              className="w-full sm:w-screen sm:max-w-md h-full sm:h-dvh bg-white sm:shadow-2xl flex flex-col justify-between"
+            >
           
           {/* Header */}
           <div className="px-4 py-3 sm:p-5 border-b border-neutral-100 sm:border-neutral-200 flex items-center justify-between bg-white shrink-0">
@@ -161,7 +191,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                 />
               </div>
             ) : (
-              items.map((item, idx) => {
+              <AnimatePresence initial={false} mode="popLayout">
+              {items.map((item) => {
                 const regPrice = Number(item.price) || 0;
                 const salePrice = typeof item.salePrice === 'number' && item.salePrice > 0 ? item.salePrice : 0;
                 const itemPrice = salePrice > 0 ? salePrice : regPrice;
@@ -173,7 +204,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                   sku: item.sku,
                 });
                 return (
-                  <div key={`${item.productId}-${item.size}-${item.color}-${idx}`} className="py-3.5 sm:py-4 flex gap-3 sm:gap-4">
+                  <motion.div
+                    layout
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: 24, transition: { duration: 0.18 } }}
+                    transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                    key={`${item.productId}-${item.size}-${item.color}`}
+                    className="py-3.5 sm:py-4 flex gap-3 sm:gap-4"
+                  >
                     <div
                       onClick={() => {
                         setIsCartDrawerOpen(false);
@@ -251,9 +290,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 );
-              })
+              })}
+              </AnimatePresence>
             )}
           </div>
 
@@ -287,7 +327,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                       labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
                       type="text"
                       value={couponInput}
-                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      onChange={(e) => {
+                        setCouponInput(e.target.value.toUpperCase());
+                        if (couponError) setCouponError('');
+                      }}
                       className="uppercase"
                     />
                     <button
@@ -299,12 +342,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
                     </button>
                   </form>
                 )}
-                {!appliedCoupon && isFreeDelivery && activeFreeDeliveryCoupon && (
-                  <div className="mt-2 flex items-center gap-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 font-semibold">
+                {isQtyFreeDelivery ? (
+                  <div className="mt-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Free Delivery unlocked ({freeDeliveryMinQty}+ products offer)!</span>
+                  </div>
+                ) : !appliedCoupon && isFreeDelivery && activeFreeDeliveryCoupon ? (
+                  <div className="mt-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 font-semibold">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     <span>One-Time Free Delivery unlocked ({activeFreeDeliveryCoupon.code})!</span>
                   </div>
-                )}
+                ) : freeDeliveryMinQtyActive && freeDeliveryMinQty > 0 && !isFreeDelivery && totalQty < freeDeliveryMinQty ? (
+                  <p className="text-[11px] text-neutral-600 mt-1.5 font-medium">
+                    Add <b className="text-neutral-900">{freeDeliveryMinQty - totalQty}</b> more{' '}
+                    {freeDeliveryMinQty - totalQty === 1 ? 'product' : 'products'} for{' '}
+                    <span className="text-emerald-700 font-semibold">Free Delivery</span>.
+                  </p>
+                ) : null}
                 {couponError && <p className="text-[11px] text-red-600 mt-1">{couponError}</p>}
               </div>
 
@@ -346,8 +400,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
               )}
 
               {/* Checkout Action */}
-              <button
+              <motion.button
                 type="button"
+                whileTap={{ scale: 0.97 }}
                 onClick={() => {
                   setIsCartDrawerOpen(false);
                   if (!currentUser) {
@@ -360,11 +415,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({ onNavigate }) => {
               >
                 <span>{currentUser ? 'Proceed to Checkout' : 'Sign In to Order'}</span>
                 <ArrowRight className="w-4 h-4" />
-              </button>
+              </motion.button>
             </div>
           )}
+            </motion.div>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </AnimatePresence>
   );
 };

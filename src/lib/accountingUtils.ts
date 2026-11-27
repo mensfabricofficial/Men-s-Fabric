@@ -46,17 +46,109 @@ export const EXPENSE_QUICK_PRESETS: Array<{
   { title: 'Shop Maintenance & Lighting', category: 'maintenance', paymentMethod: 'cash' },
 ];
 
+const DEFAULT_ZONE_CHARGES: Array<{ id: string; name: string; charge: number }> = [
+  { id: 'dhaka', name: 'Inside Dhaka City', charge: 70 },
+  { id: 'outside-dhaka', name: 'Outside Dhaka (Nationwide)', charge: 130 },
+];
+
+function readConfiguredDeliveryZones(): Array<{ id?: string; name?: string; charge?: number }> {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('selvee_delivery_zones_v3');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return DEFAULT_ZONE_CHARGES;
+}
+
+/**
+ * Resolves the courier delivery charge absorbed by the seller when a customer
+ * receives Free Delivery (deliveryCharge === 0 on a delivered/courier order).
+ * Returns 0 when the customer paid delivery (deliveryCharge > 0) or for POS
+ * in-store pickup orders where no courier delivery is required.
+ */
+export function getOrderFreeDeliveryFee(ord?: Order | null): number {
+  if (!ord) return 0;
+  const customerShipping = Math.max(
+    0,
+    Number(ord.deliveryCharge ?? ord.pipeline?.financialSnapshot?.shippingCharge ?? 0) || 0
+  );
+  if (customerShipping > 0) return 0;
+
+  if (ord.orderChannel === 'pos' && !ord.deliveryRequired) return 0;
+
+  const isFreeDeliveryOrder =
+    Boolean(ord.freeDeliveryApplied) ||
+    ord.orderChannel !== 'pos' ||
+    Boolean(ord.deliveryRequired);
+
+  if (!isFreeDeliveryOrder) return 0;
+
+  const recFee = ord.pipeline?.codReconciliation?.freeDeliveryFee;
+  if (typeof recFee === 'number' && !isNaN(recFee)) {
+    return Math.max(0, recFee);
+  }
+  if (typeof ord.freeDeliveryCost === 'number' && !isNaN(ord.freeDeliveryCost)) {
+    return Math.max(0, ord.freeDeliveryCost);
+  }
+  const snapFee = ord.pipeline?.financialSnapshot?.freeDeliveryCharge;
+  if (typeof snapFee === 'number' && !isNaN(snapFee)) {
+    return Math.max(0, snapFee);
+  }
+
+  const zones = readConfiguredDeliveryZones();
+  const zoneStr = (ord.deliveryZone || '').trim().toLowerCase();
+  const districtStr = (ord.shippingAddress?.district || '').trim().toLowerCase();
+
+  if (zoneStr && !zoneStr.includes('walk-in') && !zoneStr.includes('in-store')) {
+    const exactMatch = zones.find((z) => (z.name || '').trim().toLowerCase() === zoneStr);
+    if (exactMatch && typeof exactMatch.charge === 'number') {
+      return Math.max(0, exactMatch.charge);
+    }
+    if (zoneStr.includes('outside')) {
+      const outZone = zones.find(
+        (z) => z.id === 'outside-dhaka' || (z.name || '').toLowerCase().includes('outside')
+      );
+      return Math.max(0, Number(outZone?.charge ?? 130) || 130);
+    }
+    if (zoneStr.includes('inside') || zoneStr.includes('dhaka')) {
+      const inZone = zones.find(
+        (z) => z.id === 'dhaka' || (z.name || '').toLowerCase().includes('inside')
+      );
+      return Math.max(0, Number(inZone?.charge ?? 70) || 70);
+    }
+  }
+
+  if (districtStr && districtStr !== 'dhaka') {
+    const outZone = zones.find(
+      (z) => z.id === 'outside-dhaka' || (z.name || '').toLowerCase().includes('outside')
+    );
+    return Math.max(0, Number(outZone?.charge ?? 130) || 130);
+  }
+
+  const inZone = zones.find(
+    (z) => z.id === 'dhaka' || (z.name || '').toLowerCase().includes('inside')
+  );
+  return Math.max(0, Number(inZone?.charge ?? 70) || 70);
+}
+
 export function getOrderRecognizedSale(ord: Order): number {
   if (!ord) return 0;
   const total = Number(ord.total) || 0;
   const rec = ord.pipeline?.codReconciliation;
   const codCharge = Math.max(0, Number(rec?.codCharge ?? ord.codCharge ?? 0) || 0);
+  const deliv = Math.max(0, Number(ord.deliveryCharge) || 0);
+  const freeDelivFee = getOrderFreeDeliveryFee(ord);
 
   if (rec?.resolved && typeof rec.collectedCash === 'number') {
     const expectedCash = Math.max(0, Number(rec.expectedCash ?? 0));
     const preCollectionPaid = Math.max(0, total - expectedCash);
-    const deliv = Math.max(0, Number(ord.deliveryCharge) || 0);
-    return Math.max(0, preCollectionPaid + rec.collectedCash - deliv - codCharge);
+    return Math.max(0, preCollectionPaid + rec.collectedCash - deliv - freeDelivFee - codCharge);
   }
   if (typeof ord.netSaleAmount === 'number' && !isNaN(ord.netSaleAmount)) {
     return Math.max(0, ord.netSaleAmount);
@@ -64,7 +156,7 @@ export function getOrderRecognizedSale(ord: Order): number {
   if (rec?.resolved && typeof rec.finalSaleAmount === 'number' && !isNaN(rec.finalSaleAmount)) {
     return Math.max(0, rec.finalSaleAmount);
   }
-  return Math.max(0, total - codCharge);
+  return Math.max(0, total - freeDelivFee - codCharge);
 }
 
 export function getOrderPaidAndDue(ord: Order): { total: number; paid: number; due: number } {
@@ -475,11 +567,12 @@ export function computePeriodAccounting(params: {
       otherDiscounts += disc;
     }
     const deliv = Number(ord.deliveryCharge) || 0;
+    const freeDelivFee = getOrderFreeDeliveryFee(ord);
     const isCodReconciledOrder = Boolean(
       ord.pipeline?.codReconciliation?.resolved ||
         (typeof ord.netSaleAmount === 'number' && !isNaN(ord.netSaleAmount))
     );
-    const netMerch = Math.max(0, subtotal - disc - orderCodCharge);
+    const netMerch = Math.max(0, subtotal - disc - freeDelivFee - orderCodCharge);
     const orderNetMerch = isCodReconciledOrder
       ? recognizedSale
       : recognizedSale > 0

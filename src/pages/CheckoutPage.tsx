@@ -7,7 +7,6 @@ import {
   CheckCircle, 
   AlertCircle,
   Lock,
-  Tag,
   Copy,
   Check,
   Upload,
@@ -56,9 +55,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
     baseDeliveryCharge,
     deliveryCharge, 
     isFreeDelivery,
+    isQtyFreeDelivery,
+    freeDeliveryMinQtyActive,
+    freeDeliveryMinQty,
     activeFreeDeliveryCoupon,
     grandTotal, 
     appliedCoupon, 
+    setCustomerContactHint,
     deliveryZones,
     selectedZone,
     setSelectedZone,
@@ -67,7 +70,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const { currentUser, customerProfile } = useAuth();
 
   // Settings for Payment Gateways & Online Discount
-  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(defaultPaymentSettings);
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(
+    () => settingsService.getInstantSettings()?.paymentSettings || defaultPaymentSettings
+  );
 
   // Form Fields
   const initialDivision = normalizeDivisionName(customerProfile?.division);
@@ -130,11 +135,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   }, [deliveryZones]);
 
   useEffect(() => {
-    settingsService.getSettings().then((s) => {
+    const unsub = settingsService.subscribeToSettings((s) => {
       if (s.paymentSettings) {
         setPaymentSettings(s.paymentSettings);
       }
     });
+    return () => unsub();
   }, []);
 
   // Auto-fill empty checkout fields once customer profile or user auth finishes loading
@@ -158,6 +164,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
       setPostCode((prev) => prev || customerProfile.postalCode || '');
     }
   }, [customerProfile, currentUser]);
+
+  // Share entered checkout contact info with CartContext so targeted coupons validate cleanly
+  useEffect(() => {
+    setCustomerContactHint({
+      email: email.trim() || undefined,
+      phone: phone.trim() || undefined,
+    });
+  }, [email, phone, setCustomerContactHint]);
 
   useEffect(() => {
     if (!gatewayDropdownOpen && !zoneDropdownOpen) return;
@@ -273,10 +287,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
   const effectiveGrandTotal = Math.max(0, subtotal - discount + effectiveDeliveryCharge);
   const needsAdvancePayment = paymentMode === 'online' || (paymentMode === 'cod' && effectiveDeliveryCharge > 0);
 
-  // Calculate Online Payment Discount
+  // Calculate Online Payment Discount (only active when value > 0)
+  const hasOnlineDiscount =
+    Boolean(paymentSettings.onlineDiscountActive) &&
+    Number(paymentSettings.onlineDiscountValue || 0) > 0;
   const isOnlinePayment = paymentMode === 'online';
   let onlineDiscount = 0;
-  if (isOnlinePayment && paymentSettings.onlineDiscountActive) {
+  if (isOnlinePayment && hasOnlineDiscount) {
     if (paymentSettings.onlineDiscountType === 'percentage') {
       onlineDiscount = Math.round((subtotal * paymentSettings.onlineDiscountValue) / 100);
     } else {
@@ -750,7 +767,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                   <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] flex items-center justify-center font-bold">4</span>
                   <span>Payment Method</span>
                 </h2>
-                {paymentSettings.onlineDiscountActive && (
+                {hasOnlineDiscount && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">
                     <Sparkles className="w-3 h-3 text-emerald-600" />
                     <span>Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} with Online Payment</span>
@@ -824,14 +841,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                           <img src={MFS_LOGOS.rocket} alt="Rocket" className="h-5 w-7 rounded object-cover border border-neutral-200" />
                         </div>
                       </div>
-                      {paymentSettings.onlineDiscountActive && (
+                      {hasOnlineDiscount && (
                         <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-bold">
                           Save {paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`}
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-neutral-500 mt-1">
-                      Pay online via bKash, Nagad, or Rocket with {paymentSettings.onlineDiscountActive ? `${paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} discount` : 'instant confirmation'}; ৳0 due at delivery.
+                      Pay online via bKash, Nagad, or Rocket with {hasOnlineDiscount ? `${paymentSettings.onlineDiscountType === 'percentage' ? `${paymentSettings.onlineDiscountValue}%` : `৳${paymentSettings.onlineDiscountValue}`} discount` : 'instant confirmation'}; ৳0 due at delivery.
                     </p>
                   </div>
                 </div>
@@ -872,7 +889,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                       <p className="text-[11px] mt-0.5 opacity-90">
                         {paymentMode === 'cod'
                           ? `Remaining balance of ৳${Math.max(0, subtotal - discount).toLocaleString('en-BD')} will be collected in cash by the courier upon delivery.`
-                          : `You save ৳${onlineDiscount} with online payment. ৳0 will be payable upon delivery.`}
+                          : onlineDiscount > 0
+                            ? `You save ৳${onlineDiscount} with online payment. ৳0 will be payable upon delivery.`
+                            : 'Instant online payment selected. ৳0 will be payable upon delivery.'}
                       </p>
                     </div>
                   </div>
@@ -1124,6 +1143,31 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onNavigate }) => {
                 );
               })}
             </div>
+
+            {/* Quantity-based Free Delivery Progress / Status */}
+            {isQtyFreeDelivery ? (
+              <div className="pt-3 border-t border-neutral-200">
+                <div className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-800 font-semibold">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Free Delivery applied automatically ({freeDeliveryMinQty}+ products offer)!</span>
+                </div>
+              </div>
+            ) : freeDeliveryMinQtyActive &&
+              freeDeliveryMinQty > 0 &&
+              !effectiveFreeDelivery &&
+              items.reduce((s, i) => s + i.quantity, 0) < freeDeliveryMinQty ? (
+              <div className="pt-3 border-t border-neutral-200">
+                <p className="text-[11px] text-neutral-600 font-medium">
+                  Add{' '}
+                  <b className="text-neutral-900">
+                    {freeDeliveryMinQty - items.reduce((s, i) => s + i.quantity, 0)}
+                  </b>{' '}
+                  more product
+                  {freeDeliveryMinQty - items.reduce((s, i) => s + i.quantity, 0) > 1 ? 's' : ''} for{' '}
+                  <span className="text-emerald-700 font-semibold">Free Delivery</span>.
+                </p>
+              </div>
+            ) : null}
 
             {/* Cost Breakdown */}
             <div className="space-y-2.5 pt-3 border-t border-neutral-200 text-xs">

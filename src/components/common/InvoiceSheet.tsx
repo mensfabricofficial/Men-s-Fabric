@@ -3,7 +3,12 @@ import { Order, SiteSettings } from '../../types';
 import { BrandLogo } from './BrandLogo';
 import { settingsService, defaultSettings } from '../../services/settingsService';
 import { formatDatePart, formatTimePart } from '../../lib/dateFormat';
-import { getOrderPaidAndDue, getOrderCustomerPaidAndDue, getOrderRecognizedSale } from '../../lib/accountingUtils';
+import {
+  getOrderPaidAndDue,
+  getOrderCustomerPaidAndDue,
+  getOrderRecognizedSale,
+  getOrderFreeDeliveryFee,
+} from '../../lib/accountingUtils';
 
 interface InvoiceSheetProps {
   order: Order;
@@ -39,6 +44,7 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'cu
   const dueOnDelivery = isFinalSale ? netAmounts.due : customerAmounts.due;
 
   const rec = order.pipeline?.codReconciliation;
+  const freeDelivFee = getOrderFreeDeliveryFee(order);
   const courierCodCharge = Math.max(0, Number(rec?.codCharge ?? order.codCharge ?? 0) || 0);
   const expectedNetProducts = Math.max(
     0,
@@ -55,7 +61,7 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'cu
   const finalSaleTotal =
     rec?.resolved || typeof order.netSaleAmount === 'number'
       ? getOrderRecognizedSale(order)
-      : Math.max(0, expectedNetProducts - courierCodCharge);
+      : Math.max(0, expectedNetProducts - freeDelivFee - courierCodCharge);
 
   const showCustomerId =
     Boolean(order.customerId) &&
@@ -249,6 +255,14 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'cu
                   </span>
                 </div>
               )}
+              {freeDelivFee > 0 && (
+                <div className="flex justify-between gap-3 text-red-700 font-medium">
+                  <span>Free Delivery Fee (Seller)</span>
+                  <span className="font-mono tabular-nums">
+                    -৳{freeDelivFee.toLocaleString('en-BD')}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between gap-3 text-red-700 font-medium">
                 <span>COD Charge</span>
                 <span className="font-mono tabular-nums">
@@ -413,6 +427,13 @@ export const InvoiceSheet: React.FC<InvoiceSheetProps> = ({ order, variant = 'cu
                 <div className="flex justify-between text-neutral-500">
                   <span>Delivery Charge (Separate)</span>
                   <span className="font-mono tabular-nums">৳{deliveryAmt.toLocaleString('en-BD')}</span>
+                </div>
+              )}
+
+              {freeDelivFee > 0 && (
+                <div className="flex justify-between text-red-700 font-medium">
+                  <span>Free Delivery Fee (From Product)</span>
+                  <span className="font-mono tabular-nums">-৳{freeDelivFee.toLocaleString('en-BD')}</span>
                 </div>
               )}
 

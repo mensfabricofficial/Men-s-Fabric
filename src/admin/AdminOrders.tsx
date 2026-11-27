@@ -35,7 +35,11 @@ import { printElementById } from '../lib/printHelper';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
 import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
-import { getOrderPaidAndDue } from '../lib/accountingUtils';
+import {
+  getOrderPaidAndDue,
+  getOrderRecognizedSale,
+  getOrderFreeDeliveryFee,
+} from '../lib/accountingUtils';
 import { AdminPageHeader } from './AdminLayout';
 
 export const AdminOrders: React.FC = () => {
@@ -705,6 +709,12 @@ export const AdminOrders: React.FC = () => {
                           selectedOrder.paymentStatus.toUpperCase()}
                     </b>
                   </span>
+                  {getOrderFreeDeliveryFee(selectedOrder) > 0 && (
+                    <span className="font-mono text-neutral-700">
+                      Free Delivery Fee: <b className="text-red-700">-৳{getOrderFreeDeliveryFee(selectedOrder).toLocaleString('en-BD')}</b> · Net Sale:{' '}
+                      <b className="text-emerald-700">৳{getOrderRecognizedSale(selectedOrder).toLocaleString('en-BD')}</b>
+                    </span>
+                  )}
                 </div>
               </div>
 

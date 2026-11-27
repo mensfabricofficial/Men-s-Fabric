@@ -1,8 +1,13 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { CartItem, Coupon, DeliveryZone } from '../types';
-import { settingsService } from '../services/settingsService';
+import { CartItem, Coupon, DeliveryZone, SiteSettings } from '../types';
+import { settingsService, defaultSettings, getLocalSettings } from '../services/settingsService';
 import { orderService } from '../services/orderService';
 import { useAuth } from './AuthContext';
+
+export interface CustomerContactHint {
+  email?: string | null;
+  phone?: string | null;
+}
 
 interface CartContextType {
   items: CartItem[];
@@ -12,8 +17,9 @@ interface CartContextType {
   clearCart: () => void;
   coupons: Coupon[];
   appliedCoupon: Coupon | null;
-  applyCoupon: (coupon: Coupon) => { success: boolean; message: string };
+  applyCoupon: (coupon: Coupon, identityOverride?: CustomerContactHint) => { success: boolean; message: string };
   removeCoupon: () => void;
+  setCustomerContactHint: (hint: CustomerContactHint) => void;
   deliveryZones: DeliveryZone[];
   selectedZone: DeliveryZone | null;
   setSelectedZone: (zone: DeliveryZone) => void;
@@ -22,6 +28,9 @@ interface CartContextType {
   baseDeliveryCharge: number;
   deliveryCharge: number;
   isFreeDelivery: boolean;
+  isQtyFreeDelivery: boolean;
+  freeDeliveryMinQtyActive: boolean;
+  freeDeliveryMinQty: number;
   activeFreeDeliveryCoupon: Coupon | null;
   grandTotal: number;
   totalItems: number;
@@ -76,6 +85,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [coupons, setCoupons] = useState<Coupon[]>(() => settingsService.getInstantCoupons());
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(
+    () => settingsService.getInstantSettings() || getLocalSettings() || defaultSettings
+  );
   const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(() =>
     settingsService.getInstantDeliveryZones()
   );
@@ -85,6 +97,15 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
   const [orderConsumedCodes, setOrderConsumedCodes] = useState<string[]>([]);
+  const [customerContactHint, setCustomerContactHint] = useState<CustomerContactHint>({});
+
+  // Real-time synchronization of site settings (for quantity-based Free Delivery rule)
+  useEffect(() => {
+    const unsub = settingsService.subscribeToSettings((s) => {
+      setSiteSettings(s);
+    });
+    return () => unsub();
+  }, []);
 
   // Real-time synchronization of coupons (for auto free delivery & one-time voucher checks)
   useEffect(() => {
@@ -94,13 +115,30 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsub();
   }, []);
 
-  // Track coupons already used in non-cancelled orders so 1-time Free Delivery never returns
+  // Track coupons already used in THIS customer's non-cancelled orders so 1-time passes never return
   useEffect(() => {
     let active = true;
+    const myUid = currentUser?.uid?.trim() || '';
+    const myEmail = (currentUser?.email || customerContactHint.email || '').trim().toLowerCase();
+    const myPhoneDigits = (customerProfile?.phone || customerContactHint.phone || '').replace(/[^0-9]/g, '').slice(-10);
+
+    const isMyOrder = (o: { customerId?: string; customerEmail?: string; customerPhone?: string; shippingAddress?: { email?: string; phone?: string } }) => {
+      if (myUid && o.customerId && o.customerId === myUid) return true;
+      const oEmail = (o.customerEmail || o.shippingAddress?.email || '').trim().toLowerCase();
+      if (myEmail && oEmail && oEmail === myEmail) return true;
+      const oPhone = (o.customerPhone || o.shippingAddress?.phone || '').replace(/[^0-9]/g, '').slice(-10);
+      if (myPhoneDigits.length >= 10 && oPhone === myPhoneDigits) return true;
+      return false;
+    };
+
     const collectFromInstant = () => {
+      if (!myUid && !myEmail && myPhoneDigits.length < 10) {
+        if (active) setOrderConsumedCodes([]);
+        return;
+      }
       const codes = orderService
         .getInstantOrders()
-        .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+        .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode && isMyOrder(o))
         .map((o) => o.couponCode!.trim().toUpperCase());
       if (active) setOrderConsumedCodes(Array.from(new Set(codes)));
     };
@@ -117,7 +155,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!active) return;
         const instantCodes = orderService
           .getInstantOrders()
-          .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
+          .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode && isMyOrder(o))
           .map((o) => o.couponCode!.trim().toUpperCase());
         const remoteCodes = remoteOrders
           .filter((o) => o.orderStatus !== 'cancelled' && o.couponCode)
@@ -135,7 +173,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       active = false;
       window.removeEventListener('mf_orders_updated', onOrdersUpdated);
     };
-  }, [currentUser?.uid, currentUser?.email, customerProfile?.phone]);
+  }, [currentUser?.uid, currentUser?.email, customerProfile?.phone, customerContactHint.email, customerContactHint.phone]);
 
   const consumedCouponTokens = React.useMemo(() => {
     const set = new Set<string>();
@@ -144,23 +182,23 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     orderConsumedCodes.forEach((code) => {
       const matched = coupons.find((c) => c.code.toUpperCase() === code);
-      // Mark consumed if free_delivery or 1-time voucher
-      if (!matched || matched.discountType === 'free_delivery' || (matched.usageLimit || 0) <= 1) {
+      // Only mark consumed per customer if it is strictly a 1-time voucher
+      if (matched && settingsService.isOneTimeCoupon(matched)) {
         set.add(code);
-        if (matched?.id) set.add(matched.id.trim().toUpperCase());
+        if (matched.id) set.add(matched.id.trim().toUpperCase());
       }
     });
     return set;
   }, [customerProfile?.consumedCoupons, orderConsumedCodes, coupons]);
 
-  // Automatically invalidate stored appliedCoupon if exhausted/disabled/consumed or belongs to another user
+  // Automatically invalidate stored appliedCoupon if disabled/expired/exhausted or belongs to another user
   useEffect(() => {
     if (!appliedCoupon) return;
-    const latest = coupons.find((c) => c.id === appliedCoupon.id || c.code === appliedCoupon.code);
+    const latest = coupons.find((c) => c.id === appliedCoupon.id);
     const identity = {
       uid: currentUser?.uid,
-      email: currentUser?.email,
-      phone: customerProfile?.phone,
+      email: currentUser?.email || customerContactHint.email,
+      phone: customerProfile?.phone || customerContactHint.phone,
     };
     const targetCoupon = latest || appliedCoupon;
     if (
@@ -169,7 +207,16 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ) {
       setAppliedCoupon(null);
     }
-  }, [coupons, appliedCoupon, consumedCouponTokens, currentUser?.uid, currentUser?.email, customerProfile?.phone]);
+  }, [
+    coupons,
+    appliedCoupon,
+    consumedCouponTokens,
+    currentUser?.uid,
+    currentUser?.email,
+    customerProfile?.phone,
+    customerContactHint.email,
+    customerContactHint.phone,
+  ]);
 
   // Single-source real-time synchronization of delivery zones via settingsService
   useEffect(() => {
@@ -267,24 +314,48 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const userIdentity = {
     uid: currentUser?.uid,
-    email: currentUser?.email,
-    phone: customerProfile?.phone,
+    email: currentUser?.email || customerContactHint.email,
+    phone: customerProfile?.phone || customerContactHint.phone,
   };
+
+  const liveAppliedCoupon = appliedCoupon
+    ? coupons.find((c) => c.id === appliedCoupon.id) || appliedCoupon
+    : null;
 
   // Validate and calculate coupon discount safely
   let discount = 0;
-  if (appliedCoupon && subtotal > 0 && appliedCoupon.discountType !== 'free_delivery') {
-    if (subtotal < (appliedCoupon.minOrderAmount || 0)) {
+  if (liveAppliedCoupon && subtotal > 0 && liveAppliedCoupon.discountType !== 'free_delivery') {
+    const minReq = Number(liveAppliedCoupon.minOrderAmount) || 0;
+    const discVal = Number(liveAppliedCoupon.discountAmount) || 0;
+    const maxCap = Number(liveAppliedCoupon.maxDiscount) || 0;
+    if (subtotal < minReq) {
       discount = 0;
     } else {
-      if (appliedCoupon.discountType === 'percentage') {
-        const calc = Math.round((subtotal * appliedCoupon.discountAmount) / 100);
-        discount = appliedCoupon.maxDiscount ? Math.min(calc, appliedCoupon.maxDiscount) : calc;
+      if (liveAppliedCoupon.discountType === 'percentage') {
+        const calc = Math.round((subtotal * discVal) / 100);
+        discount = maxCap > 0 ? Math.min(calc, maxCap) : calc;
       } else {
-        discount = Math.min(appliedCoupon.discountAmount, subtotal);
+        discount = Math.min(discVal, subtotal);
       }
     }
   }
+
+  const totalItems = items.reduce((sum, i) => sum + Math.max(1, Number(i.quantity) || 1), 0);
+  const freeDeliveryMinQtyActive =
+    siteSettings.freeDeliveryMinQtyActive ?? defaultSettings.freeDeliveryMinQtyActive ?? true;
+  const freeDeliveryMinQty = Math.max(
+    0,
+    Math.floor(
+      Number(
+        typeof siteSettings.freeDeliveryMinQty === 'number'
+          ? siteSettings.freeDeliveryMinQty
+          : (defaultSettings.freeDeliveryMinQty ?? 2)
+      ) || 0
+    )
+  );
+  const isQtyFreeDelivery = Boolean(
+    freeDeliveryMinQtyActive && freeDeliveryMinQty > 0 && totalItems >= freeDeliveryMinQty
+  );
 
   // Check manual or auto-applied 1-time Free Delivery voucher
   const autoFreeDeliveryCoupon = settingsService.getActiveFreeDeliveryForUser(
@@ -293,27 +364,36 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     consumedCouponTokens
   );
   const activeFreeDeliveryCoupon =
-    appliedCoupon &&
-    appliedCoupon.discountType === 'free_delivery' &&
-    settingsService.isCouponValidForUse(appliedCoupon, consumedCouponTokens) &&
-    subtotal >= (appliedCoupon.minOrderAmount || 0)
-      ? appliedCoupon
-      : autoFreeDeliveryCoupon && subtotal >= (autoFreeDeliveryCoupon.minOrderAmount || 0)
+    liveAppliedCoupon &&
+    liveAppliedCoupon.discountType === 'free_delivery' &&
+    settingsService.isCouponValidForUse(liveAppliedCoupon, consumedCouponTokens) &&
+    subtotal >= (Number(liveAppliedCoupon.minOrderAmount) || 0)
+      ? liveAppliedCoupon
+      : autoFreeDeliveryCoupon && subtotal >= (Number(autoFreeDeliveryCoupon.minOrderAmount) || 0)
       ? autoFreeDeliveryCoupon
       : null;
-  const isFreeDelivery = Boolean(activeFreeDeliveryCoupon);
+  const isFreeDelivery = Boolean(activeFreeDeliveryCoupon || isQtyFreeDelivery);
 
-  const applyCoupon = (coupon: Coupon): { success: boolean; message: string } => {
+  const applyCoupon = (
+    coupon: Coupon,
+    identityOverride?: CustomerContactHint
+  ): { success: boolean; message: string } => {
+    const checkIdentity = {
+      uid: userIdentity.uid,
+      email: identityOverride?.email || userIdentity.email,
+      phone: identityOverride?.phone || userIdentity.phone,
+    };
     if (!settingsService.isCouponValidForUse(coupon, consumedCouponTokens)) {
       return { success: false, message: 'This coupon has already been used or expired.' };
     }
-    if (!settingsService.doesCouponMatchCustomer(coupon, userIdentity)) {
+    if (!settingsService.doesCouponMatchCustomer(coupon, checkIdentity)) {
       return { success: false, message: 'This coupon is assigned to a specific customer account.' };
     }
-    if (subtotal < (coupon.minOrderAmount || 0)) {
+    const minReq = Number(coupon.minOrderAmount) || 0;
+    if (subtotal < minReq) {
       return {
         success: false,
-        message: `Minimum order amount of ৳${coupon.minOrderAmount} required for this coupon.`,
+        message: `Minimum order amount of ৳${minReq} required for this coupon.`,
       };
     }
     setAppliedCoupon(coupon);
@@ -330,7 +410,6 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const baseDeliveryCharge = selectedZone ? Number(selectedZone.charge) || 0 : 70;
   const deliveryCharge = isFreeDelivery ? 0 : baseDeliveryCharge;
   const grandTotal = Math.max(0, subtotal - discount + deliveryCharge);
-  const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
 
   return (
     <CartContext.Provider
@@ -341,9 +420,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateQuantity,
         clearCart,
         coupons,
-        appliedCoupon,
+        appliedCoupon: liveAppliedCoupon,
         applyCoupon,
         removeCoupon,
+        setCustomerContactHint,
         deliveryZones,
         selectedZone,
         setSelectedZone,
@@ -352,6 +432,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         baseDeliveryCharge,
         deliveryCharge,
         isFreeDelivery,
+        isQtyFreeDelivery,
+        freeDeliveryMinQtyActive,
+        freeDeliveryMinQty,
         activeFreeDeliveryCoupon,
         grandTotal,
         totalItems,

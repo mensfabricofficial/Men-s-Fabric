@@ -266,6 +266,7 @@ export interface OrderFinancialSnapshot {
   couponDiscount: number;
   onlineDiscount?: number;
   shippingCharge: number;
+  freeDeliveryCharge?: number;
   codCharge: number;
   finalPayable: number;
   paymentMethod: PaymentMethod;
@@ -280,6 +281,7 @@ export type PaymentVerifyStepKey =
   | 'discount'
   | 'couponDiscount'
   | 'shipping'
+  | 'freeDeliveryFee'
   | 'codCharge'
   | 'finalPayable'
   | 'advancePaid'
@@ -356,6 +358,7 @@ export type DeliveryProgressState = Partial<Record<DeliveryStepKey, DeliveryStep
 export interface CodReconciliationState {
   expectedCash: number;
   collectedCash?: number;
+  freeDeliveryFee?: number;
   codCharge?: number;
   netCodCollected?: number;
   finalSaleAmount?: number;
@@ -553,6 +556,7 @@ export interface Order {
   deliveryCharge: number;
   deliveryZone: string;
   freeDeliveryApplied?: boolean;
+  freeDeliveryCost?: number;
   total: number;
   paymentMethod: PaymentMethod;
   paymentDetails?: PaymentDetails;
@@ -817,6 +821,8 @@ export interface SiteSettings {
   announcementText?: string;
   announcementActive: boolean;
   freeDeliveryThreshold?: number;
+  freeDeliveryMinQtyActive?: boolean;
+  freeDeliveryMinQty?: number;
   paymentSettings?: PaymentSettings;
 }
 

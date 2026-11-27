@@ -42,9 +42,10 @@ import {
 } from '../types';
 import { sanitizeForFirestore } from '../lib/firestoreSanitizer';
 import { isFirestoreWriteBackedOff, markFirestoreWriteError } from '../lib/firestoreWriteGuard';
-import { getLocalDeliveryZones, settingsService } from './settingsService';
+import { getLocalDeliveryZones, getLocalSettings, defaultSettings, settingsService } from './settingsService';
 import { productService } from './productService';
 import { notificationService } from './notificationService';
+import { getOrderFreeDeliveryFee } from '../lib/accountingUtils';
 
 export const CUSTOMER_VERIFICATION_FIELDS: Array<{
   key: CustomerVerificationFieldKey;
@@ -128,10 +129,18 @@ export const buildOrderFinancialSnapshot = (
         ord.paymentDetails?.onlineDiscountApplied
     ) || 0
   );
+  const resolvedShipping = Math.max(
+    0,
+    Number(existing?.shippingCharge ?? ord.deliveryCharge ?? 0) || 0
+  );
+  const resolvedFreeDeliveryCharge =
+    resolvedShipping === 0 ? getOrderFreeDeliveryFee(ord) : 0;
+
   if (existing) {
     return {
       ...existing,
       onlineDiscount: resolvedOnlineDiscount,
+      freeDeliveryCharge: resolvedFreeDeliveryCharge,
     };
   }
   const productPrice = Math.max(0, Number(ord.subtotal) || 0);
@@ -145,6 +154,7 @@ export const buildOrderFinancialSnapshot = (
     couponDiscount,
     onlineDiscount: resolvedOnlineDiscount,
     shippingCharge,
+    freeDeliveryCharge: resolvedFreeDeliveryCharge,
     codCharge,
     finalPayable,
     paymentMethod: ord.paymentMethod || 'cod',
@@ -210,15 +220,41 @@ export const getPaymentVerifyStepsForOrder = (
     });
   }
 
-  steps.push(
-    {
-      key: 'shipping',
-      label: 'Shipping Charge',
+  const resolvedFreeDeliveryFee = Math.max(
+    0,
+    Number(snapshot.freeDeliveryCharge ?? getOrderFreeDeliveryFee(ord)) || 0
+  );
+  const showFreeDeliveryFeeStep =
+    snapshot.shippingCharge === 0 &&
+    (Boolean(ord.freeDeliveryApplied) ||
+      resolvedFreeDeliveryFee > 0 ||
+      ord.orderChannel !== 'pos' ||
+      Boolean(ord.deliveryRequired));
+
+  steps.push({
+    key: 'shipping',
+    label: 'Shipping Charge',
+    displayValue:
+      snapshot.shippingCharge === 0
+        ? 'FREE (৳0)'
+        : `+৳${snapshot.shippingCharge.toLocaleString('en-BD')}`,
+  });
+
+  if (showFreeDeliveryFeeStep) {
+    steps.push({
+      key: 'freeDeliveryFee',
+      label: 'Free Delivery Fee (From Product)',
       displayValue:
-        snapshot.shippingCharge === 0
-          ? 'FREE (৳0)'
-          : `+৳${snapshot.shippingCharge.toLocaleString('en-BD')}`,
-    },
+        resolvedFreeDeliveryFee > 0
+          ? `-৳${resolvedFreeDeliveryFee.toLocaleString('en-BD')}${
+              ord.deliveryZone ? ` (${ord.deliveryZone})` : ''
+            }`
+          : '৳0',
+      editable: true,
+    });
+  }
+
+  steps.push(
     {
       key: 'codCharge',
       label: 'COD Charge',
@@ -766,22 +802,31 @@ export const orderService = {
         return { success: false, error: 'Your cart is empty.' };
       }
 
-      // 1. Pre-validate coupon before transaction if provided
+      // 1. Pre-validate coupon before transaction if provided (single-field query avoids composite index requirement)
       let validCouponDocId: string | null = freeDeliveryCouponId || null;
       if (couponCode) {
+        const cleanCode = couponCode.toUpperCase().trim();
         try {
           const couponQuery = query(
             collection(db, 'coupons'),
-            where('code', '==', couponCode.toUpperCase().trim()),
-            where('active', '==', true),
-            limit(1)
+            where('code', '==', cleanCode),
+            limit(5)
           );
           const couponSnap = await withTimeout(getDocs(couponQuery), 2500, 'Coupon lookup timeout');
-          if (!couponSnap.empty) {
-            validCouponDocId = couponSnap.docs[0].id;
+          const activeDoc = couponSnap.docs.find((d) => d.data()?.active !== false) || couponSnap.docs[0];
+          if (activeDoc) {
+            validCouponDocId = activeDoc.id;
           }
         } catch (e) {
-          console.warn("Coupon lookup warning:", e);
+          console.warn('Coupon lookup warning:', e);
+        }
+        if (!validCouponDocId) {
+          const localMatch = settingsService
+            .getLocalCoupons()
+            .find((c) => (c.code || '').trim().toUpperCase() === cleanCode && c.active !== false);
+          if (localMatch?.id) {
+            validCouponDocId = localMatch.id;
+          }
         }
       }
 
@@ -824,6 +869,9 @@ export const orderService = {
             const zoneRef = doc(db, 'deliveryZones', deliveryZoneId);
             zoneDoc = await transaction.get(zoneRef);
           }
+
+          const settingsRef = doc(db, 'settings', 'general');
+          const settingsDoc = await transaction.get(settingsRef);
 
           // --- PHASE 2: CALCULATIONS & VERIFICATION ---
           let calculatedSubtotal = 0;
@@ -875,23 +923,37 @@ export const orderService = {
             });
           }
 
-          // Validate coupon if exists
+          // Validate coupon if exists (fallback to local coupon snapshot if Firestore doc wasn't synced yet)
           let calculatedDiscount = 0;
           let couponIsFreeDelivery = false;
-          if (couponDoc && couponDoc.exists()) {
-            const couponData = couponDoc.data();
+          const resolvedCouponData: any =
+            couponDoc && couponDoc.exists()
+              ? { id: couponDoc.id, ...couponDoc.data() }
+              : couponCode
+              ? settingsService
+                  .getLocalCoupons()
+                  .find((c) => (c.code || '').trim().toUpperCase() === couponCode.trim().toUpperCase())
+              : null;
+
+          if (resolvedCouponData) {
+            const cLimit =
+              resolvedCouponData.discountType === 'free_delivery'
+                ? (Number(resolvedCouponData.usageLimit) || 1)
+                : (Number(resolvedCouponData.usageLimit) || 0);
             const isValid =
-              couponData.active !== false &&
-              (!couponData.usageLimit || (couponData.usedCount || 0) < couponData.usageLimit) &&
-              settingsService.isCouponValidForUse({ id: couponDoc.id, ...couponData } as any);
-            if (isValid && calculatedSubtotal >= (couponData.minOrderAmount || 0)) {
-              if (couponData.discountType === 'free_delivery') {
+              resolvedCouponData.active !== false &&
+              (cLimit <= 0 || (Number(resolvedCouponData.usedCount) || 0) < cLimit) &&
+              settingsService.isCouponValidForUse(resolvedCouponData);
+            if (isValid && calculatedSubtotal >= (Number(resolvedCouponData.minOrderAmount) || 0)) {
+              const discAmt = Number(resolvedCouponData.discountAmount) || 0;
+              const maxCap = Number(resolvedCouponData.maxDiscount) || 0;
+              if (resolvedCouponData.discountType === 'free_delivery') {
                 couponIsFreeDelivery = true;
-              } else if (couponData.discountType === 'percentage') {
-                const perc = Math.round((calculatedSubtotal * couponData.discountAmount) / 100);
-                calculatedDiscount = couponData.maxDiscount ? Math.min(perc, couponData.maxDiscount) : perc;
+              } else if (resolvedCouponData.discountType === 'percentage') {
+                const perc = Math.round((calculatedSubtotal * discAmt) / 100);
+                calculatedDiscount = maxCap > 0 ? Math.min(perc, maxCap) : perc;
               } else {
-                calculatedDiscount = Math.min(couponData.discountAmount, calculatedSubtotal);
+                calculatedDiscount = Math.min(discAmt, calculatedSubtotal);
               }
             }
           }
@@ -907,10 +969,41 @@ export const orderService = {
             if (zd.name) deliveryZoneName = zd.name;
           }
 
-          const hasFreeDelivery = Boolean(couponIsFreeDelivery || freeDeliveryApplied);
+          const localSettings = getLocalSettings();
+          const remoteSettingsData = settingsDoc && settingsDoc.exists() ? settingsDoc.data() : null;
+          const minQtyActive =
+            remoteSettingsData?.freeDeliveryMinQtyActive ??
+            localSettings.freeDeliveryMinQtyActive ??
+            defaultSettings.freeDeliveryMinQtyActive ??
+            true;
+          const minQtyThreshold = Math.max(
+            0,
+            Math.floor(
+              Number(
+                typeof remoteSettingsData?.freeDeliveryMinQty === 'number'
+                  ? remoteSettingsData.freeDeliveryMinQty
+                  : typeof localSettings.freeDeliveryMinQty === 'number'
+                  ? localSettings.freeDeliveryMinQty
+                  : (defaultSettings.freeDeliveryMinQty ?? 2)
+              ) || 0
+            )
+          );
+          const totalOrderUnits = verifiedOrderItems.reduce(
+            (sum, item) => sum + Math.max(1, Number(item.quantity) || 1),
+            0
+          );
+          const qtyFreeDeliveryApplied = Boolean(
+            minQtyActive && minQtyThreshold > 0 && totalOrderUnits >= minQtyThreshold
+          );
+
+          const baseZoneCharge = deliveryCharge;
+          const hasFreeDelivery = Boolean(
+            couponIsFreeDelivery || qtyFreeDeliveryApplied || freeDeliveryApplied
+          );
           if (hasFreeDelivery) {
             deliveryCharge = 0;
           }
+          const freeDeliveryCost = hasFreeDelivery ? baseZoneCharge : 0;
 
           // Online Payment Prepayment Discount (bKash, Nagad, Rocket)
           let onlineDiscount = 0;
@@ -947,7 +1040,9 @@ export const orderService = {
           } : undefined;
 
           let initialTimelineNote = deliveryCharge === 0
-            ? 'Order placed by customer via Cash on Delivery (One-Time Free Delivery Applied).'
+            ? qtyFreeDeliveryApplied
+              ? `Order placed by customer via Cash on Delivery (Free Delivery: ${minQtyThreshold}+ Products Offer Applied).`
+              : 'Order placed by customer via Cash on Delivery (One-Time Free Delivery Applied).'
             : 'Order placed by customer via Cash on Delivery.';
           if (isAdvanceCod) {
             initialTimelineNote = `Order placed via COD with Advance Delivery Fee (৳${deliveryCharge}) paid via ${(paymentDetails?.advanceGateway || 'MFS').toUpperCase()}. Sender: ${paymentDetails?.senderNumber || 'N/A'}, TrxID: ${paymentDetails?.transactionId || 'N/A'}. Due on Delivery: ৳${Math.max(0, calculatedSubtotal - calculatedDiscount)}.`;
@@ -969,6 +1064,7 @@ export const orderService = {
             onlineDiscount,
             couponCode: couponCode || '',
             freeDeliveryApplied: hasFreeDelivery,
+            freeDeliveryCost,
             deliveryCharge,
             deliveryZone: deliveryZoneName,
             total: grandTotal,
@@ -1005,6 +1101,7 @@ export const orderService = {
                 couponDiscount: calculatedDiscount,
                 onlineDiscount,
                 shippingCharge: deliveryCharge,
+                freeDeliveryCharge: freeDeliveryCost,
                 codCharge: 0,
                 finalPayable: grandTotal,
                 paymentMethod,
@@ -1065,18 +1162,16 @@ export const orderService = {
           // Note: Stock is verified at checkout and deducted at Stage 3 (Stock Control approval).
           void productUpdates;
 
-          // 2. Increment coupon usage & auto-deactivate if usage limit reached (or free_delivery 1-time coupon)
+          // 2. Increment coupon usage & auto-deactivate only if usage limit reached
           if (couponDoc && couponDoc.exists() && validCouponDocId) {
             const couponRef = doc(db, 'coupons', validCouponDocId);
             const cData = couponDoc.data();
             const effLimit =
               cData?.discountType === 'free_delivery'
-                ? cData?.usageLimit || 1
-                : cData?.usageLimit;
-            const nextUsed = Math.max((cData?.usedCount || 0) + 1, cData?.discountType === 'free_delivery' ? (effLimit || 1) : 1);
-            const exhausted = Boolean(
-              (effLimit && nextUsed >= effLimit) || cData?.discountType === 'free_delivery'
-            );
+                ? (Number(cData?.usageLimit) || 1)
+                : (Number(cData?.usageLimit) || 0);
+            const nextUsed = (Number(cData?.usedCount) || 0) + 1;
+            const exhausted = Boolean(effLimit > 0 && nextUsed >= effLimit);
             transaction.update(couponRef, {
               usedCount: nextUsed,
               ...(exhausted ? { active: false } : {}),
@@ -1177,25 +1272,52 @@ export const orderService = {
         let deliveryCharge = matchedZone ? matchedZone.charge : (deliveryZoneId === 'outside-dhaka' ? 130 : 70);
         let deliveryZoneName = matchedZone ? matchedZone.name : (deliveryZoneId === 'outside-dhaka' ? 'Outside Dhaka (Nationwide)' : 'Inside Dhaka City');
 
+        const fallbackLocalSettings = getLocalSettings();
+        const fallbackMinQtyActive =
+          fallbackLocalSettings.freeDeliveryMinQtyActive ??
+          defaultSettings.freeDeliveryMinQtyActive ??
+          true;
+        const fallbackMinQtyThreshold = Math.max(
+          0,
+          Math.floor(
+            Number(
+              typeof fallbackLocalSettings.freeDeliveryMinQty === 'number'
+                ? fallbackLocalSettings.freeDeliveryMinQty
+                : (defaultSettings.freeDeliveryMinQty ?? 2)
+            ) || 0
+          )
+        );
+        const fallbackOrderUnits = fallbackItems.reduce(
+          (sum, item) => sum + Math.max(1, Number(item.quantity) || 1),
+          0
+        );
+        const fallbackQtyFreeDelivery = Boolean(
+          fallbackMinQtyActive && fallbackMinQtyThreshold > 0 && fallbackOrderUnits >= fallbackMinQtyThreshold
+        );
+
         let fallbackDiscount = 0;
-        let fallbackFreeDelivery = Boolean(freeDeliveryApplied);
+        let fallbackFreeDelivery = Boolean(freeDeliveryApplied || fallbackQtyFreeDelivery);
         const localCoupons = settingsService.getLocalCoupons();
         const matchedCoupon = localCoupons.find(
           (c) => (freeDeliveryCouponId && c.id === freeDeliveryCouponId) || (couponCode && c.code.toUpperCase() === couponCode.toUpperCase().trim())
         );
-        if (matchedCoupon && settingsService.isCouponValidForUse(matchedCoupon) && fallbackSubtotal >= (matchedCoupon.minOrderAmount || 0)) {
+        if (matchedCoupon && settingsService.isCouponValidForUse(matchedCoupon) && fallbackSubtotal >= (Number(matchedCoupon.minOrderAmount) || 0)) {
+          const discAmt = Number(matchedCoupon.discountAmount) || 0;
+          const maxCap = Number(matchedCoupon.maxDiscount) || 0;
           if (matchedCoupon.discountType === 'free_delivery') {
             fallbackFreeDelivery = true;
           } else if (matchedCoupon.discountType === 'percentage') {
-            const perc = Math.round((fallbackSubtotal * matchedCoupon.discountAmount) / 100);
-            fallbackDiscount = matchedCoupon.maxDiscount ? Math.min(perc, matchedCoupon.maxDiscount) : perc;
+            const perc = Math.round((fallbackSubtotal * discAmt) / 100);
+            fallbackDiscount = maxCap > 0 ? Math.min(perc, maxCap) : perc;
           } else {
-            fallbackDiscount = Math.min(matchedCoupon.discountAmount, fallbackSubtotal);
+            fallbackDiscount = Math.min(discAmt, fallbackSubtotal);
           }
         }
+        const fallbackBaseZoneCharge = deliveryCharge;
         if (fallbackFreeDelivery) {
           deliveryCharge = 0;
         }
+        const fallbackFreeDeliveryCost = fallbackFreeDelivery ? fallbackBaseZoneCharge : 0;
 
         let onlineDiscount = (paymentMethod !== 'cod' && paymentDetails?.onlineDiscountApplied) ? paymentDetails.onlineDiscountApplied : 0;
         let grandTotal = Math.max(0, fallbackSubtotal - fallbackDiscount - onlineDiscount + deliveryCharge);
@@ -1225,6 +1347,7 @@ export const orderService = {
           onlineDiscount,
           couponCode: couponCode || '',
           freeDeliveryApplied: fallbackFreeDelivery,
+          freeDeliveryCost: fallbackFreeDeliveryCost,
           deliveryCharge,
           deliveryZone: deliveryZoneName,
           total: grandTotal,
@@ -2672,6 +2795,10 @@ export const orderService = {
       },
     ];
 
+    const resolvedFreeDelivCost = Math.max(
+      0,
+      Number(snapshot.freeDeliveryCharge ?? getOrderFreeDeliveryFee(baseOrder)) || 0
+    );
     const updatedOrder: Order = {
       ...baseOrder,
       orderStatus: 'processing',
@@ -2679,6 +2806,7 @@ export const orderService = {
       paidAmount: nextPaidAmount,
       dueAmount: nextDueAmount,
       dueOnDelivery: nextDueAmount,
+      freeDeliveryCost: resolvedFreeDelivCost,
       ...(nextPaymentDetails ? { paymentDetails: nextPaymentDetails } : {}),
       paymentHistory: nextPaymentHistory,
       pipeline: updatedPipeline,
@@ -2692,6 +2820,7 @@ export const orderService = {
       paidAmount: nextPaidAmount,
       dueAmount: nextDueAmount,
       dueOnDelivery: nextDueAmount,
+      freeDeliveryCost: resolvedFreeDelivCost,
       ...(nextPaymentDetails ? { paymentDetails: nextPaymentDetails } : {}),
       paymentHistory: nextPaymentHistory,
       pipeline: updatedPipeline,
@@ -2799,6 +2928,14 @@ export const orderService = {
       Number(snapshot.onlineDiscount ?? baseOrder.onlineDiscount ?? baseOrder.paymentDetails?.onlineDiscountApplied) || 0
     );
     let nextShipping = Math.max(0, Number(baseOrder.deliveryCharge) || 0);
+    let nextFreeDeliveryApplied = Boolean(baseOrder.freeDeliveryApplied);
+    let nextFreeDeliveryCost =
+      nextShipping === 0
+        ? Math.max(
+            0,
+            Number(snapshot.freeDeliveryCharge ?? getOrderFreeDeliveryFee(baseOrder)) || 0
+          )
+        : 0;
     let nextCodCharge = Math.max(0, Number(snapshot.codCharge) || 0);
     let nextTotal = Math.max(0, Number(baseOrder.total) || 0);
     let nextPaidAmount = Math.max(0, Number(baseOrder.paidAmount ?? baseOrder.advanceAmount) || 0);
@@ -2847,8 +2984,23 @@ export const orderService = {
       case 'shipping':
         nextShipping = numVal;
         snapshot.shippingCharge = numVal;
+        if (numVal === 0) {
+          nextFreeDeliveryApplied = true;
+          nextFreeDeliveryCost =
+            nextFreeDeliveryCost > 0
+              ? nextFreeDeliveryCost
+              : getOrderFreeDeliveryFee({ ...baseOrder, deliveryCharge: 0, freeDeliveryApplied: true });
+        } else {
+          nextFreeDeliveryApplied = false;
+          nextFreeDeliveryCost = 0;
+        }
+        snapshot.freeDeliveryCharge = nextFreeDeliveryCost;
         recalcTotal();
         snapshot.finalPayable = nextTotal;
+        break;
+      case 'freeDeliveryFee':
+        nextFreeDeliveryCost = numVal;
+        snapshot.freeDeliveryCharge = numVal;
         break;
       case 'codCharge':
         nextCodCharge = numVal;
@@ -2904,9 +3056,18 @@ export const orderService = {
       timestamp,
     };
 
+    const existingCodRec = baseOrder.pipeline?.codReconciliation;
+    const nextCodRec = existingCodRec
+      ? {
+          ...existingCodRec,
+          freeDeliveryFee: nextFreeDeliveryCost,
+        }
+      : undefined;
+
     const updatedPipeline: OrderPipelineData = {
       ...(baseOrder.pipeline || { currentStage: 'payment_verification' }),
       financialSnapshot: snapshot,
+      ...(nextCodRec ? { codReconciliation: nextCodRec } : {}),
       ...(typeof nextVerifiedPayAmt === 'number' ? { verifiedPaymentAmount: nextVerifiedPayAmt } : {}),
       ...(nextPaymentNote !== undefined ? { paymentNote: nextPaymentNote } : {}),
       activityLog: [...(baseOrder.pipeline?.activityLog || []), logEntry],
@@ -2918,6 +3079,8 @@ export const orderService = {
       discount: nextCouponDiscount,
       onlineDiscount: nextOnlineDiscount,
       deliveryCharge: nextShipping,
+      freeDeliveryApplied: nextFreeDeliveryApplied,
+      freeDeliveryCost: nextFreeDeliveryCost,
       total: nextTotal,
       paidAmount: nextPaidAmount,
       advanceAmount: baseOrder.paymentMethod === 'cod' ? nextPaidAmount : baseOrder.advanceAmount,
@@ -2933,6 +3096,8 @@ export const orderService = {
       discount: nextCouponDiscount,
       onlineDiscount: nextOnlineDiscount,
       deliveryCharge: nextShipping,
+      freeDeliveryApplied: nextFreeDeliveryApplied,
+      freeDeliveryCost: nextFreeDeliveryCost,
       total: nextTotal,
       paidAmount: nextPaidAmount,
       ...(baseOrder.paymentMethod === 'cod' ? { advanceAmount: nextPaidAmount } : {}),
@@ -4133,6 +4298,7 @@ export const orderService = {
             deliveredAt: timestamp,
             codReconciliation: {
               expectedCash: baseOrder.paymentMethod === 'cod' || remainingDueForCod > 0 ? remainingDueForCod : 0,
+              freeDeliveryFee: getOrderFreeDeliveryFee(baseOrder),
               reconciliationRequired: false,
               resolved: false,
             },
@@ -4195,6 +4361,7 @@ export const orderService = {
   async recordRoleCCodReconciliation(params: {
     orderId: string;
     collectedAmount?: number;
+    freeDeliveryFee?: number;
     codCharge?: number;
     resolveDiscrepancy?: boolean;
     note?: string;
@@ -4205,6 +4372,7 @@ export const orderService = {
     const {
       orderId,
       collectedAmount,
+      freeDeliveryFee,
       codCharge,
       resolveDiscrepancy = false,
       note,
@@ -4255,13 +4423,28 @@ export const orderService = {
       0,
       Number(baseOrder.deliveryCharge ?? snapshot.shippingCharge ?? 0) || 0
     );
+    const safeFreeDeliveryFee =
+      deliveryChargeAmt > 0
+        ? 0
+        : typeof freeDeliveryFee === 'number' && !isNaN(freeDeliveryFee)
+        ? Math.max(0, freeDeliveryFee)
+        : getOrderFreeDeliveryFee(baseOrder);
+
     const netCodCollected = Math.max(0, enteredCash - safeCodCharge);
     const grossCollectedTotal = Math.max(0, currentPaid + enteredCash);
-    const productGrossCollected = Math.max(0, grossCollectedTotal - deliveryChargeAmt);
+    const productGrossCollected = Math.max(
+      0,
+      grossCollectedTotal - deliveryChargeAmt - safeFreeDeliveryFee
+    );
     const finalSaleAmount = Math.max(0, productGrossCollected - safeCodCharge);
 
     const discrepancy = enteredCash - expectedCash;
     const hasMismatch = expectedCash > 0 && Math.abs(discrepancy) > 0;
+
+    const updatedSnapshot: OrderFinancialSnapshot = {
+      ...snapshot,
+      freeDeliveryCharge: safeFreeDeliveryFee,
+    };
 
     if (hasMismatch && !resolveDiscrepancy) {
       const logEntry: OrderActivityLogEntry = {
@@ -4272,7 +4455,7 @@ export const orderService = {
         actorName: safeActor,
         actorEmail,
         roleLabel,
-        note: `Expected: ৳${expectedCash.toLocaleString('en-BD')} · Collected: ৳${enteredCash.toLocaleString('en-BD')} · COD Charge: ৳${safeCodCharge.toLocaleString('en-BD')} · Diff: ৳${discrepancy.toLocaleString('en-BD')}${note ? ` (${note})` : ''}`,
+        note: `Expected: ৳${expectedCash.toLocaleString('en-BD')} · Collected: ৳${enteredCash.toLocaleString('en-BD')}${safeFreeDeliveryFee > 0 ? ` · Free Delivery: -৳${safeFreeDeliveryFee.toLocaleString('en-BD')}` : ''} · COD Charge: ৳${safeCodCharge.toLocaleString('en-BD')} · Diff: ৳${discrepancy.toLocaleString('en-BD')}${note ? ` (${note})` : ''}`,
         timestamp,
       };
 
@@ -4281,9 +4464,11 @@ export const orderService = {
         currentStage: 'cod_reconciliation',
         subStatus: 'RECONCILIATION_REQUIRED',
         currentActionLabel: 'Reconciliation Required',
+        financialSnapshot: updatedSnapshot,
         codReconciliation: {
           expectedCash,
           collectedCash: enteredCash,
+          freeDeliveryFee: safeFreeDeliveryFee,
           codCharge: safeCodCharge,
           netCodCollected,
           finalSaleAmount,
@@ -4299,11 +4484,13 @@ export const orderService = {
 
       const updatedOrder: Order = {
         ...baseOrder,
+        freeDeliveryCost: safeFreeDeliveryFee,
         pipeline: updatedPipeline,
         updatedAt: timestamp,
       };
 
       return this._persistOrderMutation(orderId, updatedOrder, {
+        freeDeliveryCost: safeFreeDeliveryFee,
         pipeline: updatedPipeline,
       });
     }
@@ -4318,12 +4505,17 @@ export const orderService = {
         note:
           note ||
           (resolveDiscrepancy
-            ? `COD Cash Collected (৳${enteredCash}) − COD Charge (৳${safeCodCharge}) = Net ৳${finalSaleAmount} · Discrepancy Resolved`
-            : `COD Cash Collected (৳${enteredCash})${safeCodCharge > 0 ? ` − COD Charge (৳${safeCodCharge}) = Net Sale ৳${finalSaleAmount}` : ''}`),
+            ? `COD Cash Collected (৳${enteredCash})${safeFreeDeliveryFee > 0 ? ` − Free Delivery (৳${safeFreeDeliveryFee})` : ''} − COD Charge (৳${safeCodCharge}) = Net ৳${finalSaleAmount} · Discrepancy Resolved`
+            : `COD Cash Collected (৳${enteredCash})${safeFreeDeliveryFee > 0 ? ` − Free Delivery (৳${safeFreeDeliveryFee})` : ''}${safeCodCharge > 0 ? ` − COD Charge (৳${safeCodCharge})` : ''} = Net Sale ৳${finalSaleAmount}`),
         date: timestamp.slice(0, 10),
         timestamp,
       });
     }
+
+    const deductionParts: string[] = [];
+    if (deliveryChargeAmt > 0) deductionParts.push(`Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} excl.`);
+    if (safeFreeDeliveryFee > 0) deductionParts.push(`Free Delivery -৳${safeFreeDeliveryFee.toLocaleString('en-BD')}`);
+    if (safeCodCharge > 0) deductionParts.push(`COD Fee -৳${safeCodCharge.toLocaleString('en-BD')}`);
 
     const logEntry: OrderActivityLogEntry = {
       id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -4334,12 +4526,8 @@ export const orderService = {
       actorEmail,
       roleLabel,
       note:
-        expectedCash > 0 || enteredCash > 0
-          ? `${
-              deliveryChargeAmt > 0
-                ? `Product Sale ৳${productGrossCollected.toLocaleString('en-BD')} (Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} excl.)`
-                : `Collected ৳${enteredCash.toLocaleString('en-BD')}`
-            } − COD Charge ৳${safeCodCharge.toLocaleString('en-BD')} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}${resolveDiscrepancy ? ' (Discrepancy Resolved)' : ''}${note ? ` · ${note}` : ''}`
+        expectedCash > 0 || enteredCash > 0 || safeFreeDeliveryFee > 0
+          ? `Collected ৳${enteredCash.toLocaleString('en-BD')}${deductionParts.length > 0 ? ` (${deductionParts.join(' · ')})` : ''} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}${resolveDiscrepancy ? ' (Discrepancy Resolved)' : ''}${note ? ` · ${note}` : ''}`
           : note || 'Prepaid order finance reconciled',
       timestamp,
     };
@@ -4349,7 +4537,7 @@ export const orderService = {
       currentStage: 'completed',
       subStatus: 'COMPLETED',
       currentActionLabel: 'Completed',
-      financialSnapshot: snapshot,
+      financialSnapshot: updatedSnapshot,
       paymentVerification: {
         ...(baseOrder.pipeline?.paymentVerification || {}),
         codAwaitingCollection: false,
@@ -4359,6 +4547,7 @@ export const orderService = {
         ...(baseOrder.pipeline?.codReconciliation || {}),
         expectedCash,
         collectedCash: enteredCash,
+        freeDeliveryFee: safeFreeDeliveryFee,
         codCharge: safeCodCharge,
         netCodCollected,
         finalSaleAmount,
@@ -4394,6 +4583,7 @@ export const orderService = {
       paidAmount: finalSaleAmount,
       dueAmount: 0,
       dueOnDelivery: 0,
+      freeDeliveryCost: safeFreeDeliveryFee,
       codCharge: safeCodCharge,
       netSaleAmount: finalSaleAmount,
       paymentHistory: nextPaymentHistory,
@@ -4407,6 +4597,7 @@ export const orderService = {
       paidAmount: finalSaleAmount,
       dueAmount: 0,
       dueOnDelivery: 0,
+      freeDeliveryCost: safeFreeDeliveryFee,
       codCharge: safeCodCharge,
       netSaleAmount: finalSaleAmount,
       paymentHistory: nextPaymentHistory,
@@ -4417,11 +4608,12 @@ export const orderService = {
   async updateCodReconciliationValues(params: {
     orderId: string;
     collectedCash: number;
+    freeDeliveryFee?: number;
     codCharge: number;
     actorName: string;
     actorEmail?: string;
   }): Promise<Order> {
-    const { orderId, collectedCash, codCharge, actorName, actorEmail } = params;
+    const { orderId, collectedCash, freeDeliveryFee, codCharge, actorName, actorEmail } = params;
     const baseOrder = await this._loadOrderForMutation(orderId);
     if (!baseOrder) throw new Error('Order not found.');
 
@@ -4443,20 +4635,36 @@ export const orderService = {
       0,
       Number(baseOrder.deliveryCharge ?? snapshot.shippingCharge ?? 0) || 0
     );
+    const safeFreeDeliveryFee =
+      deliveryChargeAmt > 0
+        ? 0
+        : typeof freeDeliveryFee === 'number' && !isNaN(freeDeliveryFee)
+        ? Math.max(0, freeDeliveryFee)
+        : getOrderFreeDeliveryFee(baseOrder);
     const safeCollected = Math.max(0, Number(collectedCash) || 0);
     const safeCodCharge = Math.max(0, Number(codCharge) || 0);
     const netCodCollected = Math.max(0, safeCollected - safeCodCharge);
-    const productGrossCollected = Math.max(0, preCollectionPaid + safeCollected - deliveryChargeAmt);
+    const productGrossCollected = Math.max(
+      0,
+      preCollectionPaid + safeCollected - deliveryChargeAmt - safeFreeDeliveryFee
+    );
     const finalSaleAmount = Math.max(0, productGrossCollected - safeCodCharge);
     const discrepancy = safeCollected - prevExpected;
     const isAlreadyResolved = Boolean(baseOrder.pipeline?.codReconciliation?.resolved);
 
+    const updatedSnapshot: OrderFinancialSnapshot = {
+      ...snapshot,
+      freeDeliveryCharge: safeFreeDeliveryFee,
+    };
+
     const updatedPipeline: OrderPipelineData = {
       ...(baseOrder.pipeline || { currentStage: 'cod_reconciliation' }),
+      financialSnapshot: updatedSnapshot,
       codReconciliation: {
         ...(baseOrder.pipeline?.codReconciliation || { expectedCash: prevExpected }),
         expectedCash: prevExpected,
         collectedCash: safeCollected,
+        freeDeliveryFee: safeFreeDeliveryFee,
         codCharge: safeCodCharge,
         netCodCollected,
         finalSaleAmount,
@@ -4476,7 +4684,7 @@ export const orderService = {
             deliveryChargeAmt > 0
               ? `Product Sale ৳${productGrossCollected.toLocaleString('en-BD')} (Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} excl.)`
               : `Collected ৳${safeCollected.toLocaleString('en-BD')}`
-          } − COD Charge ৳${safeCodCharge.toLocaleString('en-BD')} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}`,
+          }${safeFreeDeliveryFee > 0 ? ` − Free Delivery ৳${safeFreeDeliveryFee.toLocaleString('en-BD')}` : ''} − COD Charge ৳${safeCodCharge.toLocaleString('en-BD')} = Final Sale ৳${finalSaleAmount.toLocaleString('en-BD')}`,
           timestamp,
         },
       ],
@@ -4484,6 +4692,7 @@ export const orderService = {
 
     const updatedOrder: Order = {
       ...baseOrder,
+      freeDeliveryCost: safeFreeDeliveryFee,
       codCharge: safeCodCharge,
       ...(isAlreadyResolved
         ? {
@@ -4496,6 +4705,7 @@ export const orderService = {
     };
 
     return this._persistOrderMutation(orderId, updatedOrder, {
+      freeDeliveryCost: safeFreeDeliveryFee,
       codCharge: safeCodCharge,
       ...(isAlreadyResolved
         ? {

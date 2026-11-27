@@ -40,6 +40,7 @@ export const AdminCoupons: React.FC = () => {
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [autoApply, setAutoApply] = useState<boolean>(true);
   const [active, setActive] = useState(true);
+  const [resetUsage, setResetUsage] = useState(false);
   const [notifyCustomers, setNotifyCustomers] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -124,6 +125,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(true);
     setActive(true);
+    setResetUsage(false);
     setNotifyCustomers(true);
     setModalOpen(true);
   };
@@ -143,6 +145,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(true);
     setActive(true);
+    setResetUsage(false);
     setNotifyCustomers(true);
     setModalOpen(true);
   };
@@ -167,6 +170,7 @@ export const AdminCoupons: React.FC = () => {
     setCustomerSearch('');
     setAutoApply(c.autoApply !== false);
     setActive(c.active);
+    setResetUsage(false);
     setNotifyCustomers(false);
     setModalOpen(true);
   };
@@ -205,15 +209,16 @@ export const AdminCoupons: React.FC = () => {
 
     const pickedCustomer = customers.find((u) => u.key === selectedCustomerKey);
 
-    const payload: Omit<Coupon, 'id' | 'usedCount'> = {
+    const payload: Omit<Coupon, 'id' | 'usedCount'> & { usedCount?: number } = {
       code: cleanCode,
       discountType,
       discountAmount: discountType === 'free_delivery' ? 0 : (Number(discountAmount) || 0),
       minOrderAmount: Number(minOrderAmount) || 0,
-      maxDiscount: discountType === 'free_delivery' ? undefined : (maxDiscount ? Number(maxDiscount) : undefined),
+      maxDiscount: discountType === 'free_delivery' ? undefined : (maxDiscount ? Number(maxDiscount) : 0),
       expiryDate,
-      usageLimit: usageLimit ? Number(usageLimit) : undefined,
+      usageLimit: usageLimit ? Number(usageLimit) : 0,
       active,
+      ...(editingCoupon && resetUsage ? { usedCount: 0 } : {}),
       ...(pickedCustomer
         ? {
             targetCustomerUid: pickedCustomer.uid && !pickedCustomer.uid.startsWith('guest-') ? pickedCustomer.uid : undefined,
@@ -222,22 +227,21 @@ export const AdminCoupons: React.FC = () => {
             targetCustomerName: pickedCustomer.name || undefined,
             autoApply: discountType === 'free_delivery' ? autoApply : undefined,
           }
-        : editingCoupon
-        ? {
-            targetCustomerUid: undefined,
-            targetCustomerEmail: undefined,
-            targetCustomerPhone: undefined,
-            targetCustomerName: undefined,
-            autoApply: undefined,
-          }
         : {}),
     };
 
     try {
       if (editingCoupon) {
         const updatedItem: Coupon = { ...editingCoupon, ...payload };
+        if (!pickedCustomer) {
+          delete updatedItem.targetCustomerUid;
+          delete updatedItem.targetCustomerEmail;
+          delete updatedItem.targetCustomerPhone;
+          delete updatedItem.targetCustomerName;
+          delete updatedItem.autoApply;
+        }
         setCoupons((prev) => prev.map((c) => (c.id === editingCoupon.id ? updatedItem : c)));
-        await settingsService.updateCoupon(editingCoupon.id, payload);
+        await settingsService.updateCoupon(editingCoupon.id, payload, !pickedCustomer);
         setActionToast(`Coupon "${cleanCode}" updated.`);
       } else {
         const newId = await settingsService.createCoupon(payload);
@@ -669,6 +673,18 @@ export const AdminCoupons: React.FC = () => {
                   <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-black w-4 h-4" />
                   <span>Coupon Active</span>
                 </label>
+
+                {editingCoupon && (editingCoupon.usedCount || 0) > 0 && (
+                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
+                    <input
+                      type="checkbox"
+                      checked={resetUsage}
+                      onChange={(e) => setResetUsage(e.target.checked)}
+                      className="accent-black w-4 h-4"
+                    />
+                    <span>Reset usage count from {editingCoupon.usedCount} to 0</span>
+                  </label>
+                )}
 
                 {active && (
                   <label className="flex items-center gap-2 cursor-pointer font-semibold text-neutral-700">

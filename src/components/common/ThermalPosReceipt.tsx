@@ -4,7 +4,11 @@ import { BrandLogo } from './BrandLogo';
 import { settingsService, defaultSettings } from '../../services/settingsService';
 import { getFormattedInvoiceNumber } from './InvoiceSheet';
 import { formatDateTime } from '../../lib/dateFormat';
-import { getOrderCustomerPaidAndDue, getOrderRecognizedSale } from '../../lib/accountingUtils';
+import {
+  getOrderCustomerPaidAndDue,
+  getOrderRecognizedSale,
+  getOrderFreeDeliveryFee,
+} from '../../lib/accountingUtils';
 
 interface ThermalPosReceiptProps {
   order: Order;
@@ -35,6 +39,7 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
   const { paid, due } = getOrderCustomerPaidAndDue(order);
   const deliveryAmt = Math.max(0, Number(order.deliveryCharge) || 0);
   const rec = order.pipeline?.codReconciliation;
+  const freeDelivFee = getOrderFreeDeliveryFee(order);
   const courierCodCharge = Math.max(0, Number(rec?.codCharge ?? order.codCharge ?? 0) || 0);
   const expectedNetProducts = Math.max(
     0,
@@ -47,7 +52,7 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
   const finalSaleTotal =
     rec?.resolved || typeof order.netSaleAmount === 'number'
       ? getOrderRecognizedSale(order)
-      : Math.max(0, expectedNetProducts - courierCodCharge);
+      : Math.max(0, expectedNetProducts - freeDelivFee - courierCodCharge);
 
   const showCustomerId =
     Boolean(order.customerId) &&
@@ -169,6 +174,12 @@ export const ThermalPosReceipt: React.FC<ThermalPosReceiptProps> = ({
               <div className="flex justify-between text-neutral-500">
                 <span>Delivery (Separate):</span>
                 <span>৳{deliveryAmt.toLocaleString('en-BD')}</span>
+              </div>
+            )}
+            {freeDelivFee > 0 && (
+              <div className="flex justify-between text-red-700 font-bold">
+                <span>Free Delivery Fee:</span>
+                <span>-৳{freeDelivFee.toLocaleString('en-BD')}</span>
               </div>
             )}
             <div className="flex justify-between text-red-700 font-bold">

@@ -13,6 +13,7 @@ import {
   Minus,
   AlertCircle
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Product, Review } from '../types';
@@ -294,28 +295,39 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
     <div className="max-w-[1660px] mx-auto px-0 lg:px-8 py-0 lg:py-8">
       
       {/* Desktop Breadcrumb */}
-      <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-400 uppercase tracking-wider mb-6">
+      <div className="hidden lg:flex items-center gap-2 text-xs text-neutral-500 mb-5">
         <button onClick={() => onNavigate('/')} className="hover:text-black cursor-pointer">Home</button>
-        <span>/</span>
+        <span className="text-neutral-300">/</span>
         <button onClick={() => onNavigate('/shop')} className="hover:text-black cursor-pointer">Shop</button>
-        <span>/</span>
-        <span className="text-black font-semibold truncate max-w-xs">{product.name}</span>
+        <span className="text-neutral-300">/</span>
+        <span className="text-neutral-900 font-medium truncate max-w-md">{product.name}</span>
       </div>
 
       {/* Main Details Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 lg:gap-10 items-start mb-10 sm:mb-12">
+      <div className="grid grid-cols-1 lg:grid-cols-[540px_minmax(0,1fr)] xl:grid-cols-[600px_minmax(0,1fr)] 2xl:grid-cols-[640px_minmax(0,1fr)] gap-0 lg:gap-10 xl:gap-12 items-start mb-10 sm:mb-12">
         
-        {/* Left: Square Image Showcase (Full-width edge-to-edge on mobile) */}
-        <div className="lg:col-span-6">
+        {/* Left: Square Image Showcase (Full-width edge-to-edge on mobile, balanced on desktop) */}
+        <div className="w-full">
           <div className="relative w-full aspect-square bg-neutral-100 rounded-none lg:rounded-lg overflow-hidden border-b lg:border border-neutral-200/80">
-            <ProgressiveImage
-              src={galleryImages[activeImageIndex] || ''}
-              alt={product.name}
-              decoding="async"
-              fetchPriority="high"
-              wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
-              className="w-full h-full object-cover object-center"
-            />
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={galleryImages[activeImageIndex] || activeImageIndex}
+                initial={{ opacity: 0.45 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0.45 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="w-full h-full"
+              >
+                <ProgressiveImage
+                  src={galleryImages[activeImageIndex] || ''}
+                  alt={product.name}
+                  decoding="async"
+                  fetchPriority="high"
+                  wrapperClassName="relative w-full h-full overflow-hidden bg-neutral-100"
+                  className="w-full h-full object-cover object-center"
+                />
+              </motion.div>
+            </AnimatePresence>
 
             {/* Bottom-left Image Counter Pill (e.g. 1 | 4) */}
             {galleryImages.length > 0 && (
@@ -351,7 +363,7 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
         </div>
 
         {/* Right: Product Actions & Specs */}
-        <div className="lg:col-span-6 px-4 sm:px-6 lg:px-0 pt-3.5 lg:pt-0 flex flex-col justify-between space-y-4">
+        <div className="w-full px-4 sm:px-6 lg:px-0 pt-3.5 lg:pt-0 flex flex-col justify-between space-y-4">
           
           <div className="space-y-2.5">
             {/* Mobile Breadcrumb directly under product image */}
@@ -411,11 +423,12 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                   {product.colors.map((c, idx) => (
-                    <button
+                    <motion.button
                       key={idx}
+                      whileTap={{ scale: 0.9 }}
                       onClick={() => setSelectedColor(c.name)}
                       className={`relative w-8 h-8 rounded-full border-2 transition-all cursor-pointer ${
-                        selectedColor === c.name ? 'border-black ring-2 ring-neutral-300' : 'border-neutral-200'
+                        selectedColor === c.name ? 'border-black ring-2 ring-neutral-300 scale-105' : 'border-neutral-200 hover:scale-105'
                       }`}
                       style={{ backgroundColor: c.code || '#000000' }}
                       title={c.name}
@@ -444,27 +457,28 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {product.sizes.map((s) => (
-                    <button
+                    <motion.button
                       key={s}
                       type="button"
+                      whileTap={{ scale: 0.94 }}
                       onClick={() => {
                         setSelectedSize(s);
                         if (sizeError) setSizeError('');
                       }}
                       className={`min-w-11 h-10 px-3 flex items-center justify-center text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                         selectedSize === s
-                          ? 'border-black bg-black text-white'
+                          ? 'border-black bg-black text-white shadow-xs'
                           : sizeError
                             ? 'border-red-400 bg-white text-neutral-800 hover:border-black'
                             : 'border-neutral-200 bg-white text-neutral-800 hover:border-black'
                       }`}
                     >
                       {s}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
                 {sizeError && (
-                  <p role="alert" className="mt-2 text-xs font-medium text-red-600 flex items-center gap-1.5">
+                  <p role="alert" className="mt-2 text-xs font-medium text-red-600 flex items-center gap-1.5 animate-fade-in">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                     <span>{sizeError}</span>
                   </p>
@@ -475,23 +489,25 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
             {/* Main CTA Actions */}
             <div className="flex flex-col gap-2 pt-2">
               <div className="flex gap-2">
-                <button
+                <motion.button
+                  whileTap={!isOutOfStock ? { scale: 0.98 } : undefined}
                   onClick={() => handleAddToCart(false)}
                   disabled={isOutOfStock}
                   className="flex-1 py-3.5 bg-black text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-neutral-800 transition-colors flex items-center justify-center gap-2 shadow-md disabled:bg-neutral-300 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <ShoppingBag className="w-4 h-4" />
                   <span>{isOutOfStock ? 'Sold Out' : 'Add to Cart'}</span>
-                </button>
-                <button
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
                   onClick={() => toggleWishlist(product)}
                   className={`w-12 h-12 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
                     isWishlisted ? 'border-black bg-neutral-100 text-black' : 'border-neutral-300 text-neutral-600 hover:border-black'
                   }`}
                   aria-label="Wishlist"
                 >
-                  <Heart className={`w-5 h-5 ${isWishlisted ? 'fill-black' : ''}`} />
-                </button>
+                  <Heart className={`w-5 h-5 transition-transform duration-200 ${isWishlisted ? 'fill-black scale-110' : ''}`} />
+                </motion.button>
               </div>
             </div>
 
@@ -693,11 +709,21 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
                         <Plus className="w-4 h-4 text-neutral-700 shrink-0" />
                       )}
                     </button>
-                    {isOpen && (
-                      <div className="pb-5 animate-fade-in">
-                        {section.content}
-                      </div>
-                    )}
+                    <AnimatePresence initial={false}>
+                      {isOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                          className="overflow-hidden"
+                        >
+                          <div className="pb-5">
+                            {section.content}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
@@ -724,11 +750,24 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
       )}
 
       {/* Size Guide Modal */}
-      {sizeGuideOpen && (() => {
-        const currentGuide = sizeGuides.find((g) => g.id === activeGuideCatId) || sizeGuides[0];
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 text-xs animate-fade-in">
+      <AnimatePresence>
+        {sizeGuideOpen && (() => {
+          const currentGuide = sizeGuides.find((g) => g.id === activeGuideCatId) || sizeGuides[0];
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs"
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 text-xs"
+              >
               <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
                 <div>
                   <h3 className="text-sm font-extrabold uppercase tracking-wider text-neutral-900">
@@ -799,10 +838,11 @@ export const ProductDetailsPage: React.FC<ProductDetailsPageProps> = ({
               >
                 Close Guide
               </button>
-            </div>
-          </div>
-        );
-      })()}
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
 
     </div>
   );

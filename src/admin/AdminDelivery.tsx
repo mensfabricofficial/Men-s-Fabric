@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, Plus, Edit, Trash2, X, CheckCircle, AlertCircle, Save } from 'lucide-react';
+import { Truck, Plus, Edit, Trash2, X, CheckCircle, AlertCircle, Save, PackageCheck } from 'lucide-react';
 import { DeliveryZone } from '../types';
-import { settingsService } from '../services/settingsService';
+import { settingsService, defaultSettings } from '../services/settingsService';
 import { AdminPageHeader } from './AdminLayout';
 
 export const AdminDelivery: React.FC = () => {
@@ -25,6 +25,15 @@ export const AdminDelivery: React.FC = () => {
   );
   const [quickSaving, setQuickSaving] = useState(false);
 
+  // Quantity-based Free Delivery rule state
+  const [freeDeliveryMinQtyActive, setFreeDeliveryMinQtyActive] = useState<boolean>(
+    () => settingsService.getInstantSettings()?.freeDeliveryMinQtyActive ?? defaultSettings.freeDeliveryMinQtyActive ?? true
+  );
+  const [freeDeliveryMinQty, setFreeDeliveryMinQty] = useState<number>(
+    () => settingsService.getInstantSettings()?.freeDeliveryMinQty ?? defaultSettings.freeDeliveryMinQty ?? 2
+  );
+  const [qtyRuleSaving, setQtyRuleSaving] = useState(false);
+
   // In-UI Feedback
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -43,7 +52,18 @@ export const AdminDelivery: React.FC = () => {
       if (out) setQuickOutside(out.charge);
       setLoading(false);
     });
-    return () => unsub();
+    const unsubSettings = settingsService.subscribeToSettings((s) => {
+      setFreeDeliveryMinQtyActive(s.freeDeliveryMinQtyActive ?? defaultSettings.freeDeliveryMinQtyActive ?? true);
+      setFreeDeliveryMinQty(
+        typeof s.freeDeliveryMinQty === 'number'
+          ? s.freeDeliveryMinQty
+          : (defaultSettings.freeDeliveryMinQty ?? 2)
+      );
+    });
+    return () => {
+      unsub();
+      unsubSettings();
+    };
   }, []);
 
   const openAddModal = () => {
@@ -122,6 +142,27 @@ export const AdminDelivery: React.FC = () => {
       showToast('Delivery zone removed successfully.');
     } catch {
       showToast('Failed to delete delivery zone.', 'error');
+    }
+  };
+
+  const handleSaveQtyFreeDeliveryRule = async () => {
+    const safeMinQty = Math.max(1, Math.floor(Number(freeDeliveryMinQty) || 2));
+    setFreeDeliveryMinQty(safeMinQty);
+    setQtyRuleSaving(true);
+    try {
+      await settingsService.updateSettings({
+        freeDeliveryMinQtyActive,
+        freeDeliveryMinQty: safeMinQty,
+      });
+      showToast(
+        freeDeliveryMinQtyActive
+          ? `Free delivery rule saved: ${safeMinQty}+ products get FREE delivery.`
+          : 'Quantity-based free delivery rule disabled.'
+      );
+    } catch {
+      showToast('Failed to save free delivery rule.', 'error');
+    } finally {
+      setQtyRuleSaving(false);
     }
   };
 
@@ -217,6 +258,93 @@ export const AdminDelivery: React.FC = () => {
           >
             <Save className="w-4 h-4" />
             <span>{quickSaving ? 'Saving Fees...' : 'Save & Update Delivery Fees'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Free Delivery by Minimum Product Quantity Rule */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-6 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-neutral-100">
+          <div className="flex items-center gap-2.5">
+            <PackageCheck className="w-5 h-5 text-emerald-700" />
+            <div>
+              <h2 className="text-sm font-extrabold uppercase tracking-wider text-neutral-900">
+                Free Delivery by Product Quantity
+              </h2>
+              <p className="text-[11px] text-neutral-500 mt-0.5">
+                Automatically make delivery FREE when a customer orders your chosen minimum number of products.
+              </p>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-bold text-neutral-800">
+            <input
+              type="checkbox"
+              checked={freeDeliveryMinQtyActive}
+              onChange={(e) => setFreeDeliveryMinQtyActive(e.target.checked)}
+              className="accent-black w-4 h-4 cursor-pointer"
+            />
+            <span>{freeDeliveryMinQtyActive ? 'Rule Active' : 'Rule Disabled'}</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+          <div className="sm:col-span-5 p-4 bg-neutral-50 rounded-xl border border-neutral-200 space-y-2">
+            <label className="block text-[11px] font-bold uppercase text-neutral-600 tracking-wider">
+              Minimum Products for Free Delivery
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                disabled={!freeDeliveryMinQtyActive}
+                value={freeDeliveryMinQty}
+                onChange={(e) => setFreeDeliveryMinQty(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full px-3 py-2 bg-white border border-neutral-300 rounded-lg text-sm font-bold font-mono focus:outline-none focus:border-black disabled:opacity-50"
+              />
+              <span className="text-xs font-bold uppercase text-neutral-500 shrink-0">Products</span>
+            </div>
+            <p className="text-[11px] text-neutral-400">
+              Example: Set <b>2</b> so any order with 2 or more product items gets ৳0 delivery fee.
+            </p>
+          </div>
+
+          <div className={`sm:col-span-7 p-4 rounded-xl border text-xs leading-relaxed ${
+            freeDeliveryMinQtyActive
+              ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+              : 'bg-neutral-50 border-neutral-200 text-neutral-600'
+          }`}>
+            {freeDeliveryMinQtyActive ? (
+              <>
+                <p className="font-bold uppercase tracking-wider text-[11px] text-emerald-800 mb-1">
+                  Live Customer Rule Preview
+                </p>
+                <p>
+                  When a customer has <b>{Math.max(1, Math.floor(Number(freeDeliveryMinQty) || 2))}+ products</b> in their cart, delivery charge automatically becomes <b>FREE (৳0)</b> across Cart & Checkout, and the delivery cost is tracked under Free Delivery Fee in Admin Reconciliation & Accounts.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-bold uppercase tracking-wider text-[11px] text-neutral-700 mb-1">
+                  Rule Currently Off
+                </p>
+                <p>
+                  Quantity-based free delivery is disabled. Normal delivery zone charges will apply unless a Free Delivery coupon is used.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            disabled={qtyRuleSaving}
+            onClick={handleSaveQtyFreeDeliveryRule}
+            className="w-full sm:w-auto px-5 py-3 bg-black text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-neutral-800 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+          >
+            <Save className="w-4 h-4" />
+            <span>{qtyRuleSaving ? 'Saving Rule...' : 'Save Free Delivery Rule'}</span>
           </button>
         </div>
       </div>

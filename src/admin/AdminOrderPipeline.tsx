@@ -33,7 +33,12 @@ import { productService } from '../services/productService';
 import { settingsService } from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { formatDatePart, formatTimePart, formatDateTime } from '../lib/dateFormat';
-import { getOrderPaidAndDue, getOrderRecognizedSale } from '../lib/accountingUtils';
+import {
+  getOrderPaidAndDue,
+  getOrderCustomerPaidAndDue,
+  getOrderRecognizedSale,
+  getOrderFreeDeliveryFee,
+} from '../lib/accountingUtils';
 import { InvoiceSheet, getFormattedInvoiceNumber } from '../components/common/InvoiceSheet';
 import { ThermalPosReceipt } from '../components/common/ThermalPosReceipt';
 import { printElementById } from '../lib/printHelper';
@@ -136,6 +141,7 @@ export const AdminOrderPipeline: React.FC = () => {
   const [trxIdInput, setTrxIdInput] = useState('');
   const [verifiedPayInput, setVerifiedPayInput] = useState('');
   const [codCollectedInput, setCodCollectedInput] = useState('');
+  const [freeDeliveryFeeInput, setFreeDeliveryFeeInput] = useState('0');
   const [codChargeInput, setCodChargeInput] = useState('0');
   const [codChargePctInput, setCodChargePctInput] = useState('0');
 
@@ -232,17 +238,19 @@ export const AdminOrderPipeline: React.FC = () => {
     setEditingInlineStep(null);
     setCourierName(ord.pipeline?.courierName || 'Steadfast');
     setTrackingNumber(ord.pipeline?.trackingNumber || '');
-    const payInfo = getOrderPaidAndDue(ord);
+    const payInfo = getOrderCustomerPaidAndDue(ord);
     setVerifiedPayInput(String(payInfo.total));
     setTrxIdInput(ord.paymentDetails?.transactionId || '');
     const expectedCodCash = ord.pipeline?.codReconciliation?.expectedCash ?? payInfo.due ?? 0;
     const initCollected = ord.pipeline?.codReconciliation?.collectedCash ?? expectedCodCash;
+    const initFreeDeliveryFee = getOrderFreeDeliveryFee(ord);
     const initCodCharge =
       ord.pipeline?.codReconciliation?.codCharge ??
       ord.codCharge ??
       ord.pipeline?.financialSnapshot?.codCharge ??
       0;
     setCodCollectedInput(String(initCollected));
+    setFreeDeliveryFeeInput(String(initFreeDeliveryFee));
     setCodChargeInput(String(initCodCharge));
     setCodChargePctInput(
       initCollected > 0 && initCodCharge > 0
@@ -462,11 +470,13 @@ export const AdminOrderPipeline: React.FC = () => {
 
     if (id === 'codrec') {
       const nextCollected = Math.max(0, Number(codCollectedInput) || 0);
+      const nextFreeDeliveryFee = Math.max(0, Number(freeDeliveryFeeInput) || 0);
       const nextCodCharge = Math.max(0, Number(codChargeInput) || 0);
       runWorkflowTask(async () => {
         const res = await orderService.updateCodReconciliationValues({
           orderId: ord.id,
           collectedCash: nextCollected,
+          freeDeliveryFee: nextFreeDeliveryFee,
           codCharge: nextCodCharge,
           actorName: actorDisplayName,
           actorEmail: currentEmail || undefined,
@@ -537,12 +547,14 @@ export const AdminOrderPipeline: React.FC = () => {
 
   const handleVerifyCodReconcile = (ord: Order, resolveDiscrepancy = false) => {
     const enteredCash = Math.max(0, Number(codCollectedInput) || 0);
+    const enteredFreeDeliveryFee = Math.max(0, Number(freeDeliveryFeeInput) || 0);
     const enteredCodCharge = Math.max(0, Number(codChargeInput) || 0);
     runWorkflowTask(
       () =>
         orderService.recordRoleCCodReconciliation({
           orderId: ord.id,
           collectedAmount: enteredCash,
+          freeDeliveryFee: enteredFreeDeliveryFee,
           codCharge: enteredCodCharge,
           resolveDiscrepancy,
           note: handoffNote.trim() || undefined,
@@ -764,15 +776,26 @@ export const AdminOrderPipeline: React.FC = () => {
 
                         <td
                           className="py-4 px-3 text-neutral-900 font-medium whitespace-nowrap"
-                          title={
-                            (ord.codCharge || ord.pipeline?.codReconciliation?.codCharge || 0) > 0
-                              ? `Net Sale (Excl. Delivery ৳${(Number(ord.deliveryCharge) || 0).toLocaleString('en-BD')} & COD Charge ৳${(
-                                  ord.codCharge ||
-                                  ord.pipeline?.codReconciliation?.codCharge ||
-                                  0
-                                ).toLocaleString('en-BD')})`
-                              : undefined
-                          }
+                          title={(() => {
+                            const codFee =
+                              ord.codCharge || ord.pipeline?.codReconciliation?.codCharge || 0;
+                            const freeDeliv = getOrderFreeDeliveryFee(ord);
+                            const delivFee = Number(ord.deliveryCharge) || 0;
+                            if (codFee > 0 || freeDeliv > 0) {
+                              const parts: string[] = [];
+                              if (delivFee > 0) {
+                                parts.push(`Delivery ৳${delivFee.toLocaleString('en-BD')}`);
+                              }
+                              if (freeDeliv > 0) {
+                                parts.push(`Free Delivery -৳${freeDeliv.toLocaleString('en-BD')}`);
+                              }
+                              if (codFee > 0) {
+                                parts.push(`COD Charge -৳${codFee.toLocaleString('en-BD')}`);
+                              }
+                              return `Net Sale (${parts.join(' · ')})`;
+                            }
+                            return undefined;
+                          })()}
                         >
                           ৳{getOrderRecognizedSale(ord).toLocaleString('en-BD')}
                         </td>
@@ -1312,6 +1335,8 @@ export const AdminOrderPipeline: React.FC = () => {
                             return String(Math.max(0, (snap?.discount || 0) - (snap?.couponDiscount || 0) - (snap?.onlineDiscount || 0)));
                           case 'shipping':
                             return String(snap?.shippingCharge ?? selectedOrder.deliveryCharge ?? 0);
+                          case 'freeDeliveryFee':
+                            return String(getOrderFreeDeliveryFee(selectedOrder));
                           case 'codCharge':
                             return String(snap?.codCharge ?? 0);
                           case 'finalPayable':
@@ -1339,6 +1364,7 @@ export const AdminOrderPipeline: React.FC = () => {
                         'couponDiscount',
                         'discount',
                         'shipping',
+                        'freeDeliveryFee',
                         'codCharge',
                         'finalPayable',
                         'advancePaid',
@@ -1373,6 +1399,8 @@ export const AdminOrderPipeline: React.FC = () => {
                                   className={`font-sans break-words ${
                                     step.key === 'finalPayable'
                                       ? 'font-bold text-neutral-950'
+                                      : step.key === 'freeDeliveryFee' && displayedStepVal.startsWith('-')
+                                      ? 'font-semibold text-red-700'
                                       : step.key === 'onlineDiscount' && displayedStepVal.startsWith('-')
                                       ? 'font-semibold text-emerald-700'
                                       : 'text-neutral-800'
@@ -1770,12 +1798,15 @@ export const AdminOrderPipeline: React.FC = () => {
                 </div>
 
                 {/* SECTION 6: COD CASH COLLECTION & COD CHARGE RECONCILIATION */}
-                {(wf.isCod || getOrderPaidAndDue(selectedOrder).due > 0 || currentStage === 'cod_reconciliation') && (() => {
+                {(wf.isCod ||
+                  getOrderCustomerPaidAndDue(selectedOrder).due > 0 ||
+                  currentStage === 'cod_reconciliation' ||
+                  Boolean(selectedOrder.pipeline?.codReconciliation?.reconciledBy)) && (() => {
                   const recState = selectedOrder.pipeline?.codReconciliation;
                   const isReconciled = Boolean(recState?.reconciledBy) && !wf.reconciliationRequired;
                   const expectedCash = Math.max(
                     0,
-                    recState?.expectedCash ?? getOrderPaidAndDue(selectedOrder).due
+                    recState?.expectedCash ?? getOrderCustomerPaidAndDue(selectedOrder).due
                   );
                   const orderTotalAmt = Math.max(0, Number(selectedOrder.total) || 0);
                   const deliveryChargeAmt = Math.max(
@@ -1786,6 +1817,14 @@ export const AdminOrderPipeline: React.FC = () => {
                         0
                     ) || 0
                   );
+                  const defaultFreeDeliveryFee = getOrderFreeDeliveryFee(selectedOrder);
+                  const hasFreeDeliveryDeduction =
+                    deliveryChargeAmt === 0 &&
+                    (Boolean(selectedOrder.freeDeliveryApplied) ||
+                      defaultFreeDeliveryFee > 0 ||
+                      selectedOrder.orderChannel !== 'pos' ||
+                      Boolean(selectedOrder.deliveryRequired));
+
                   const preCollectionPaid = Math.max(0, orderTotalAmt - expectedCash);
                   const productAdvancePaid = Math.max(0, preCollectionPaid - deliveryChargeAmt);
                   const isEditingCod = editingInlineStep?.id === 'codrec';
@@ -1794,14 +1833,24 @@ export const AdminOrderPipeline: React.FC = () => {
                   const activeCollected = showInputs
                     ? Math.max(0, Number(codCollectedInput) || 0)
                     : Math.max(0, Number(recState?.collectedCash ?? expectedCash) || 0);
+                  const activeFreeDeliveryFee = hasFreeDeliveryDeduction
+                    ? showInputs
+                      ? Math.max(0, Number(freeDeliveryFeeInput) || 0)
+                      : defaultFreeDeliveryFee
+                    : 0;
                   const activeCodCharge = showInputs
                     ? Math.max(0, Number(codChargeInput) || 0)
                     : Math.max(0, Number(recState?.codCharge ?? selectedOrder.codCharge ?? 0) || 0);
                   const productGrossCollected = Math.max(
                     0,
-                    preCollectionPaid + activeCollected - deliveryChargeAmt
+                    preCollectionPaid + activeCollected - deliveryChargeAmt - activeFreeDeliveryFee
                   );
                   const netFinalSale = Math.max(0, productGrossCollected - activeCodCharge);
+
+                  const freeDeliveryOffset = hasFreeDeliveryDeduction ? 1 : 0;
+                  const codChargeSerial = codRecSerial + 2 + freeDeliveryOffset;
+                  const finalSaleSerial = codChargeSerial + 1;
+                  const invoiceSerial = finalSaleSerial + 1;
 
                   return (
                     <div className="border-t border-dashed border-neutral-400 pt-3">
@@ -1874,10 +1923,62 @@ export const AdminOrderPipeline: React.FC = () => {
                           )}
                         </div>
 
+                        {hasFreeDeliveryDeduction && (
+                          <div className="py-2 flex items-center justify-between gap-3">
+                            <div>
+                              <span className="text-neutral-400 mr-1.5">
+                                {String(codRecSerial + 2).padStart(2, '0')}.
+                              </span>
+                              <span className="font-bold">Free Delivery Charge (From Product):</span>{' '}
+                              {!showInputs && (
+                                <span className={activeFreeDeliveryFee > 0 ? 'text-red-700' : 'text-neutral-600'}>
+                                  {activeFreeDeliveryFee > 0
+                                    ? `-৳${activeFreeDeliveryFee.toLocaleString('en-BD')}${
+                                        selectedOrder.deliveryZone ? ` (${selectedOrder.deliveryZone})` : ''
+                                      }`
+                                    : '৳0'}
+                                </span>
+                              )}
+                              {showInputs && selectedOrder.deliveryZone && (
+                                <span className="text-[11px] text-neutral-500 font-sans ml-1">
+                                  ({selectedOrder.deliveryZone})
+                                </span>
+                              )}
+                            </div>
+                            {showInputs ? (
+                              <div className="flex items-center border border-neutral-400 rounded bg-white overflow-hidden">
+                                <span className="pl-2 text-[11px] font-mono font-bold text-neutral-500 select-none">
+                                  ৳
+                                </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="1"
+                                  value={freeDeliveryFeeInput}
+                                  onChange={(e) => setFreeDeliveryFeeInput(e.target.value)}
+                                  aria-label="Free Delivery Charge Deducted from Product"
+                                  title="Enter Free Delivery Charge deducted from product total"
+                                  className="px-2 py-1 font-mono text-xs w-24 text-right font-bold focus:outline-none"
+                                />
+                              </div>
+                            ) : (
+                              <span
+                                className={`font-mono text-xs ${
+                                  activeFreeDeliveryFee > 0 ? 'text-red-700' : 'text-neutral-500'
+                                }`}
+                              >
+                                {activeFreeDeliveryFee > 0
+                                  ? `-৳${activeFreeDeliveryFee.toLocaleString('en-BD')}`
+                                  : '৳0'}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         <div className="py-2 flex items-center justify-between gap-3">
                           <div>
                             <span className="text-neutral-400 mr-1.5">
-                              {String(codRecSerial + 2).padStart(2, '0')}.
+                              {String(codChargeSerial).padStart(2, '0')}.
                             </span>
                             <span className="font-bold">COD Charge (Courier Fee):</span>{' '}
                             {!showInputs && (
@@ -1955,7 +2056,7 @@ export const AdminOrderPipeline: React.FC = () => {
                           <div className="flex items-center justify-between gap-3">
                             <div>
                               <span className="text-neutral-400 mr-1.5">
-                                {String(codRecSerial + 3).padStart(2, '0')}.
+                                {String(finalSaleSerial).padStart(2, '0')}.
                               </span>
                               <span className="font-bold">Final Sale Amount:</span>{' '}
                               <span className="font-mono font-bold text-emerald-700">
@@ -1964,10 +2065,14 @@ export const AdminOrderPipeline: React.FC = () => {
                               <span className="text-[11px] text-neutral-500 ml-2 font-sans">
                                 (
                                 {productAdvancePaid > 0
-                                  ? `Adv ৳${productAdvancePaid.toLocaleString('en-BD')} + Cash ৳${activeCollected.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`
+                                  ? `Adv ৳${productAdvancePaid.toLocaleString('en-BD')} + Cash ৳${activeCollected.toLocaleString('en-BD')}`
                                   : preCollectionPaid === 0 && deliveryChargeAmt > 0
-                                  ? `Cash ৳${activeCollected.toLocaleString('en-BD')} − Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`
-                                  : `Cash ৳${activeCollected.toLocaleString('en-BD')} − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`}
+                                  ? `Cash ৳${activeCollected.toLocaleString('en-BD')} − Delivery ৳${deliveryChargeAmt.toLocaleString('en-BD')}`
+                                  : `Cash ৳${activeCollected.toLocaleString('en-BD')}`}
+                                {activeFreeDeliveryFee > 0
+                                  ? ` − Free Delivery ৳${activeFreeDeliveryFee.toLocaleString('en-BD')}`
+                                  : ''}
+                                {` − COD Fee ৳${activeCodCharge.toLocaleString('en-BD')}`}
                                 )
                               </span>
                             </div>
@@ -1998,6 +2103,7 @@ export const AdminOrderPipeline: React.FC = () => {
                                     disabled={processing}
                                     onClick={() => {
                                       setCodCollectedInput(String(activeCollected));
+                                      setFreeDeliveryFeeInput(String(activeFreeDeliveryFee));
                                       setCodChargeInput(String(activeCodCharge));
                                       setCodChargePctInput(
                                         activeCollected > 0 && activeCodCharge > 0
@@ -2027,12 +2133,13 @@ export const AdminOrderPipeline: React.FC = () => {
                                 processing={processing}
                                 isEditing={isEditingCod}
                                 verifyLabel={wf.reconciliationRequired ? 'Resolve & Verify' : 'Verify'}
-                                onEdit={() =>
+                                onEdit={() => {
+                                  setFreeDeliveryFeeInput(String(activeFreeDeliveryFee));
                                   setEditingInlineStep({
                                     id: 'codrec',
                                     value: codCollectedInput,
-                                  })
-                                }
+                                  });
+                                }}
                                 onVerify={() => handleVerifyCodReconcile(selectedOrder, wf.reconciliationRequired)}
                               />
                             )}
@@ -2043,7 +2150,7 @@ export const AdminOrderPipeline: React.FC = () => {
                           <div className="flex items-center flex-wrap gap-2">
                             <span>
                               <span className="text-neutral-400 mr-1.5">
-                                {String(codRecSerial + 4).padStart(2, '0')}.
+                                {String(invoiceSerial).padStart(2, '0')}.
                               </span>
                               <span className="font-bold">Final Sale Invoice:</span>
                             </span>
@@ -2210,18 +2317,26 @@ export const AdminOrderPipeline: React.FC = () => {
           invoiceVariant === 'final_sale' && isEditingCodRec
             ? (() => {
                 const liveCollected = Math.max(0, Number(codCollectedInput) || 0);
+                const liveFreeDelivFee =
+                  Math.max(0, Number(selectedOrder.deliveryCharge) || 0) > 0
+                    ? 0
+                    : Math.max(0, Number(freeDeliveryFeeInput) || 0);
                 const liveCodFee = Math.max(0, Number(codChargeInput) || 0);
                 const ordTotal = Math.max(0, Number(selectedOrder.total) || 0);
                 const deliv = Math.max(0, Number(selectedOrder.deliveryCharge) || 0);
                 const expCash = Math.max(
                   0,
                   selectedOrder.pipeline?.codReconciliation?.expectedCash ??
-                    getOrderPaidAndDue(selectedOrder).due
+                    getOrderCustomerPaidAndDue(selectedOrder).due
                 );
                 const prePaid = Math.max(0, ordTotal - expCash);
-                const liveFinalSale = Math.max(0, prePaid + liveCollected - deliv - liveCodFee);
+                const liveFinalSale = Math.max(
+                  0,
+                  prePaid + liveCollected - deliv - liveFreeDelivFee - liveCodFee
+                );
                 return {
                   ...selectedOrder,
+                  freeDeliveryCost: liveFreeDelivFee,
                   codCharge: liveCodFee,
                   netSaleAmount: liveFinalSale,
                   pipeline: {
@@ -2230,6 +2345,7 @@ export const AdminOrderPipeline: React.FC = () => {
                       ...(selectedOrder.pipeline?.codReconciliation || { expectedCash: expCash }),
                       expectedCash: expCash,
                       collectedCash: liveCollected,
+                      freeDeliveryFee: liveFreeDelivFee,
                       codCharge: liveCodFee,
                       finalSaleAmount: liveFinalSale,
                       resolved: Boolean(selectedOrder.pipeline?.codReconciliation?.resolved),

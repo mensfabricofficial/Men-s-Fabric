@@ -6,13 +6,13 @@ import {
   Check, 
   ChevronDown, 
   RotateCcw,
-  Search,
   Sparkles
 } from 'lucide-react';
-import { Product, Category } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
+import { Product, Category, SiteSettings } from '../types';
 import { productService } from '../services/productService';
+import { settingsService, defaultSettings } from '../services/settingsService';
 import { ProductGrid } from '../components/product/ProductGrid';
-import { FloatingInput } from '../components/common/FloatingInput';
 
 interface ShopPageProps {
   currentRoute: string;
@@ -27,6 +27,7 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
   const [allProducts, setAllProducts] = useState<Product[]>(initialProducts || []);
   const [categories, setCategories] = useState<Category[]>(() => (initialCategories || []).filter((c) => c.active));
   const [loading, setLoading] = useState(initialProducts === null);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(() => settingsService.getInstantSettings() || defaultSettings);
 
   // Filters State
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || '');
@@ -66,11 +67,20 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
       setCategories(cats.filter((c) => c.active));
     });
 
+    const unsubSettings = settingsService.subscribeToSettings((s) => {
+      setSiteSettings(s);
+    });
+
     return () => {
       unsubProducts();
       unsubCategories();
+      unsubSettings();
     };
   }, []);
+
+  const hasOnlineDiscount =
+    Boolean(siteSettings.paymentSettings?.onlineDiscountActive) &&
+    Number(siteSettings.paymentSettings?.onlineDiscountValue || 0) > 0;
 
   // Compute available sizes from products
   const availableSizes = useMemo(() => {
@@ -201,96 +211,69 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
           ))
         ) : (
           <>
-            <button
+            <motion.button
+              whileTap={{ scale: 0.95 }}
               onClick={() => setSelectedCategory('')}
-              className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+              className={`relative px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider transition-colors whitespace-nowrap cursor-pointer shrink-0 ${
                 !selectedCategory
-                  ? 'bg-black text-white shadow-xs'
+                  ? 'text-white shadow-xs'
                   : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
               }`}
             >
-              All
-            </button>
+              {!selectedCategory && (
+                <motion.span
+                  layoutId="shop-cat-pill"
+                  transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                  className="absolute inset-0 rounded-full bg-black"
+                />
+              )}
+              <span className="relative z-10">All</span>
+            </motion.button>
             {categories.map((c) => {
               const isSelected = selectedCategory === c.id || selectedCategory === c.slug;
               return (
-                <button
+                <motion.button
                   key={c.id}
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => setSelectedCategory(isSelected ? '' : (c.slug || c.id))}
-                  className={`px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+                  className={`relative px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider transition-colors whitespace-nowrap cursor-pointer shrink-0 ${
                     isSelected
-                      ? 'bg-black text-white shadow-xs'
+                      ? 'text-white shadow-xs'
                       : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
                   }`}
                 >
-                  {c.name}
-                </button>
+                  {isSelected && (
+                    <motion.span
+                      layoutId="shop-cat-pill"
+                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                      className="absolute inset-0 rounded-full bg-black"
+                    />
+                  )}
+                  <span className="relative z-10">{c.name}</span>
+                </motion.button>
               );
             })}
           </>
         )}
       </div>
 
-      {/* Filter & Sort Controls Bar (Responsive Mobile Grid + Desktop Flex) */}
-      <div className="bg-white border border-neutral-200 rounded-xl p-3 sm:p-4 mb-6 shadow-2xs space-y-3">
-        
-        {/* Search Bar - Full width on mobile, inline on desktop */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="flex-1 max-w-full sm:max-w-md">
-            <FloatingInput
-              compact
-              label="Search products by title, fabric, or SKU"
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="w-4 h-4" />}
-              rightElement={
-                searchQuery ? (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    aria-label="Clear search"
-                    className="text-neutral-400 hover:text-black cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                ) : undefined
-              }
-            />
-          </div>
-
+      {/* Filter & Sort Controls Bar (Responsive Mobile Grid + Single-row Desktop) */}
+      <div className="bg-white border border-neutral-200 rounded-xl p-3 sm:p-4 mb-6 shadow-2xs space-y-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
           {/* Quick Sort dropdown */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-neutral-500 uppercase hidden sm:inline">Sort:</span>
-            <div className="relative flex-1 sm:flex-initial">
-              <select
-                value={sortBy}
-                onChange={(e: any) => setSortBy(e.target.value)}
-                className="w-full sm:w-auto px-3.5 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg text-xs font-semibold text-neutral-800 cursor-pointer appearance-none pr-8 focus:outline-none focus:border-black"
-              >
-                <option value="newest">Sort: Newest First</option>
-                <option value="popular">Sort: Best Selling</option>
-                <option value="price-asc">Price: Low to High</option>
-                <option value="price-desc">Price: High to Low</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
-            </div>
-
-            {hasActiveFilters && (
-              <button
-                onClick={resetFilters}
-                className="text-xs text-red-600 font-semibold hover:underline flex items-center gap-1 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg cursor-pointer shrink-0 transition-colors"
-                title="Reset all filters"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Reset</span>
-              </button>
-            )}
+          <div className="relative col-span-2 sm:col-span-1">
+            <select
+              value={sortBy}
+              onChange={(e: any) => setSortBy(e.target.value)}
+              className="w-full px-3 py-2 bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-lg font-semibold text-neutral-800 cursor-pointer appearance-none pr-7 focus:outline-none focus:border-black"
+            >
+              <option value="newest">Sort: Newest First</option>
+              <option value="popular">Sort: Best Selling</option>
+              <option value="price-asc">Price: Low to High</option>
+              <option value="price-desc">Price: High to Low</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-500" />
           </div>
-        </div>
-
-        {/* Filter Selectors - Clean 2-column or 4-column aligned responsive grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-neutral-100 text-xs">
           
           {/* Gender Selector */}
           <div className="relative">
@@ -357,53 +340,75 @@ export const ShopPage: React.FC<ShopPageProps> = ({ currentRoute, onNavigate, in
         </div>
 
         {/* Active Filter Chips */}
-        {hasActiveFilters && (
-          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-neutral-100">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mr-1">Active Filters:</span>
-            {selectedCategory && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full">
-                Category: {categories.find((c) => c.id === selectedCategory || c.slug === selectedCategory)?.name || selectedCategory}
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedCategory('')} />
-              </span>
-            )}
-            {selectedGender !== 'all' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full capitalize">
-                Gender: {selectedGender}
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedGender('all')} />
-              </span>
-            )}
-            {selectedSize && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full">
-                Size: {selectedSize}
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedSize('')} />
-              </span>
-            )}
-            {priceMax < 15000 && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full">
-                Max Price: ৳{priceMax.toLocaleString('en-BD')}
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setPriceMax(15000)} />
-              </span>
-            )}
-            {inStockOnly && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full">
-                In Stock Only
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setInStockOnly(false)} />
-              </span>
-            )}
-            {searchQuery && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full">
-                Search: "{searchQuery}"
-                <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSearchQuery('')} />
-              </span>
-            )}
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {hasActiveFilters && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-neutral-100">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mr-1">Active Filters:</span>
+                {selectedCategory && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full animate-scale-in">
+                    Category: {categories.find((c) => c.id === selectedCategory || c.slug === selectedCategory)?.name || selectedCategory}
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedCategory('')} />
+                  </span>
+                )}
+                {selectedGender !== 'all' && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full capitalize animate-scale-in">
+                    Gender: {selectedGender}
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedGender('all')} />
+                  </span>
+                )}
+                {selectedSize && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full animate-scale-in">
+                    Size: {selectedSize}
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSelectedSize('')} />
+                  </span>
+                )}
+                {priceMax < 15000 && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full animate-scale-in">
+                    Max Price: ৳{priceMax.toLocaleString('en-BD')}
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setPriceMax(15000)} />
+                  </span>
+                )}
+                {inStockOnly && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full animate-scale-in">
+                    In Stock Only
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setInStockOnly(false)} />
+                  </span>
+                )}
+                {searchQuery && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-neutral-100 text-neutral-800 text-xs rounded-full animate-scale-in">
+                    Search: "{searchQuery}"
+                    <X className="w-3 h-3 cursor-pointer hover:text-black" onClick={() => setSearchQuery('')} />
+                  </span>
+                )}
+                <button
+                  onClick={resetFilters}
+                  className="ml-auto text-xs text-red-600 font-semibold hover:underline flex items-center gap-1 px-2.5 py-1 bg-red-50 hover:bg-red-100 rounded-full cursor-pointer shrink-0 transition-colors"
+                  title="Reset all filters"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Promotional Bar */}
       <div className="bg-black text-white text-xs sm:text-sm font-semibold py-3 px-4 rounded-xl text-center mb-6 tracking-wide shadow-xs flex items-center justify-center gap-2">
         <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-        <span>Save with Digital Prepayment (bKash, Nagad, Rocket) | Cash on Delivery Available Across Bangladesh</span>
+        <span>
+          {hasOnlineDiscount
+            ? `Save ${siteSettings.paymentSettings?.onlineDiscountType === 'percentage' ? `${siteSettings.paymentSettings?.onlineDiscountValue}%` : `৳${siteSettings.paymentSettings?.onlineDiscountValue}`} with Digital Prepayment (bKash, Nagad, Rocket) | Cash on Delivery Available Across Bangladesh`
+            : 'Digital Prepayment (bKash, Nagad, Rocket) & Cash on Delivery Available Across Bangladesh'}
+        </span>
       </div>
 
       {/* Product Catalog Grid */}

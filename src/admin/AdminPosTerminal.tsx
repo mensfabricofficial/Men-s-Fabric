@@ -377,7 +377,7 @@ export const AdminPosTerminal: React.FC = () => {
   const handleApplyCoupon = () => {
     const code = couponInput.trim().toUpperCase();
     if (!code) return;
-    const match = coupons.find((c) => c.code.trim().toUpperCase() === code);
+    const match = settingsService.findBestCouponByCode(coupons, code);
     if (!match) {
       setCouponError('Coupon code not found.');
       return;
@@ -386,7 +386,7 @@ export const AdminPosTerminal: React.FC = () => {
       setCouponError('Coupon expired, inactive, or limit reached.');
       return;
     }
-    if (subtotal < (match.minOrderAmount || 0)) {
+    if (subtotal < (Number(match.minOrderAmount) || 0)) {
       setCouponError(`Minimum order ৳${match.minOrderAmount} required.`);
       return;
     }

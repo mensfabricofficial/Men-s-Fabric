@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Eye, ChevronUp } from 'lucide-react';
+import { ShoppingBag, Eye, ChevronUp, Check } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
 import { getProductUrlSlug } from '../../services/productService';
@@ -31,6 +32,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (Array.isArray(product.images) ? product.images.find((u) => typeof u === 'string' && u.trim())?.trim() : '') ||
     '';
   const [cardReady, setCardReady] = useState(!primaryImage);
+  const [justAdded, setJustAdded] = useState(false);
 
   // Compute display SKU (fallback to 6-char id or standard luxury code)
   const displaySku = product.sku || product.variants?.[0]?.sku || (product.id ? product.id.slice(0, 6).toUpperCase() : '277055');
@@ -68,6 +70,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       availableStock: available,
       sku,
     });
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 1100);
   };
 
   return (
@@ -93,7 +97,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         }`}
       >
       {/* Image container (Square 1:1, No auto image swap on hover) */}
-      <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-lg border border-neutral-100 group-hover:border-neutral-200 transition-colors">
+      <div className="relative w-full aspect-square bg-neutral-50 overflow-hidden rounded-lg border border-neutral-100 group-hover:border-neutral-200 group-hover:shadow-md transition-all duration-300">
         <ProgressiveImage
           src={primaryImage}
           alt={product.name}
@@ -113,19 +117,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         )}
 
         {/* Bottom-left Cart Icon Button */}
-        <button
+        <motion.button
+          whileTap={!isOutOfStock ? { scale: 0.88 } : undefined}
           onClick={handleQuickAdd}
           disabled={isOutOfStock}
           aria-label="Add to cart"
           title={isOutOfStock ? 'Sold Out' : 'Quick Add to Cart'}
-          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md bg-white/95 border border-neutral-200/80 flex items-center justify-center transition-all duration-200 shadow-xs z-10 ${
+          className={`absolute bottom-2.5 left-2.5 w-8 h-8 sm:w-9 sm:h-9 rounded-md border flex items-center justify-center transition-all duration-200 shadow-xs z-10 ${
             isOutOfStock
-              ? 'opacity-40 cursor-not-allowed text-neutral-400'
-              : 'text-neutral-900 hover:bg-black hover:text-white hover:border-black active:scale-95 cursor-pointer'
+              ? 'opacity-40 cursor-not-allowed bg-white/95 border-neutral-200/80 text-neutral-400'
+              : justAdded
+                ? 'bg-emerald-600 text-white border-emerald-600 cursor-pointer'
+                : 'bg-white/95 border-neutral-200/80 text-neutral-900 hover:bg-black hover:text-white hover:border-black cursor-pointer'
           }`}
         >
-          <ShoppingBag className="w-4 h-4" />
-        </button>
+          {justAdded ? <Check className="w-4 h-4 animate-scale-in" /> : <ShoppingBag className="w-4 h-4" />}
+        </motion.button>
 
         {/* Quick View Button on hover bottom-right */}
         {onQuickView && (
@@ -146,7 +153,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       <div className="pt-3 pb-2 flex flex-col space-y-1">
         {/* Row 1: Title on Left, Product Code on Right */}
         <div className="flex items-baseline justify-between gap-2">
-          <h4 className="text-[13px] sm:text-sm font-heading font-bold text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1">
+          <h4 className="text-[13px] sm:text-sm font-sans font-semibold tracking-tight text-neutral-900 group-hover:text-black transition-colors line-clamp-1 flex-1">
             {product.name}
           </h4>
           <span className="text-[11px] font-medium lining-nums tabular-nums text-neutral-400 shrink-0 tracking-wide">
@@ -181,16 +188,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         {/* Row 3: Price line */}
         <div className="flex items-baseline flex-wrap gap-1.5 sm:gap-2 pt-0.5 lining-nums tabular-nums">
-          <span className="text-[13px] sm:text-sm font-heading font-bold text-neutral-900">
+          <span className="text-[13px] sm:text-sm font-sans font-bold text-neutral-900">
             BDT {currentPrice.toLocaleString('en-BD')}
           </span>
 
           {isSale && (
             <>
-              <span className="text-[11px] sm:text-xs text-neutral-400 line-through font-normal">
+              <span className="text-[11px] sm:text-xs font-sans text-neutral-400 line-through font-normal">
                 BDT {regularPrice.toLocaleString('en-BD')}
               </span>
-              <span className="text-[11px] sm:text-xs font-heading font-bold text-red-600">
+              <span className="text-[11px] sm:text-xs font-sans font-semibold text-red-600">
                 -{discountPercent}%
               </span>
             </>

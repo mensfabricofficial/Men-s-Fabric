@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { MotionConfig, motion } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { WishlistProvider } from './context/WishlistContext';
@@ -289,7 +290,14 @@ const AppContent: React.FC = () => {
       <OfflineIndicator />
       <main className="flex-1">
         <ErrorBoundary inline label="Page" resetKeys={[currentRoute]}>
-          {PageComponent}
+          <motion.div
+            key={pathname}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {PageComponent}
+          </motion.div>
         </ErrorBoundary>
       </main>
       <Footer onNavigate={navigate} />
@@ -300,18 +308,20 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <ErrorBoundary label="Storefront">
-      <AuthProvider>
-        <CartProvider>
-          <WishlistProvider>
-            <NotificationProvider>
-              <ErrorBoundary label="Application">
-                <AppContent />
-              </ErrorBoundary>
-            </NotificationProvider>
-          </WishlistProvider>
-        </CartProvider>
-      </AuthProvider>
-    </ErrorBoundary>
+    <MotionConfig reducedMotion="user">
+      <ErrorBoundary label="Storefront">
+        <AuthProvider>
+          <CartProvider>
+            <WishlistProvider>
+              <NotificationProvider>
+                <ErrorBoundary label="Application">
+                  <AppContent />
+                </ErrorBoundary>
+              </NotificationProvider>
+            </WishlistProvider>
+          </CartProvider>
+        </AuthProvider>
+      </ErrorBoundary>
+    </MotionConfig>
   );
 }

@@ -12,6 +12,7 @@ import {
   LogOut,
   SlidersHorizontal
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { useAuth } from '../../context/AuthContext';
@@ -131,17 +132,27 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
 
             {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center space-x-7">
-              {navLinks.map((link) => (
-                <button
-                  key={link.label}
-                  onClick={() => onNavigate(link.href)}
-                  className={`text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer ${
-                    currentRoute === link.href ? 'text-black font-bold border-b-2 border-black pb-1' : 'text-neutral-600 hover:text-black'
-                  }`}
-                >
-                  {link.label}
-                </button>
-              ))}
+              {navLinks.map((link) => {
+                const isActive = currentRoute === link.href;
+                return (
+                  <button
+                    key={link.label}
+                    onClick={() => onNavigate(link.href)}
+                    className={`relative py-1 text-xs uppercase tracking-wider font-semibold transition-colors cursor-pointer ${
+                      isActive ? 'text-black font-bold' : 'text-neutral-600 hover:text-black'
+                    }`}
+                  >
+                    {link.label}
+                    {isActive && (
+                      <motion.span
+                        layoutId="header-nav-underline"
+                        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                        className="absolute left-0 right-0 -bottom-0.5 h-[2px] bg-black rounded-full"
+                      />
+                    )}
+                  </button>
+                );
+              })}
 
               {/* Categories Dropdown */}
               {categories.length > 0 && (
@@ -155,25 +166,33 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
                     className="flex items-center gap-1 text-xs uppercase tracking-wider font-semibold text-neutral-600 hover:text-black cursor-pointer py-2"
                   >
                     <span>Categories</span>
-                    <ChevronDown className="w-3.5 h-3.5" />
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${categoriesDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
 
-                  {categoriesDropdownOpen && (
-                    <div className="absolute top-full left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-xl py-2 z-50 animate-fade-in">
-                      {categories.map((cat) => (
-                        <button
-                          key={cat.id}
-                          onClick={() => {
-                            onNavigate(`/category/${cat.slug || cat.id}`);
-                            setCategoriesDropdownOpen(false);
-                          }}
-                          className="w-full text-left px-4 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-100 hover:text-black cursor-pointer flex items-center justify-between"
-                        >
-                          <span>{cat.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <AnimatePresence>
+                    {categoriesDropdownOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                        className="absolute top-full left-0 w-52 bg-white border border-neutral-200 rounded-lg shadow-xl py-2 z-50 origin-top-left"
+                      >
+                        {categories.map((cat) => (
+                          <button
+                            key={cat.id}
+                            onClick={() => {
+                              onNavigate(`/category/${cat.slug || cat.id}`);
+                              setCategoriesDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-100 hover:text-black hover:pl-5 transition-all cursor-pointer flex items-center justify-between"
+                          >
+                            <span>{cat.name}</span>
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               )}
             </nav>
@@ -193,18 +212,25 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               </button>
 
               {/* Wishlist (Desktop header only) */}
-              <button
+              <motion.button
+                whileTap={{ scale: 0.92 }}
                 onClick={() => onNavigate('/wishlist')}
                 aria-label="Wishlist"
                 className="hidden lg:inline-flex relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >
                 <Heart className="w-5 h-5" />
                 {wishlistIds.length > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  <motion.span
+                    key={wishlistIds.length}
+                    initial={{ scale: 0.6 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                    className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                  >
                     {wishlistIds.length}
-                  </span>
+                  </motion.span>
                 )}
-              </button>
+              </motion.button>
 
               {/* Account / Admin Portal (Desktop header only) */}
               {currentUser ? (
@@ -254,67 +280,95 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
               )}
 
               {/* Cart Trigger */}
-              <button
+              <motion.button
+                whileTap={{ scale: 0.92 }}
                 onClick={() => setIsCartDrawerOpen(!isCartDrawerOpen)}
                 aria-label="Cart"
                 className="relative p-2 text-neutral-700 hover:text-black rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
               >
                 <ShoppingBag className="w-5 h-5" />
                 {totalItems > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  <motion.span
+                    key={totalItems}
+                    initial={{ scale: 0.6 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                    className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                  >
                     {totalItems}
-                  </span>
+                  </motion.span>
                 )}
-              </button>
+              </motion.button>
             </div>
           </div>
         </div>
 
         {/* Expandable Search Bar */}
-        {searchOpen && (
-          <div className="bg-neutral-50 border-t border-neutral-200 p-4 animate-fade-in">
-            <form onSubmit={handleSearchSubmit} className="max-w-3xl mx-auto flex items-center gap-2">
-              <div className="flex-1">
-                <FloatingInput
-                  compact
-                  label="Search products by name, fabric, or SKU"
-                  labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  autoFocus
-                  leftIcon={<Search className="w-4 h-4" />}
-                />
+        <AnimatePresence initial={false}>
+          {searchOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              className="overflow-hidden bg-neutral-50 border-t border-neutral-200"
+            >
+              <div className="p-4">
+                <form onSubmit={handleSearchSubmit} className="max-w-3xl mx-auto flex items-center gap-2">
+                  <div className="flex-1">
+                    <FloatingInput
+                      compact
+                      label="Search products by name, fabric, or SKU"
+                      labelBgClass="bg-[linear-gradient(to_bottom,#fafafa_50%,#ffffff_50%)]"
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      autoFocus
+                      leftIcon={<Search className="w-4 h-4" />}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="h-10 px-5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
+                  >
+                    Search
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSearchOpen(false)}
+                    className="p-2 text-neutral-500 hover:text-black cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </form>
               </div>
-              <button
-                type="submit"
-                className="h-10 px-5 bg-black text-white text-xs font-semibold uppercase tracking-wider rounded-[6px] hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
-              >
-                Search
-              </button>
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="p-2 text-neutral-500 hover:text-black cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </form>
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
       {/* Mobile Drawer Navigation — Rendered outside sticky backdrop-blurred <header> so fixed viewport positioning is never clipped */}
-      {mobileMenuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Mobile navigation menu">
-          {/* Backdrop */}
-          <div 
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
-            onClick={() => setMobileMenuOpen(false)}
-          />
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Mobile navigation menu">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs"
+              onClick={() => setMobileMenuOpen(false)}
+            />
 
-          {/* Drawer content */}
-          <div className="fixed inset-y-0 left-0 w-[85%] max-w-xs h-dvh bg-white shadow-2xl flex flex-col z-50 animate-slide-in-left">
+            {/* Drawer content */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+              className="fixed inset-y-0 left-0 w-[85%] max-w-xs h-dvh bg-white shadow-2xl flex flex-col z-50"
+            >
             {/* Drawer header with logo */}
             <div className="px-4 py-3.5 border-b border-neutral-800 flex items-center justify-between bg-black shrink-0">
               <BrandLogo variant="light" imgClassName="h-7 w-auto" />
@@ -454,9 +508,10 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onNavigate }) => {
                 </button>
               )}
             </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </>
   );
 };
